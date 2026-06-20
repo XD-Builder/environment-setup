@@ -10,6 +10,20 @@
 1. Mac OS X and linux dependencies setup support
 2. shell, vim and tmux environment setup.
 
+# Vim
+## About environment-setup vim
+* Plugins are managed with [vim-plug](https://github.com/junegunn/vim-plug). `vim-plug` self-installs on the first launch of Vim (the bootstrap lives in `vim/custom/plugins.vim`), so there is no separate plugin-manager clone step. Run `./setup.sh vim` (or `vim +PlugInstall +qall`) to install/update plugins.
+* Configuration is split for clarity and sourced from `vim/vimrc`:
+    * `vim/custom/plugins.vim` - plugin list (vim-plug) and per-plugin configuration
+    * `vim/custom/settings.vim` - editor options (indentation, search, persistent undo, etc.)
+    * `vim/custom/bindings.vim` - key mappings and command abbreviations
+    * `vim/custom/functions.vim` - helper functions and commands
+* Fuzzy finding and search use [fzf](https://github.com/junegunn/fzf) + [fzf.vim](https://github.com/junegunn/fzf.vim) backed by [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`):
+    * `<C-p>` or `<leader>pf` - find files (`:Files`)
+    * `<leader>pb` - switch buffers (`:Buffers`)
+    * `<leader>pr` - search file contents with ripgrep (`:Rg`)
+* Linting, fixing and completion are provided by [ALE](https://github.com/dense-analysis/ale).
+
 # Tmux
 ## About tmux
 * According to `man 1 tmux`, tmux is a terminal multiplexer. It enables a number of terminals to be created, accessed, and controlled from a signle screen. It may be detached from a screen and continue running in the background, then later reattached.

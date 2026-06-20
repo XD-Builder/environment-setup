@@ -1,35 +1,41 @@
 " Plugin Setup {{{1
-set nocp        " set Vi-incompatible
 filetype off    " Don't detect file type.
 
-"----------------------------------------------------------- Plugin Start
-set rtp+=~/.vim/bundle/Vundle.vim   " A list of directories searched for runtime files
-call vundle#begin()                 " Start Vundle
-Plugin 'gmarik/Vundle.vim'
-Plugin 'airblade/vim-gitgutter'          " Provides nice gutter for file addition in git control
-Plugin 'easymotion/vim-easymotion'       " Allows search with ,ces or ,ce{l|k}
-Plugin 'fatih/vim-go'                    " Go development inside vim. :GoBuild, GoTest, GoDef, GoCoverage, etc..
-Plugin 'godlygeek/tabular'               " Allow tabularize data
-Plugin 'haroldjin/vim-essentials'        " Essential tools for everyday vimer
-Plugin 'honza/vim-snippets'              " Snippet autocompletes data for you, customizable
-Plugin 'janko/vim-test'                  " A Vim wrapper for running tests on different granularities.
-Plugin 'kien/ctrlp.vim'                  " File Search many places with c-f and c-b to search buffers, files, mru, etc.
-Plugin 'kshenoy/vim-signature'           " place, toggle and display marks. m[0-9] will print the marks
-Plugin 'majutsushi/tagbar'               " Allow display of tags, - oasf0 [0-9]
-Plugin 'mileszs/ack.vim'                 " :Ack [options] {pattern} [{directories}]
-Plugin 'plasticboy/vim-markdown'         " Syntax highlighting, matching rules and mappings for the original Markdown and extensions.
-Plugin 'scrooloose/nerdtree'             " Display tree for filesystem
-Plugin 'tmhedberg/matchit'               " Better matching for key '%'
-Plugin 'tpope/vim-commentary'            " Comment with gcc. :g/content/Commentary ;; 7,17Commentary
-Plugin 'tpope/vim-dispatch'              " :Dispatch commands to run in background
-Plugin 'tpope/vim-fugitive'              " map ,g to find out more about git mapping in vim
-Plugin 'tpope/vim-repeat'                " Use . command to repeat vim surround
-Plugin 'tpope/vim-surround'              " Powerful cs, ds, ys (creates new surround), viS', works with vim-repeat
-Plugin 'vim-airline/vim-airline'         " Status bar display more info
-Plugin 'vim-airline/vim-airline-themes'  " Theme for airline
-Plugin 'w0rp/ale'                        " Async Completion Engine running in the background for Python, C++, etc..
+" matchit ships with Vim; load it instead of a separate plugin for better '%'
+packadd! matchit
 
-call vundle#end()
+"----------------------------------------------------------- Plugin Start
+" Auto-install vim-plug if it is not already present
+if empty(glob('~/.vim/autoload/plug.vim'))
+    silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs
+                \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+    autocmd VimEnter * PlugInstall --sync | source $MYVIMRC
+endif
+
+call plug#begin('~/.vim/plugged')        " Start vim-plug
+Plug 'airblade/vim-gitgutter'            " Provides nice gutter for file addition in git control
+Plug 'easymotion/vim-easymotion'         " Allows search with ,ces or ,ce{l|k}
+Plug 'fatih/vim-go'                      " Go development inside vim. :GoBuild, GoTest, GoDef, GoCoverage, etc..
+Plug 'preservim/tabular'                 " Allow tabularize data
+Plug 'haroldjin/vim-essentials'          " Essential tools for everyday vimer
+Plug 'honza/vim-snippets'                " Snippet autocompletes data for you, customizable
+Plug 'janko/vim-test'                    " A Vim wrapper for running tests on different granularities.
+Plug 'junegunn/fzf', { 'do': { -> fzf#install() } } " Fuzzy finder binary + Vim integration
+Plug 'junegunn/fzf.vim'                  " :Files, :Buffers, :Rg fuzzy search commands
+Plug 'kshenoy/vim-signature'             " place, toggle and display marks. m[0-9] will print the marks
+Plug 'preservim/tagbar'                  " Allow display of tags, - oasf0 [0-9]
+Plug 'preservim/vim-markdown'            " Syntax highlighting, matching rules and mappings for the original Markdown and extensions.
+Plug 'preservim/nerdtree'                " Display tree for filesystem
+Plug 'tpope/vim-commentary'              " Comment with gcc. :g/content/Commentary ;; 7,17Commentary
+Plug 'tpope/vim-dispatch'                " :Dispatch commands to run in background
+Plug 'tpope/vim-fugitive'                " map ,g to find out more about git mapping in vim
+Plug 'tpope/vim-repeat'                  " Use . command to repeat vim surround
+Plug 'tpope/vim-surround'                " Powerful cs, ds, ys (creates new surround), viS', works with vim-repeat
+Plug 'vim-airline/vim-airline'           " Status bar display more info
+Plug 'vim-airline/vim-airline-themes'    " Theme for airline
+Plug 'dense-analysis/ale'                " Async Lint Engine running in the background for Python, C++, etc..
+
+call plug#end()
 filetype plugin indent on
 syntax on
 " }}}
@@ -93,29 +99,23 @@ let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
 let g:nerdtree_tabs_focus_on_files=1
 let g:NERDTreeWinSize = 30
 "}}}
-" {{{ ctrlp.vim
-let g:ctrlp_custom_ignore = {
-            \ 'dir':  '\.git$|vendor\|\.hg$\|\.svn$\|\.yardoc\|public\/images\|public\/system\|data\|log\|tmp\|node_modules$',
-            \ 'file': '\.exe$\|\.so$\|\.dat$'
-            \ }
+" {{{ fzf.vim
+" Floating-style layout for the fuzzy finder window
+let g:fzf_layout = { 'down': '40%' }
+" Use ripgrep for :Rg, honouring .gitignore and searching hidden files
+if executable('rg')
+    let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --glob "!.git/*"'
+    command! -bang -nargs=* Rg
+                \ call fzf#vim#grep(
+                \   'rg --column --line-number --no-heading --color=always --smart-case -- '.shellescape(<q-args>),
+                \   1, fzf#vim#with_preview(), <bang>0)
+endif
+" Command-line helper: insert the current file's directory path
 cnoremap <C-P> <C-R>=expand("%:p:h") . "/" <CR>
-" noremap <leader>b :CtrlPBuffer<CR>
-" let g:ctrlp_map = '<leader>p'
-let g:ctrlp_open_new_file = 'r'
-let g:ctrlp_use_caching = 0
-let g:ctrlp_show_hidden = 1
-let g:ctrlp_working_path_mode = 0
 "}}}
 " {{{ easy-motion
 let g:EasyMotion_do_mapping = 0 " Disable default mappings
 let g:EasyMotion_smartcase = 1
-" }}}
-" {{{ ACK
-let g:ackprg = 'ag --vimgrep --smart-case'
-" }}}
-" {{{ YCM
-let g:ycm_autoclose_preview_window_after_completion = 1
-" let g:ycm_filetype_specific_completion_to_disable = { 'vim':1, 'txt':1 }
 " }}}
 " {{{ Dispatch
 augroup dispatch_action
