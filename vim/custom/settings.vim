@@ -14,8 +14,7 @@ set encoding=utf-8                                              " Set the charac
 set expandtab                                                   " spaces for tab <c-v><tab> if want realtab
 set fileencoding=utf-8                                          " Encoding for when saving a file
 set fileencodings=utf-8                                         " Encodings list used for determining encoding during read file start
-set fileformats=unix,dos,mac                                    " Automatically detect and set file formats for you
-set fileformats=unix,dos,mac                                    " Set EOL accordingly
+set fileformats=unix,dos,mac                                    " Automatically detect and set file formats / EOL for you
 set foldmethod=marker                                           " set fold to marker, triple { will create a fold
 set hidden                                                      " Keep buffer when a buffer is off a window
 set history=700                                                 " Number of lines that are remember
@@ -40,7 +39,6 @@ set softtabstop=4                                               " An addition to
 " set spell spelllang=en_us                                       " Set spell to USA. It checks files for spell error
 set tabstop=4                                                   " Number of spaces a <tab> counts for
 set tags=./tags,tags;$HOME                                      " For ctag with completion, C-] get into the tag and C-T get out of the tag
-set ttyfast                                                     " Set fast tty for redrawing. More characters sent to the screen for redraw
 if !has('nvim')
     if has("mouse_sgr")
         set ttymouse=sgr
@@ -49,6 +47,13 @@ if !has('nvim')
     end
 endif
 set undolevels=700                                              " Max number of changes that can be undone
+if has('persistent_undo')
+    if !isdirectory($HOME . '/.vim/undo')
+        call mkdir($HOME . '/.vim/undo', 'p', 0700)
+    endif
+    set undodir=~/.vim/undo                                     " Keep undo history on disk
+    set undofile                                                " Persist undo across sessions
+endif
 set viminfo='0,:0,<0,@0,f0                                      " Used to remember information, such as CLI, search, marks, etc. Set to 0 for all
 set wildmenu                                                    " Enable enhanced mode where pressing <Tab> to invoke completion.
 set wildmode=list:longest,list:full                             " Complete all match till longest common string and complete first match

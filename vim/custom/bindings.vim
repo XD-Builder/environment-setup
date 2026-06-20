@@ -9,8 +9,8 @@ cnoreabbrev WQ wq
 cnoreabbrev Wa wa
 cnoreabbrev Wq wq
 cnoreabbrev wQ wq
-cnoreabbrev ag Ack
-cnoreabbrev Ag Ack
+cnoreabbrev ag Rg
+cnoreabbrev Ag Rg
 "}}}
 " {{{ Global Editor Mapping
 " quick fix
@@ -98,12 +98,11 @@ nmap <leader>cs <Plug>(easymotion-overwin-f2)
 map <Leader>csj <Plug>(easymotion-j)
 map <Leader>csk <Plug>(easymotion-k)
 
-" YCM
-nnoremap <leader>yg :YcmCompleter GoTo<CR>
-nnoremap <leader>ygd :YcmCompleter GoToDefinition<CR>
-nnoremap <leader>ygdc :YcmCompleter GoToDeclaration<CR>
-nnoremap <leader>ygr :YcmCompleter GoToReferences<CR>
-
+" fzf fuzzy finder (grouped under <leader>p to avoid clashing with existing prefixes)
+nnoremap <silent><C-p> :Files<CR>
+nnoremap <silent><leader>pf :Files<CR>
+nnoremap <silent><leader>pb :Buffers<CR>
+nnoremap <silent><leader>pr :Rg<CR>
 
 "}}}
 " {{{ Miscellaneous Binding

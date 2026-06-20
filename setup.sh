@@ -9,7 +9,6 @@ if [ "$#" -eq 1 ]; then
 fi
 
 OS_NAME=$(uname -s)
-VUNDLE_PATH='https://github.com/VundleVim/Vundle.vim.git'
 
 # {{{ Color utility functions
 if which tput >/dev/null 2>&1; then
@@ -69,11 +68,19 @@ prompt_select_return() {
 command_exists() {
   type "$1" &>/dev/null
 }
+
+# Resolve the installable package name for a given command (defaults to the command name)
+package_name() {
+  case "$1" in
+  rg) echo "ripgrep" ;;
+  *) echo "$1" ;;
+  esac
+}
 # }}}
 # {{{ OS Setup
 # {{{ Mac setup
 homebrew_setup() {
-  declare -a commandsToInstall=("python3" "npm" "cmake" "tmux" "zsh")
+  declare -a commandsToInstall=("python3" "npm" "fzf" "rg" "tmux" "zsh")
 
   for command in "${commandsToInstall[@]}"; do
     command_exists "$command"
@@ -81,7 +88,18 @@ homebrew_setup() {
 
       if prompt_select_return "command $command doesn't exist do you want to install?"; then
         prompt_info "installing command $command"
-        brew install "$command"
+        brew install "$(package_name "$command")"
+      fi
+    fi
+  done
+
+  # Zsh autocomplete plugins (sourced from shell/.zshrc).
+  declare -a zshPlugins=("zsh-autosuggestions" "zsh-syntax-highlighting" "zsh-completions")
+  for plugin in "${zshPlugins[@]}"; do
+    if ! brew list "$plugin" &>/dev/null; then
+      if prompt_select_return "zsh plugin $plugin is not installed, install it?"; then
+        prompt_info "installing $plugin"
+        brew install "$plugin"
       fi
     fi
   done
@@ -120,7 +138,7 @@ setup_mac() {
 }
 # }}}
 setup_linux() {
-  declare -a commandsToInstall=("python3" "npm" "cmake" "tmux" "zsh")
+  declare -a commandsToInstall=("python3" "npm" "fzf" "rg" "tmux" "zsh")
 
   local PACKAGE_COMMAND=""
   if command_exists apt-get; then
@@ -143,7 +161,7 @@ setup_linux() {
       prompt_select_return "command $command doesn't exist do you want to install"
       if [ $? -eq 0 ]; then
         prompt_info "installing command $command"
-        sudo $PACKAGE_COMMAND install $command
+        sudo $PACKAGE_COMMAND install "$(package_name "$command")"
       fi
     fi
   done
@@ -202,7 +220,7 @@ setup_bash() {
 setup_zsh() {
   prompt_info "setting up zsh profile"
   prompt_info "Downloading and installing ohmyzsh"
-  mkdir "${PWD}"/zsh
+  mkdir -p "${PWD}"/zsh
   if [ -d "${PWD}"/zsh/oh-my-zsh ]; then
     git --git-dir="${PWD}"/zsh/oh-my-zsh/.git pull
   else
@@ -219,7 +237,7 @@ setup_zsh() {
     fi
   fi
 
-  ln -sfn ${PWD}/shell/.zshrc ~/.zshrc && ln -sfn ${PWD}/zsh ~/.zsh
+  ln -sfn ${PWD}/shell/.zshrc ~/.zshrc && ln -sfn ${PWD}/shell/.zshrc.local ~/.zshrc.local && ln -sfn ${PWD}/zsh ~/.zsh
 
   if [ $? -eq 0 ]; then
     prompt_info "zsh set up successful"
@@ -246,13 +264,8 @@ setup_vim() {
     exit 1
   fi
 
-  prompt_info "cloning vundle to vim directory"
-  if [ ! -d ${PWD}/vim/bundle/Vundle.vim ]; then
-    git clone ${VUNDLE_PATH} ${PWD}/vim/bundle/Vundle.vim
-  fi
-
-  prompt_info "install plugins for vim"
-  vim +PluginInstall +qall
+  prompt_info "install plugins for vim (vim-plug self-installs on first launch)"
+  vim +PlugInstall +qall
   echo
 }
 
@@ -315,7 +328,7 @@ case "$setup" in
   ;;
 "help")
   echo "Usage:"
-  echo "./setup.sh [tmux|vim|shell|awesomewm]"
+  echo "./setup.sh [tmux|vim|shell]"
   ;;
 esac
 
