@@ -8,8 +8,35 @@ if [ -d "$ZSH" ]; then
   # Prompt theme. robbyrussell ships with oh-my-zsh and shows the current
   # git branch plus a dirty/clean indicator without needing powerline fonts.
   ZSH_THEME="robbyrussell"
-  # git plugin adds branch info to the prompt and a set of git aliases.
-  plugins=(git)
+  # oh-my-zsh plugins add tab-completion and handy aliases for these tools.
+  # Each plugin guards on its binary being present (or is alias-only), so
+  # listing a tool you haven't installed yet is harmless.
+  plugins=(
+    # Version control (also adds branch info to the prompt)
+    git
+    # Containers / orchestration
+    docker
+    docker-compose
+    kubectl
+    helm
+    # Cloud / infra
+    terraform
+    aws
+    gcloud
+    # JavaScript / Node
+    npm
+    node
+    # Python
+    pip
+    python
+    # Other runtimes
+    deno
+    rust
+    # Shell tooling
+    fzf
+    tmux
+    brew
+  )
   source "$ZSH/oh-my-zsh.sh"
 else
   # Fallback when oh-my-zsh isn't installed: build a git-aware prompt with vcs_info.

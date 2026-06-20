@@ -19,6 +19,11 @@ if [ -n "$BREW_PREFIX" ] && [ -d "$BREW_PREFIX/share/zsh-completions" ]; then
     fpath=("$BREW_PREFIX/share/zsh-completions" $fpath)
 fi
 
+# Homebrew formula completions (gh, brew, etc.) — also before compinit.
+if [ -n "$BREW_PREFIX" ] && [ -d "$BREW_PREFIX/share/zsh/site-functions" ]; then
+    fpath=("$BREW_PREFIX/share/zsh/site-functions" $fpath)
+fi
+
 ZSHRC_LOCAL="$HOME/.zshrc.local"
 if [ -e "$ZSHRC_LOCAL" ]; then
     source $ZSHRC_LOCAL
@@ -29,6 +34,31 @@ fi
 if ! whence compdef >/dev/null 2>&1; then
     autoload -Uz compinit && compinit
 fi
+
+# Some dev CLIs ship their own zsh completion generator instead of a static
+# completion file, and aren't covered by an oh-my-zsh plugin. Generating the
+# script on every startup spawns a subprocess and is slow, so cache the output
+# and only regenerate when the tool's binary is newer than the cache (e.g.
+# after an upgrade). These run after compinit so they win over any earlier
+# registration.
+ZSH_COMPLETION_CACHE="$HOME/.zsh/completion-cache"
+[ -d "$ZSH_COMPLETION_CACHE" ] || mkdir -p "$ZSH_COMPLETION_CACHE"
+
+# load_completion <cache-name> <command> [args...]
+#   <command> [args...] must print a zsh completion script to stdout.
+load_completion() {
+    local name="$1"; shift
+    local bin="$1"
+    command -v "$bin" >/dev/null 2>&1 || return
+    local cache="$ZSH_COMPLETION_CACHE/$name.zsh"
+    if [ ! -s "$cache" ] || [ "$(command -v "$bin")" -nt "$cache" ]; then
+        "$@" >| "$cache" 2>/dev/null || { rm -f "$cache"; return; }
+    fi
+    source "$cache"
+}
+
+load_completion gh       gh completion -s zsh
+load_completion supabase supabase completion zsh
 
 # Case-insensitive, partial-word and substring matching while completing.
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'
