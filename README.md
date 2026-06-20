@@ -12,8 +12,7 @@
 
 # Shell
 ## About environment-setup zsh
-* `shell/.zshrc` wires up the completion system, history search, fish-like autosuggestions (`zsh-autosuggestions`), extra completion definitions (`zsh-completions`) and syntax highlighting (`zsh-syntax-highlighting`). The brew-installed plugins are picked up automatically when present.
-* `shell/.zshrc.local` loads [oh-my-zsh](https://github.com/ohmyzsh/ohmyzsh) (when installed) for the prompt and a curated set of plugins that add tab-completion and aliases for common development tools:
+* `shell/.zshrc` wires up [oh-my-zsh](https://github.com/ohmyzsh/ohmyzsh) (when installed) for the prompt and a curated set of plugins that add tab-completion and aliases for common development tools, plus the completion system, history search, fish-like autosuggestions (`zsh-autosuggestions`), extra completion definitions (`zsh-completions`) and syntax highlighting (`zsh-syntax-highlighting`). The brew-installed plugins are picked up automatically when present.
     * Version control: `git`
     * Containers / orchestration: `docker`, `docker-compose`, `kubectl`, `helm`
     * Cloud / infra: `terraform`, `aws`, `gcloud`
@@ -25,6 +24,7 @@
 * Some CLIs ship their own completion generator and aren't covered by an oh-my-zsh plugin. These are loaded by `load_completion` in `shell/.zshrc`, which caches the generated script under `~/.zsh/completion-cache` and only regenerates it when the tool's binary changes (e.g. after an upgrade):
     * `gh` (GitHub CLI) and `supabase`.
     * To add another such tool, append a line like `load_completion <name> <command that prints a zsh completion script>` (e.g. `load_completion vault vault -autocomplete-install` style generators).
+* For personal overrides (aliases, env vars, paths), create `~/.zshrc.local` yourself — it is sourced from `shell/.zshrc` when present and is not managed by this repo.
 
 # Vim
 ## About environment-setup vim

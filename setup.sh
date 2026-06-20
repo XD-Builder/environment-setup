@@ -237,7 +237,7 @@ setup_zsh() {
     fi
   fi
 
-  ln -sfn ${PWD}/shell/.zshrc ~/.zshrc && ln -sfn ${PWD}/shell/.zshrc.local ~/.zshrc.local && ln -sfn ${PWD}/zsh ~/.zsh
+  ln -sfn ${PWD}/shell/.zshrc ~/.zshrc && ln -sfn ${PWD}/zsh ~/.zsh
 
   if [ $? -eq 0 ]; then
     prompt_info "zsh set up successful"
