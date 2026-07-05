@@ -128,7 +128,8 @@ nmap <silent> <leader>mt<C-g> :TestVisit<CR>
 nnoremap <leader>ut "=strftime("%c")<CR>P
 inoremap <leader>ut <C-R>=strftime("%c")<CR>
 nnoremap <leader>ud :exe ":!clear;sdcv ". expand("<cword>")<cr>
-map <leader>uW :w !sudo tee % >/dev/null<CR>
+" Save root-owned file via sudo (normal mode only; prompts for password)
+nnoremap <leader>uW :w !sudo tee % >/dev/null<CR>
 
 " Google search, define and goto url
 nnoremap <leader>ugo :Google<cr>
