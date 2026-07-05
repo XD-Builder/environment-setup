@@ -2,6 +2,8 @@
 
 shopt -s nocasematch
 
+SETUP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+
 setup=ALL
 
 if [ "$#" -eq 1 ]; then
@@ -295,6 +297,19 @@ setup_tmux() {
   fi
 
 }
+setup_agent() {
+  prompt_select_return "Do you want to set up lmloop (local LM Studio agent)?"
+  if [ $? -ne 0 ]; then
+    return 0
+  fi
+
+  if bash "${SETUP_ROOT}/lmloop/setup-lmloop.sh"; then
+    prompt_info "lmloop setup successful"
+  else
+    prompt_error "error setting up lmloop"
+    exit 1
+  fi
+}
 # }}}
 # {{{ Main
 case "$setup" in
@@ -313,6 +328,7 @@ case "$setup" in
   setup_shell
   setup_vim
   setup_tmux
+  setup_agent
   ;;
 "tmux")
   echo setting up tmux
@@ -326,9 +342,13 @@ case "$setup" in
   echo setting up shell
   setup_shell
   ;;
+"agent")
+  echo setting up lmloop agent
+  setup_agent
+  ;;
 "help")
   echo "Usage:"
-  echo "./setup.sh [tmux|vim|shell]"
+  echo "./setup.sh [tmux|vim|shell|agent]"
   ;;
 esac
 

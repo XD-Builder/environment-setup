@@ -6,3 +6,5 @@ zsh/
 tmux/**
 !tmux/.tmux.conf
 vim/spell/*
+__pycache__/
+*.pyc
