@@ -1,0 +1,12 @@
+#!/bin/bash
+# lmloop launcher — resolves the repo location through this script's own path
+# (works when symlinked from ~/.local/bin), then runs the stdlib-only package.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+LMLOOP_ROOT="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
+
+PYTHONPATH="$LMLOOP_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m lmloop "$@"

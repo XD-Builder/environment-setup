@@ -5,10 +5,12 @@
     * Run `./setup.sh tmux` to setup only tmux
     * Run `./setup.sh vim` to setup only vim
     * Run `./setup.sh shell` to setup only shell
+    * Run `./setup.sh agent` to setup only lmloop (local LM Studio agent)
 
 ## Features
 1. Mac OS X and linux dependencies setup support
-2. shell, vim and tmux environment setup.
+2. Shell, vim and tmux environment setup.
+3. lmloop: a fully-local agent loop on LM Studio with tools + per-project memory (see [lmloop/README.md](lmloop/README.md)).
 
 # Shell
 ## About environment-setup zsh
