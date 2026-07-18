@@ -85,6 +85,13 @@ let g:airline_symbols.paste = 'ρ'
 let g:airline_symbols.spell = 'Ꞩ'
 let g:airline_symbols.notexists = 'Ɇ'
 let g:airline_symbols.whitespace = 'Ξ'
+
+" Wall-clock in section_y — redraws on cursor activity (alive / recently used signal)
+function! AirlineClock()
+  return strftime('%H:%M:%S')
+endfunction
+autocmd User AirlineAfterInit call airline#parts#define_function('clock', 'AirlineClock')
+      \ | let g:airline_section_y = airline#section#create(['clock'])
 " }}}
 " {{{ vim-airline-themes
 let g:airline_theme='ouo'

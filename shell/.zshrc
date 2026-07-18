@@ -72,6 +72,10 @@ else
     PROMPT='%F{cyan}%~%f%F{yellow}${vcs_info_msg_0_}%f %# '
 fi
 
+# Prompt-draw time: when this prompt appeared (previous command finished / shell idle).
+# Stays in scrollback so you can tell how old a command block is.
+RPROMPT='%F{244}%D{%H:%M:%S}%f'
+
 # Optional user overrides — create ~/.zshrc.local yourself (not managed by this repo).
 ZSHRC_LOCAL="$HOME/.zshrc.local"
 if [ -e "$ZSHRC_LOCAL" ]; then
