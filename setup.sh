@@ -123,6 +123,16 @@ homebrew_setup() {
   else
     prompt_info "skipping vim installation"
   fi
+
+  if ! command_exists nvim; then
+    if prompt_select_return "command nvim doesn't exist do you want to install neovim?"; then
+      prompt_info "Installing $(prompt_bold "neovim") using brew"
+      brew install neovim
+      if [ $? -eq 0 ]; then
+        prompt_info "neovim installed successful"
+      fi
+    fi
+  fi
 }
 
 setup_mac() {
@@ -179,6 +189,18 @@ setup_linux() {
     fi
   else
     prompt_info "skipping vim installation"
+  fi
+
+  if ! command_exists nvim; then
+    if prompt_select_return "command nvim doesn't exist do you want to install neovim?"; then
+      prompt_info "Installing $(prompt_bold "neovim") using $PACKAGE_COMMAND"
+      sudo $PACKAGE_COMMAND install neovim
+      if [ $? -ne 0 ]; then
+        prompt_error "unable to install neovim via $PACKAGE_COMMAND"
+      else
+        prompt_info "neovim installed successful"
+      fi
+    fi
   fi
   return 0
 }
@@ -271,6 +293,38 @@ setup_vim() {
   echo
 }
 
+setup_nvim() {
+  prompt_select_return "Do you want to set up neovim (LazyVim)?"
+  if [ $? -ne 0 ]; then
+    return 0
+  fi
+
+  if ! command_exists nvim; then
+    prompt_error "nvim is not installed; install neovim first then re-run ./setup.sh nvim"
+    return 1
+  fi
+
+  prompt_info "setting up LazyVim config at ~/.config/nvim"
+  mkdir -p "${HOME}/.config"
+  ln -sfn "${SETUP_ROOT}/nvim" "${HOME}/.config/nvim"
+  if [ $? -eq 0 ]; then
+    prompt_info "neovim config symlink successful"
+  else
+    prompt_error "error setting up neovim config"
+    exit 1
+  fi
+
+  prompt_info "syncing LazyVim plugins (first run may take a few minutes)"
+  nvim --headless "+Lazy! sync" +qa
+  if [ $? -eq 0 ]; then
+    prompt_info "neovim (LazyVim) setup successful"
+  else
+    prompt_error "error syncing LazyVim plugins; try running: nvim --headless \"+Lazy! sync\" +qa"
+    exit 1
+  fi
+  echo
+}
+
 setup_tmux() {
   prompt_select_return "Do you want to set up tmux?"
   if [ $? -ne 0 ]; then
@@ -327,6 +381,7 @@ case "$setup" in
   fi
   setup_shell
   setup_vim
+  setup_nvim
   setup_tmux
   setup_agent
   ;;
@@ -338,6 +393,10 @@ case "$setup" in
   echo setting up vim
   setup_vim
   ;;
+"nvim")
+  echo setting up neovim
+  setup_nvim
+  ;;
 "shell")
   echo setting up shell
   setup_shell
@@ -348,7 +407,7 @@ case "$setup" in
   ;;
 "help")
   echo "Usage:"
-  echo "./setup.sh [tmux|vim|shell|agent]"
+  echo "./setup.sh [tmux|vim|nvim|shell|agent]"
   ;;
 esac
 

@@ -4,12 +4,13 @@
     * Run `./setup.sh help` for usage.
     * Run `./setup.sh tmux` to setup only tmux
     * Run `./setup.sh vim` to setup only vim
+    * Run `./setup.sh nvim` to setup only neovim (LazyVim)
     * Run `./setup.sh shell` to setup only shell
     * Run `./setup.sh agent` to setup only lmloop (local LM Studio agent)
 
 ## Features
 1. Mac OS X and linux dependencies setup support
-2. Shell, vim and tmux environment setup.
+2. Shell, vim, neovim (LazyVim) and tmux environment setup.
 3. lmloop: a fully-local agent loop on LM Studio with tools + per-project memory (see [lmloop/README.md](lmloop/README.md)).
 
 # Shell
@@ -41,6 +42,21 @@
     * `<leader>pb` - switch buffers (`:Buffers`)
     * `<leader>pr` - search file contents with ripgrep (`:Rg`)
 * Linting, fixing and completion are provided by [ALE](https://github.com/dense-analysis/ale).
+
+# Neovim (LazyVim)
+## About environment-setup neovim
+* Config is based on [LazyVim](https://github.com/LazyVim/LazyVim) / [starter](https://github.com/LazyVim/starter) and lives under `nvim/`. Run `./setup.sh nvim` to symlink it to `~/.config/nvim` and sync plugins (`nvim --headless "+Lazy! sync" +qa`).
+* Leader is `,` (same as the vim config). Colorscheme is [wombat.nvim](https://github.com/ViViDboarder/wombat.nvim) (wombat256mod port).
+* LSP: typescript-language-server (`ts_ls`), pyright (python extra), gopls (go extra). Completion uses LazyVim's built-in completion stack.
+* Core bindings (vim parity):
+    * `,z` - toggle neo-tree file explorer
+    * `<C-p>` / `,pf` - find files
+    * `,pb` - buffers
+    * `,pr` - ripgrep
+    * `<C-h/j/k/l>` - move across Neovim splits and tmux panes (vim-tmux-navigator)
+    * `,x` / `<C-c>` / insert `jk` - save; `,e` / `,E` - quit / force quit all
+    * `,tt` `,tn` `,tp` `,tc` - tabs; `,bn` `,bp` `,bc` - buffers
+    * `,wh` `,wj` `,wk` `,wl` - resize windows
 
 # Tmux
 ## About tmux
@@ -102,7 +118,8 @@
     * Configures [Tmux plugin manager](https://github.com/tmux-plugins/tpm) and [Tmux-resurect](https://github.com/tmux-plugins/tmux-resurrect)
         * Tmux plugin manager installs and loads tmux plugins. It's useful because it manages plugin installation, update and removal from GitHub or any other git repos.
         * Tmux Resurrect restores tmux environment after restart. It's useful when you want to persist don't want to lose all the running programs, working directories, pane layout and more. It optionally restores vim and neovim sessions.
-            * Configures resurrection of vim session.
+            * Configures resurrection of vim and neovim sessions.
+            * Includes [vim-tmux-navigator](https://github.com/christoomey/vim-tmux-navigator) so `C-h/j/k/l` moves across vim/nvim splits and tmux panes (Alt-hjkl pane nav without prefix is unchanged).
     * Sets global display and control settings
         * repeat key time is set to 6 seconds
     * Sets window style, purple in this case, and other window settings
