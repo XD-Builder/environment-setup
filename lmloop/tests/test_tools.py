@@ -16,6 +16,12 @@ from lmloop.tools import (
 
 
 class ToolSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self._orig_cwd = os.getcwd()
+
+    def tearDown(self):
+        os.chdir(self._orig_cwd)
+
     def test_needs_shell(self):
         self.assertTrue(needs_shell("cat a | grep b"))
         self.assertFalse(needs_shell("echo hello"))

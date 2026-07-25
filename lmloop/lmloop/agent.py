@@ -8,6 +8,7 @@ can self-correct instead of crashing the session.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -16,8 +17,19 @@ import urllib.request
 from pathlib import Path
 
 from . import memory, tools
+from .config import STATE_ROOT
 
-PROMPTS_DIR = Path(__file__).parent / "prompts"
+SKILLS_DIR = Path(__file__).parent / "skills"
+PROMPTS_DIR = SKILLS_DIR  # back-compat alias
+USER_SKILLS_DIR = STATE_ROOT / "skills"
+SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+# Names that collide with CLI/REPL commands (not creatable as user skills).
+# Packaged skill names like compact/retro stay allowed so users can override them.
+RESERVED_SKILL_NAMES = frozenset({
+    "system", "new", "names", "skill", "skills", "help", "quit", "exit", "q",
+    "transcript", "stats", "model", "memory", "save", "undo", "history",
+    "checkpoints", "restore", "decisions", "context", "continue",
+})
 
 
 class ServerError(RuntimeError):
@@ -146,18 +158,134 @@ def ensure_server(cfg: dict, echo=print) -> str:
     return models[0]
 
 
-# ---------------------------------------------------------------- prompts
+# ---------------------------------------------------------------- skills
 
-def load_prompt(name: str) -> str:
-    path = PROMPTS_DIR / f"{name}.md"
-    if not path.exists():
-        available = ", ".join(sorted(p.stem for p in PROMPTS_DIR.glob("*.md")))
-        raise FileNotFoundError(f"No skill prompt '{name}'. Available: {available}")
+def _is_public_skill(stem: str) -> bool:
+    """User-facing skills: skip system prompt and private _*.md authoring files."""
+    return stem != "system" and not stem.startswith("_")
+
+
+def skill_dirs() -> "list[Path]":
+    """Search order for loading: user skills override packaged skills."""
+    dirs = []
+    if USER_SKILLS_DIR.is_dir():
+        dirs.append(USER_SKILLS_DIR)
+    dirs.append(SKILLS_DIR)
+    return dirs
+
+
+def skill_path(name: str) -> "Path | None":
+    for d in skill_dirs():
+        path = d / f"{name}.md"
+        if path.is_file():
+            return path
+    return None
+
+
+def list_skills() -> "list[str]":
+    """Skill names from packaged + ~/.lmloop/skills/, excluding system/_author."""
+    names = set()
+    for d in skill_dirs():
+        for p in d.glob("*.md"):
+            if _is_public_skill(p.stem):
+                names.add(p.stem)
+    return sorted(names)
+
+
+def _invalid_skill_name(name: str) -> bool:
+    """Reject empty or path-like names before joining under skills dirs."""
+    return (
+        not name
+        or "/" in name
+        or "\\" in name
+        or name.startswith(".")
+        or ".." in name
+    )
+
+
+def load_skill(name: str, *, public_only: bool = False) -> str:
+    """Load a skill body. When public_only, hide system/_*.md from callers."""
+    if _invalid_skill_name(name) or (public_only and not _is_public_skill(name)):
+        available = ", ".join(list_skills()) or "(none)"
+        raise FileNotFoundError(f"No skill '{name}'. Available: {available}")
+    path = skill_path(name)
+    if path is None:
+        available = ", ".join(list_skills()) or "(none)"
+        raise FileNotFoundError(f"No skill '{name}'. Available: {available}")
     return path.read_text()
 
 
+def skill_blurb(name: str) -> str:
+    try:
+        first = load_skill(name).strip().splitlines()[0]
+        return first.lstrip("#").strip()[:80]
+    except (FileNotFoundError, IndexError):
+        return ""
+
+
+def validate_skill_name(name: str) -> "str | None":
+    """Return an error message if name is invalid, else None."""
+    if not name or not SKILL_NAME_RE.match(name):
+        return "skill name must be lowercase, start with a letter, and use only a-z 0-9 _ -"
+    if name in RESERVED_SKILL_NAMES or name.startswith("_"):
+        return f"skill name '{name}' is reserved"
+    return None
+
+
+def extract_skill_markdown(text: str) -> str:
+    """Normalize model output into a skill markdown body."""
+    body = (text or "").strip()
+    if body.startswith("```"):
+        lines = body.splitlines()
+        # drop opening fence
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        body = "\n".join(lines).strip()
+    if not body.startswith("#"):
+        # keep as-is; caller may still save after user review
+        pass
+    if body and not body.endswith("\n"):
+        body += "\n"
+    return body
+
+
+def save_user_skill(name: str, content: str) -> Path:
+    """Write a confirmed skill into ~/.lmloop/skills/<name>.md."""
+    err = validate_skill_name(name)
+    if err:
+        raise ValueError(err)
+    USER_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    path = USER_SKILLS_DIR / f"{name}.md"
+    path.write_text(content if content.endswith("\n") else content + "\n")
+    return path
+
+
+def generate_skill_draft(cfg: dict, model: str, name: str, brief: str) -> str:
+    """One-shot (no tools) generation of a new skill markdown body."""
+    author = load_skill("_author")
+    brief = brief.strip() or f"A reusable playbook named '{name}'."
+    user = (
+        f"Author a new lmloop skill named `{name}`.\n\n"
+        f"User brief:\n{brief}\n\n"
+        f"Existing skills (do not duplicate; complement them): "
+        f"{', '.join(list_skills()) or '(none)'}\n"
+    )
+    messages = [
+        {"role": "system", "content": author},
+        {"role": "user", "content": user},
+    ]
+    msg, _usage = _chat(cfg, model, messages, tool_specs=None)
+    return extract_skill_markdown(msg.get("content") or "")
+
+
+def load_prompt(name: str) -> str:
+    """Alias for load_skill (older call sites)."""
+    return load_skill(name)
+
+
 def system_prompt(cfg: dict) -> str:
-    base = load_prompt("system")
+    base = load_skill("system")
     ctx = memory.context_block(cfg)
     if ctx:
         base += "\n\n## Context recovery (from project memory)\n\n" + ctx
@@ -166,14 +294,15 @@ def system_prompt(cfg: dict) -> str:
 
 # ---------------------------------------------------------------- chat call
 
-def _chat(cfg: dict, model: str, messages: list, tool_specs: list) -> "tuple[dict, dict]":
+def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
     payload = {
         "model": model,
         "messages": messages,
-        "tools": tool_specs,
         "temperature": cfg.get("temperature", 0.7),
         "stream": False,
     }
+    if tool_specs:
+        payload["tools"] = tool_specs
     req = urllib.request.Request(
         cfg["base_url"].rstrip("/") + "/chat/completions",
         data=json.dumps(payload).encode(),

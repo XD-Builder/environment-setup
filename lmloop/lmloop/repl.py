@@ -7,7 +7,8 @@ from typing import Callable
 
 from . import agent, memory, tools
 from .config import project_slug
-from .ui import Console, fresh_stats
+from .files_index import expand_at_refs
+from .ui import Console, ask_yes_no, fresh_stats
 
 
 @dataclass
@@ -29,6 +30,7 @@ class SessionState:
     stats: dict
     console: Console
     context_limit: int = 0
+    prompt_session: object = None
 
     @property
     def user_turns(self) -> int:
@@ -43,18 +45,6 @@ def _refresh_context_limit(state: SessionState) -> None:
     state.context_limit = agent.get_context_limit(state.model, state.cfg)
 
 
-def _skill_names() -> list[str]:
-    return sorted(p.stem for p in agent.PROMPTS_DIR.glob("*.md") if p.stem != "system")
-
-
-def _skill_blurb(name: str) -> str:
-    try:
-        first = agent.load_prompt(name).strip().splitlines()[0]
-        return first.lstrip("#").strip()[:80]
-    except FileNotFoundError:
-        return ""
-
-
 def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
     state.messages = _fresh_messages(state.cfg)
     state.session_log = memory.new_session_log()
@@ -66,20 +56,32 @@ def _fresh_messages(cfg: dict) -> list:
     return [{"role": "system", "content": agent.system_prompt(cfg)}]
 
 
-def _make_confirm_gate(console: Console):
+def _make_confirm_gate(console: Console, session_getter=None):
     def confirm_gate(command: str) -> bool:
         label = "potentially destructive"
         if tools.needs_shell(command) and not tools.is_destructive(command):
             label = "shell-syntax (pipes/redirections)"
         console.warn(f"\n⚠ {label} command requested:\n    {command}")
-        try:
-            return input(console.confirm_prompt()).strip().lower() == "y"
-        except (EOFError, KeyboardInterrupt):
-            return False
+        session = session_getter() if session_getter else None
+        return ask_yes_no(console.confirm_prompt(), prompt_session=session)
     return confirm_gate
 
 
+def _echo_assistant(console: Console):
+    """Echo callback: render markdown for model replies; plain for status lines."""
+    def echo(text: str) -> None:
+        if not text:
+            return
+        if text.startswith("[lmloop]") or text.startswith("[lml]"):
+            console.hint(text)
+            return
+        console.print_markdown(text)
+    return echo
+
+
 def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
+    # Expand @path refs for every turn (freeform, /skill, /continue, …).
+    user_text = expand_at_refs(user_text)
     memory.log_event(state.session_log, "user", user_text)
     state.messages.append({"role": "user", "content": user_text})
     echo_tool = state.console.tool_call
@@ -89,7 +91,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
             session_log=state.session_log,
             confirm_gate=confirm_gate,
             stats=state.stats,
-            echo=print,
+            echo=_echo_assistant(state.console),
             echo_tool=echo_tool,
         )
         footer = state.console.stats_footer(
@@ -165,7 +167,7 @@ def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
 
 def _cmd_retro(state: SessionState, _arg: str, confirm_gate) -> bool:
     _run_turn(state,
-              agent.load_prompt("retro") + "\n\nTranscript of THIS session so far:\n"
+              agent.load_skill("retro") + "\n\nTranscript of THIS session so far:\n"
               + memory.read_session(state.session_log),
               confirm_gate)
     return True
@@ -173,7 +175,7 @@ def _cmd_retro(state: SessionState, _arg: str, confirm_gate) -> bool:
 
 def _run_named_skill(state: SessionState, name: str, task: str, confirm_gate) -> bool:
     try:
-        prompt = agent.load_prompt(name)
+        prompt = agent.load_skill(name, public_only=True)
     except FileNotFoundError as e:
         state.console.error(str(e))
         return True
@@ -185,7 +187,7 @@ def _cmd_skill(state: SessionState, arg: str, confirm_gate) -> bool:
     rest = arg.split(None, 1)
     if not rest:
         state.console.info("usage: /skill <name> [task]")
-        state.console.info(f"  skills: {', '.join(_skill_names())}")
+        state.console.info(f"  skills: {', '.join(agent.list_skills())}")
         return True
     name = rest[0]
     task = rest[1] if len(rest) > 1 else ""
@@ -213,33 +215,42 @@ def _cmd_undo(state: SessionState, _arg: str) -> bool:
 
 def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
     transcript = memory.read_session(state.session_log, max_chars=12000)
-    prompt = agent.load_prompt("compact") + "\n\nTranscript:\n" + transcript
+    prompt = agent.load_skill("compact") + "\n\nTranscript:\n" + transcript
     if arg:
         prompt += "\n\nFocus: " + arg
     _run_turn(state, prompt, confirm_gate)
     return True
 
 
-def _cmd_skills(state: SessionState, _arg: str) -> bool:
-    names = _skill_names()
-    shortcuts = {
-        "ceo": "/ceo",
-        "investigate": "/investigate",
-        "review": "/review",
-        "learn": "/learn",
-        "qa": "/qa",
-        "retro": "/retro",
-        "compact": "/compact",
-    }
+def _cmd_skills(state: SessionState, arg: str, confirm_gate) -> bool:
+    parts = arg.split(None, 2)
+    if parts and parts[0] == "new":
+        if len(parts) < 2:
+            state.console.info("usage: /skills new <name> [brief]")
+            return True
+        from .cli import cmd_skills_new
+        cmd_skills_new(
+            state.cfg, parts[1], parts[2] if len(parts) > 2 else "", state.console,
+            prompt_session=state.prompt_session,
+        )
+        # Rebuild slash commands so a newly saved skill gets /name immediately
+        global SLASH_COMMANDS
+        SLASH_COMMANDS = _build_slash_commands(confirm_gate)
+        return True
+
+    names = agent.list_skills()
     for name in names:
-        blurb = _skill_blurb(name)
-        shortcut = shortcuts.get(name, f"/skill {name}")
-        line = f"  {shortcut}"
+        blurb = agent.skill_blurb(name)
+        line = f"  /{name}"
         if blurb:
             line += f"  — {blurb}"
+        path = agent.skill_path(name)
+        if path and path.parent == agent.USER_SKILLS_DIR:
+            line += "  (user)"
         state.console.info(line)
     if not names:
-        state.console.info("(no skill prompts in prompts/)")
+        state.console.info("(no skills yet)")
+    state.console.hint("  create: /skills new <name> [brief]")
     return True
 
 
@@ -341,11 +352,23 @@ def _cmd_context(state: SessionState, _arg: str) -> bool:
     return True
 
 
+def _cmd_transcript(state: SessionState, _arg: str) -> bool:
+    """Open the rendered session transcript in less (q to return)."""
+    from .markdown_view import page_transcript
+    state.console.hint("[opening transcript in less — press q to return]")
+    page_transcript(state.messages, color=state.console.t._on)
+    return True
+
+
 def _build_slash_commands(confirm_gate) -> list:
-    return [
+    commands = [
         SlashCommand("/help", "show available commands", _cmd_help),
         SlashCommand("/stats", "show token usage and session activity", _cmd_stats),
-        SlashCommand("/skills", "list skill prompts with short descriptions", _cmd_skills),
+        SlashCommand("/transcript", "view rendered session in less (q to quit)",
+                     _cmd_transcript),
+        SlashCommand("/skills", "list skills, or: new <name> [brief] to author one",
+                     lambda s, a: _cmd_skills(s, a, confirm_gate),
+                     "[new <name> brief]", accepts_arg=True),
         SlashCommand("/history", "list recent session logs",
                      lambda s, a: _cmd_history(s, a), "[n]", accepts_arg=True),
         SlashCommand("/checkpoints", "list saved checkpoints",
@@ -360,16 +383,6 @@ def _build_slash_commands(confirm_gate) -> list:
         SlashCommand("/undo", "drop the last user turn from the in-memory thread", _cmd_undo),
         SlashCommand("/compact", "summarize thread for context recovery",
                      lambda s, a: _cmd_compact(s, a, confirm_gate), "[focus]", accepts_arg=True),
-        SlashCommand("/ceo", "strategy / plan review (founder mode)",
-                     lambda s, a: _run_named_skill(s, "ceo", a, confirm_gate), "[plan]", accepts_arg=True),
-        SlashCommand("/review", "pre-landing code review",
-                     lambda s, a: _run_named_skill(s, "review", a, confirm_gate), "[scope]", accepts_arg=True),
-        SlashCommand("/investigate", "root-cause debugging",
-                     lambda s, a: _run_named_skill(s, "investigate", a, confirm_gate), "[symptom]", accepts_arg=True),
-        SlashCommand("/learn", "curate project learnings",
-                     lambda s, a: _run_named_skill(s, "learn", a, confirm_gate), "[query]", accepts_arg=True),
-        SlashCommand("/qa", "verify changes end-to-end",
-                     lambda s, a: _run_named_skill(s, "qa", a, confirm_gate), "[scope]", accepts_arg=True),
         SlashCommand("/new", "reset conversation (memory context re-injected)", _cmd_new),
         SlashCommand("/model", "switch model, or list models with no argument",
                      lambda s, a: _cmd_model(s, a), "<name>", accepts_arg=True),
@@ -385,6 +398,18 @@ def _build_slash_commands(confirm_gate) -> list:
         SlashCommand("/exit", "exit", lambda s, a: False, exits=True),
         SlashCommand("/q", "exit", lambda s, a: False, exits=True),
     ]
+    taken = {c.name for c in commands}
+    for name in agent.list_skills():
+        slash = f"/{name}"
+        if slash in taken:
+            continue
+        blurb = agent.skill_blurb(name) or f"run {name} skill"
+        commands.append(SlashCommand(
+            slash, blurb,
+            lambda s, a, n=name: _run_named_skill(s, n, a, confirm_gate),
+            "[task]", accepts_arg=True,
+        ))
+    return commands
 
 
 # Built at runtime in run_repl so confirm_gate is in closures
@@ -428,67 +453,22 @@ def _dispatch_slash(state: SessionState, line: str) -> bool:
     return True
 
 
-def _setup_readline(console: Console) -> None:
-    if not sys.stdin.isatty():
-        return
+def _require_prompt_toolkit(console: Console) -> bool:
     try:
-        import readline
+        import prompt_toolkit  # noqa: F401
+        return True
     except ImportError:
-        return
-
-    skills = _skill_names()
-    descriptions = _command_descriptions()
-    names = _command_names()
-    is_libedit = "libedit" in (readline.__doc__ or "")
-
-    def completer(text, state):
-        line = readline.get_line_buffer()
-        if not line.startswith("/"):
-            return None
-        beg = readline.get_begidx()
-        skill_prefix = "/skill "
-        if line.startswith(skill_prefix) and beg >= len(skill_prefix):
-            word = text or line[beg:readline.get_endidx()]
-            opts = [s for s in skills if s.startswith(word)]
-        else:
-            word = text or line[beg:readline.get_endidx()]
-            opts = [c for c in names if c.startswith(word)]
-        if state < len(opts):
-            return opts[state]
-        return None
-
-    def display_hook(substitution, matches, longest_match_length):
-        line = readline.get_line_buffer()
-        skill_mode = line.startswith("/skill ")
-        if is_libedit:
-            if len(matches) > 1:
-                console.completion_menu(
-                    matches, descriptions, skill_mode=skill_mode, redisplay=False,
-                )
-        else:
-            console.completion_menu(
-                matches, descriptions, skill_mode=skill_mode, redisplay=True,
-            )
-
-    readline.set_completer(completer)
-    readline.set_completer_delims(" \t\n")
-    if hasattr(readline, "set_completion_append_character"):
-        readline.set_completion_append_character(" ")
-    if is_libedit:
-        readline.parse_and_bind("bind ^I rl_complete")
-    else:
-        readline.parse_and_bind("tab: complete")
-    if hasattr(readline, "set_completion_display_matches_hook"):
-        readline.set_completion_display_matches_hook(display_hook)
+        console.error(
+            "error: prompt_toolkit is required for the interactive REPL.\n"
+            "  Run:  bash lmloop/setup-lmloop.sh\n"
+            "  Or:   python3 -m pip install -r lmloop/requirements.txt"
+        )
+        return False
 
 
 def run_repl(cfg: dict, console: "Console | None" = None,
              skill: "str | None" = None, first_task: "str | None" = None) -> int:
     console = console or Console(cfg.get("color", True))
-    confirm_gate = _make_confirm_gate(console)
-
-    global SLASH_COMMANDS
-    SLASH_COMMANDS = _build_slash_commands(confirm_gate)
 
     try:
         model = agent.ensure_server(cfg, echo=console.info)
@@ -506,24 +486,57 @@ def run_repl(cfg: dict, console: "Console | None" = None,
         console=console,
         context_limit=agent.get_context_limit(model, cfg),
     )
+    confirm_gate = _make_confirm_gate(console, lambda: state.prompt_session)
 
-    _setup_readline(console)
-    console.banner(state.model, slug)
+    global SLASH_COMMANDS
+    SLASH_COMMANDS = _build_slash_commands(confirm_gate)
+
+    interactive = sys.stdin.isatty()
+    prompt_session = None
+    ExitREPL = None
+    read_line = None
+    if interactive:
+        if not _require_prompt_toolkit(console):
+            return 1
+        from .prompt import ExitREPL as _ExitREPL
+        from .prompt import build_prompt_session, read_line as _read_line
+        ExitREPL = _ExitREPL
+        read_line = _read_line
+        prompt_session = build_prompt_session(
+            commands_provider=lambda: SLASH_COMMANDS,
+            state_getter=lambda: state,
+            color=bool(cfg.get("color", True)),
+        )
+        state.prompt_session = prompt_session
+
+    console.banner(slug)
 
     if skill:
-        state.messages.append({"role": "user", "content": agent.load_prompt(skill)})
-    if first_task:
-        _run_turn(state, first_task, confirm_gate)
-        if not sys.stdin.isatty():
+        try:
+            prompt_text = agent.load_skill(skill, public_only=True)
+        except FileNotFoundError as e:
+            console.error(str(e))
+            return 1
+        text = prompt_text + ("\n\nTask: " + first_task if first_task else "")
+        _run_turn(state, text, confirm_gate)
+        if not interactive:
             return 0
+    elif first_task:
+        _run_turn(state, first_task, confirm_gate)
+        if not interactive:
+            return 0
+
+    _exit_types = (EOFError, KeyboardInterrupt)
+    if ExitREPL is not None:
+        _exit_types = (ExitREPL, EOFError, KeyboardInterrupt)
 
     while True:
         try:
-            line = console.read_prompt(
-                state.stats, state.user_turns, state.context_limit,
-                state.messages, state.context_reserve,
-            )
-        except (EOFError, KeyboardInterrupt):
+            if prompt_session is not None and read_line is not None:
+                line = read_line(prompt_session)
+            else:
+                line = input(console.prompt(state.model)).strip()
+        except _exit_types:
             print()
             return 0
         if not line:

@@ -1,6 +1,8 @@
 """Tests for lmloop terminal UI helpers."""
 
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from lmloop.ui import Console, context_bar, context_fill, fresh_stats
 
@@ -50,8 +52,18 @@ class UiTests(unittest.TestCase):
         self.assertLessEqual(len(out), 41)
 
     def test_prompt_is_readline_safe(self):
-        self.assertEqual(Console().prompt(), "› ")
-        self.assertNotIn("\n", Console().prompt())
+        from lmloop.ui import format_input_prompt, short_path
+
+        cwd = Path("/home/u/demo")
+        with patch("lmloop.ui.Path.cwd", return_value=cwd), \
+             patch("lmloop.ui.Path.home", return_value=Path("/home/u")), \
+             patch.object(Path, "resolve", lambda self: self):
+            text = Console().prompt("org/my-model")
+            self.assertEqual(short_path(Path("/home/u/proj")), "~/proj")
+            self.assertEqual(format_input_prompt("org/my-model"), text)
+        self.assertEqual(text, "~/demo · my-model › ")
+        self.assertNotIn("\n", text)
+        self.assertTrue(text.endswith(" › "))
 
 
 if __name__ == "__main__":

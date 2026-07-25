@@ -8,3 +8,4 @@ tmux/**
 vim/spell/*
 __pycache__/
 *.pyc
+lmloop/.venv/

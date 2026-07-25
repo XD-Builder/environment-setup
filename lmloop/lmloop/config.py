@@ -4,6 +4,8 @@ State layout (gstack-inspired, file-only):
 
     ~/.lmloop/
     ├── config.json                    # user settings
+    ├── history                        # REPL prompt history (prompt_toolkit)
+    ├── skills/<name>.md               # user-authored skills (override packaged)
     └── projects/<slug>/
         ├── learnings.jsonl            # append-only, dedup at read time
         ├── decisions.jsonl            # event-sourced (decide / supersede)
