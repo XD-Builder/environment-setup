@@ -4,6 +4,12 @@
 
 local map = vim.keymap.set
 
+-- Free Alt-j/k for vim-tmux-navigator (LazyVim defaults use these to move lines).
+for _, mode in ipairs({ "n", "i", "v" }) do
+  pcall(vim.keymap.del, mode, "<A-j>")
+  pcall(vim.keymap.del, mode, "<A-k>")
+end
+
 -- Save / quit
 map({ "n", "i" }, "<C-c>", "<esc><cmd>write<cr>", { desc = "Save file" })
 map("n", "<leader>x", "<cmd>update<cr>", { desc = "Save file" })

@@ -16,7 +16,6 @@ call plug#begin('~/.vim/plugged')        " Start vim-plug
 Plug 'airblade/vim-gitgutter'            " Provides nice gutter for file addition in git control
 Plug 'easymotion/vim-easymotion'         " Allows search with ,ces or ,ce{l|k}
 Plug 'fatih/vim-go'                      " Go development inside vim. :GoBuild, GoTest, GoDef, GoCoverage, etc..
-Plug 'preservim/tabular'                 " Allow tabularize data
 Plug 'haroldjin/vim-essentials'          " Essential tools for everyday vimer
 Plug 'honza/vim-snippets'                " Snippet autocompletes data for you, customizable
 Plug 'janko/vim-test'                    " A Vim wrapper for running tests on different granularities.
@@ -34,10 +33,23 @@ Plug 'tpope/vim-surround'                " Powerful cs, ds, ys (creates new surr
 Plug 'vim-airline/vim-airline'           " Status bar display more info
 Plug 'vim-airline/vim-airline-themes'    " Theme for airline
 Plug 'dense-analysis/ale'                " Async Lint Engine running in the background for Python, C++, etc..
+Plug 'christoomey/vim-tmux-navigator'    " Alt-hjkl across vim splits and tmux panes
 
 call plug#end()
 filetype plugin indent on
 syntax on
+" }}}
+" {{{ vim-tmux-navigator (Alt-hjkl; matches tmux @vim_navigator_mapping_*)
+let g:tmux_navigator_no_mappings = 1
+" Terminal Vim often receives Alt as ESC+key; teach Vim the Meta keycodes.
+execute "set <M-h>=\eh"
+execute "set <M-j>=\ej"
+execute "set <M-k>=\ek"
+execute "set <M-l>=\el"
+nnoremap <silent> <M-h> :TmuxNavigateLeft<cr>
+nnoremap <silent> <M-j> :TmuxNavigateDown<cr>
+nnoremap <silent> <M-k> :TmuxNavigateUp<cr>
+nnoremap <silent> <M-l> :TmuxNavigateRight<cr>
 " }}}
 " {{{ ALE
 " Bottom statusline display
