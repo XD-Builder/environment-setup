@@ -53,7 +53,6 @@
     * `<C-p>` / `,pf` - find files
     * `,pb` - buffers
     * `,pr` - ripgrep
-    * `<C-h/j/k/l>` - move across Neovim splits and tmux panes (vim-tmux-navigator)
     * `,x` / `<C-c>` / insert `jk` - save; `,e` / `,E` - quit / force quit all
     * `,tt` `,tn` `,tp` `,tc` - tabs; `,bn` `,bp` `,bc` - buffers
     * `,wh` `,wj` `,wk` `,wl` - resize windows
@@ -119,7 +118,6 @@
         * Tmux plugin manager installs and loads tmux plugins. It's useful because it manages plugin installation, update and removal from GitHub or any other git repos.
         * Tmux Resurrect restores tmux environment after restart. It's useful when you want to persist don't want to lose all the running programs, working directories, pane layout and more. It optionally restores vim and neovim sessions.
             * Configures resurrection of vim and neovim sessions.
-            * Includes [vim-tmux-navigator](https://github.com/christoomey/vim-tmux-navigator) so `C-h/j/k/l` moves across vim/nvim splits and tmux panes (Alt-hjkl pane nav without prefix is unchanged).
     * Sets global display and control settings
         * repeat key time is set to 6 seconds
     * Sets window style, purple in this case, and other window settings
