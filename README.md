@@ -11,7 +11,7 @@
 ## Features
 1. Mac OS X and linux dependencies setup support
 2. Shell, vim, neovim (LazyVim) and tmux environment setup.
-3. lmloop: a fully-local agent loop on LM Studio with tools + per-project memory (see [lmloop/README.md](lmloop/README.md)).
+3. lmloop: a fully-local agent loop on LM Studio with tools + per-project memory; REPL uses prompt_toolkit (see [lmloop/README.md](lmloop/README.md)).
 
 # Shell
 ## About environment-setup zsh
@@ -25,7 +25,7 @@
     * Shell tooling: `fzf`, `tmux`, `brew`
     * Each plugin guards on its binary being present (or is alias-only), so listing a tool you haven't installed is harmless.
 * Some CLIs ship their own completion generator and aren't covered by an oh-my-zsh plugin. These are loaded by `load_completion` in `shell/.zshrc`, which caches the generated script under `~/.zsh/completion-cache` and only regenerates it when the tool's binary changes (e.g. after an upgrade):
-    * `gh` (GitHub CLI) and `supabase`.
+    * `gh` (GitHub CLI), `supabase`, and `lmloop`.
     * To add another such tool, append a line like `load_completion <name> <command that prints a zsh completion script>` (e.g. `load_completion vault vault -autocomplete-install` style generators).
 * For personal overrides (aliases, env vars, paths), create `~/.zshrc.local` yourself — it is sourced from `shell/.zshrc` when present and is not managed by this repo.
 

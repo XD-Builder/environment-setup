@@ -129,15 +129,20 @@ class Console:
     def __init__(self, color: bool = True):
         self.t = Theme(color)
 
-    def banner(self, model: str, project: str) -> None:
+    def banner(self, project: str) -> None:
         t = self.t
         print(
-            f"{t.c('lmloop', t.bold)} · "
-            f"{t.c('model=', t.dim)}{t.c(model, t.cyan)} · "
             f"{t.c('project=', t.dim)}{t.c(project, t.cyan)} · "
             f"{t.c('/help', t.green)} for commands · "
-            f"{t.c('Tab', t.green)} completes /commands"
+            f"{t.c('Tab', t.green)} /cmds · "
+            f"{t.c('@file', t.green)} · "
+            f"{t.c('/transcript', t.green)}"
         )
+
+    def print_markdown(self, text: str) -> None:
+        """Render assistant markdown to the terminal."""
+        from .markdown_view import print_markdown
+        print_markdown(text, color=self.t._on)
 
     def status_line(self, stats: dict, user_turns: int, context_limit: int = 0,
                     messages: "list | None" = None, reserve: int = 2048,
@@ -175,7 +180,7 @@ class Console:
         Status is painted on the right, then readline owns the ``› `` prompt on
         the left — never ``input(\"\")`` with a hand-drawn prompt (breaks Ctrl+W).
         """
-        left = "› "
+        left = format_input_prompt()
         status = self.status_line(
             stats, user_turns, context_limit, messages, reserve, inline=True,
         )
@@ -319,7 +324,10 @@ class Console:
             pad = max(1, 22 - len(cmd.name) - len(arg))
             lines.append(f"  {name}{arg}{' ' * pad}{cmd.desc}")
         lines.append("")
-        lines.append(f"  {t.c('Tab', t.green)} completes /commands and /skill names")
+        lines.append(f"  {t.c('Tab', t.green)} completes /commands, /skill names, and @files")
+        lines.append(
+            f"  {t.c('Ctrl-C', t.green)} dismisses / @ completion, then twice to exit"
+        )
         return "\n".join(lines)
 
     def tool_call(self, name: str, args_preview: str) -> None:
@@ -338,9 +346,9 @@ class Console:
     def info(self, msg: str) -> None:
         print(msg)
 
-    def prompt(self) -> str:
-        """Plain readline-safe prompt — no ANSI or leading newline."""
-        return "› "
+    def prompt(self, model: str = "") -> str:
+        """Plain readline-safe prompt — decorative only, never sent to the model."""
+        return format_input_prompt(model)
 
     def completion_menu(self, matches: list, descriptions: dict,
                         skill_mode: bool = False, redisplay: bool = True) -> None:
@@ -370,3 +378,53 @@ class Console:
     def unknown_command(self) -> None:
         help_cmd = self.t.c("/help", self.t.green)
         self.hint(f"  unknown command — try {help_cmd} (Tab to complete /commands)")
+
+
+def short_path(path: "Path | None" = None, max_len: int = 40) -> str:
+    """Home-relative cwd for display; truncates from the left when long."""
+    p = (path or Path.cwd()).resolve()
+    try:
+        display = "~/" + str(p.relative_to(Path.home()))
+    except ValueError:
+        display = str(p)
+    if len(display) > max_len:
+        display = "…" + display[-(max_len - 1):]
+    return display
+
+
+def short_model_name(model: str, max_len: int = 28) -> str:
+    """Last path segment of a model id, truncated for the prompt."""
+    if not model:
+        return ""
+    name = model.rsplit("/", 1)[-1]
+    if len(name) > max_len:
+        return name[: max_len - 1] + "…"
+    return name
+
+
+def format_input_prompt(model: str = "", cwd: "Path | None" = None) -> str:
+    """Decorative REPL prompt text (cwd · model ›). Not LLM input."""
+    parts = [short_path(cwd)]
+    name = short_model_name(model)
+    if name:
+        parts.append(name)
+    return " · ".join(parts) + " › "
+
+
+def ask_yes_no(message: str, prompt_session=None) -> bool:
+    """Read a y/N answer. Prefer prompt_session so REPL display stays intact."""
+    try:
+        if prompt_session is not None:
+            answer = prompt_session.prompt(message)
+        else:
+            answer = input(message)
+        return (answer or "").strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    except Exception as e:
+        # prompt.ExitREPL (double Ctrl-C) during an in-REPL confirm
+        if type(e).__name__ == "ExitREPL":
+            print()
+            return False
+        raise

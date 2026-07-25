@@ -1,9 +1,11 @@
 #!/bin/bash
-# One-time setup for lmloop. Zero pip dependencies (stdlib only, Python 3.9+).
-# Symlinks the launcher into ~/.local/bin and checks the LM Studio toolchain.
+# One-time setup for lmloop. Agent loop is stdlib-only; the interactive REPL
+# requires prompt_toolkit + rich (installed into lmloop/.venv). Symlinks the
+# launcher into ~/.local/bin and checks the LM Studio toolchain.
 set -e
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+VENV="$HERE/.venv"
 
 echo "== lmloop setup =="
 
@@ -15,7 +17,17 @@ fi
 PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 echo "python3 $PYVER found"
 
-# 2. Launcher symlink
+# 2. Local venv + REPL dependency (prompt_toolkit)
+echo "creating $VENV and installing prompt_toolkit + rich…"
+python3 -m venv "$VENV"
+# shellcheck disable=SC1091
+source "$VENV/bin/activate"
+python -m pip install --upgrade pip >/dev/null
+python -m pip install -r "$HERE/requirements.txt"
+python -c 'import prompt_toolkit; print("prompt_toolkit", prompt_toolkit.__version__)'
+deactivate
+
+# 3. Launcher symlink
 mkdir -p "$HOME/.local/bin"
 chmod +x "$HERE/bin/lmloop"
 ln -sfn "$HERE/bin/lmloop" "$HOME/.local/bin/lmloop"
@@ -30,7 +42,7 @@ case ":$PATH:" in
     ;;
 esac
 
-# 3. LM Studio toolchain (informational — lmloop also works against any
+# 4. LM Studio toolchain (informational — lmloop also works against any
 #    OpenAI-compatible server via `lmloop config set base_url <url>`)
 echo
 if command -v lms >/dev/null 2>&1; then

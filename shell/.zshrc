@@ -112,6 +112,7 @@ load_completion() {
 
 load_completion gh       gh completion -s zsh
 load_completion supabase supabase completion zsh
+load_completion lmloop   lmloop completion zsh
 
 # Case-insensitive, partial-word and substring matching while completing.
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'

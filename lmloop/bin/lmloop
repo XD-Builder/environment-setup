@@ -1,6 +1,7 @@
 #!/bin/bash
 # lmloop launcher — resolves the repo location through this script's own path
-# (works when symlinked from ~/.local/bin), then runs the stdlib-only package.
+# (works when symlinked from ~/.local/bin), prefers lmloop/.venv when present,
+# then runs the package.
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
@@ -9,4 +10,10 @@ while [ -L "$SOURCE" ]; do
 done
 LMLOOP_ROOT="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
 
-PYTHONPATH="$LMLOOP_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m lmloop "$@"
+if [ -x "$LMLOOP_ROOT/.venv/bin/python" ]; then
+  PYTHON="$LMLOOP_ROOT/.venv/bin/python"
+else
+  PYTHON="python3"
+fi
+
+PYTHONPATH="$LMLOOP_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "$PYTHON" -m lmloop "$@"
