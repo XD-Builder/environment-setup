@@ -18,6 +18,9 @@ from pathlib import Path
 from .config import project_dir
 
 LEARNING_TYPES = ("pattern", "pitfall", "preference", "architecture", "tool", "operational")
+MIN_TERM_LEN = 3
+DECAY_DAYS = 30.0
+CHECKPOINT_MAX_AGE_H = 24 * 14
 
 
 def _now() -> str:
@@ -74,7 +77,11 @@ def _effective_confidence(row: dict) -> float:
         age_days = (datetime.now(timezone.utc) - ts).days
     except (KeyError, ValueError):
         age_days = 0
-    return conf - (age_days / 30.0)
+    return conf - (age_days / DECAY_DAYS)
+
+
+def _query_terms(query: str) -> "list[str]":
+    return [t for t in re.split(r"\W+", (query or "").lower()) if len(t) >= MIN_TERM_LEN]
 
 
 def get_learnings(query: str = "", limit: int = 20, slug: "str | None" = None) -> "list[dict]":
@@ -86,7 +93,7 @@ def get_learnings(query: str = "", limit: int = 20, slug: "str | None" = None) -
             by_key[row["key"]] = row
     items = [r for r in by_key.values() if _effective_confidence(r) > 0]
     if query:
-        terms = [t for t in re.split(r"\W+", query.lower()) if len(t) > 2]
+        terms = _query_terms(query)
         def score(r: dict) -> int:
             hay = (r.get("key", "") + " " + r.get("insight", "")).lower()
             return sum(1 for t in terms if t in hay)
@@ -95,6 +102,28 @@ def get_learnings(query: str = "", limit: int = 20, slug: "str | None" = None) -
     else:
         items.sort(key=lambda r: -_effective_confidence(r))
     return items[:limit]
+
+
+def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10,
+                  slug: "str | None" = None) -> str:
+    """Shared keyword search over learnings + decisions (used by recall_memory)."""
+    terms = _query_terms(query)
+    learnings = get_learnings(query=query, limit=learning_limit, slug=slug)
+    decisions = get_decisions(limit=50, slug=slug)
+    if terms:
+        decisions = [
+            d for d in decisions
+            if any(t in (d.get("decision") or "").lower() for t in terms)
+        ]
+    decisions = decisions[:decision_limit]
+    out = []
+    if learnings:
+        out.append("Learnings:\n" + "\n".join(
+            f"- ({r['type']}, {r['confidence']}/10) {r['insight']}" for r in learnings))
+    if decisions:
+        out.append("Decisions:\n" + "\n".join(
+            f"- [{d['id']}] {d['decision']}" for d in decisions))
+    return "\n\n".join(out) or "(no memory matches)"
 
 
 # ---------------------------------------------------------------- decisions
@@ -201,9 +230,8 @@ def read_checkpoint_body(path: Path) -> str:
     return text.strip()
 
 
-def resolve_checkpoint(query: str = "", slug: "str | None" = None) -> "Path | None":
-    """Find checkpoint by 'latest', filename stem, or 1-based global index."""
-    files = all_checkpoints(slug=slug)
+def _resolve_by_query(files: "list[Path]", query: str) -> "Path | None":
+    """Resolve by latest / index / exact stem / unique substring. None if ambiguous."""
     if not files:
         return None
     q = (query or "latest").strip().lower()
@@ -213,28 +241,26 @@ def resolve_checkpoint(query: str = "", slug: "str | None" = None) -> "Path | No
         idx = int(q) - 1
         if 0 <= idx < len(files):
             return files[idx]
-    for path in reversed(files):
-        if q in path.stem.lower():
-            return path
+        return None
+    exact = [p for p in files if p.stem.lower() == q]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return None
+    hits = [p for p in files if q in p.stem.lower()]
+    if len(hits) == 1:
+        return hits[0]
     return None
+
+
+def resolve_checkpoint(query: str = "", slug: "str | None" = None) -> "Path | None":
+    """Find checkpoint by 'latest', filename stem, or 1-based global index."""
+    return _resolve_by_query(all_checkpoints(slug=slug), query)
 
 
 def resolve_session(query: str = "", slug: "str | None" = None) -> "Path | None":
     """Find session log by 'latest', stem, or 1-based global index."""
-    files = all_sessions(slug=slug)
-    if not files:
-        return None
-    q = (query or "latest").strip().lower()
-    if q in ("latest", "last", ""):
-        return files[-1]
-    if q.isdigit():
-        idx = int(q) - 1
-        if 0 <= idx < len(files):
-            return files[idx]
-    for path in reversed(files):
-        if q in path.stem.lower():
-            return path
-    return None
+    return _resolve_by_query(all_sessions(slug=slug), query)
 
 
 def session_preview(path: Path, max_chars: int = 120) -> str:
@@ -265,6 +291,6 @@ def context_block(cfg: dict, slug: "str | None" = None) -> str:
     cp = latest_checkpoint(slug=slug)
     if cp:
         age_h = (time.time() - cp.stat().st_mtime) / 3600
-        if age_h < 24 * 14:
+        if age_h < CHECKPOINT_MAX_AGE_H:
             parts.append(f"Most recent checkpoint ({age_h:.0f}h ago):\n{cp.read_text()[:2000]}")
     return "\n\n".join(parts)

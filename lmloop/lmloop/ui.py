@@ -99,6 +99,8 @@ def context_fill(stats: dict, messages: list, context_limit: int, reserve: int) 
 
 def context_bar(used: int, limit: int, ratio: float, width: int = 16,
                 compact: bool = False, theme: "Theme | None" = None) -> str:
+    """Render a fill bar. ``limit`` should be the same denominator as ``ratio``
+    (typically effective = context_limit - reserve)."""
     if limit <= 0:
         return ""
     filled = min(width, int(ratio * width))
@@ -158,14 +160,14 @@ class Console:
     def _status_parts(self, stats: dict, user_turns: int, context_limit: int,
                       messages: list, reserve: int) -> "str | None":
         total = stats.get("total_tokens", 0)
-        used, _, ratio = context_fill(stats, messages, context_limit, reserve)
+        used, effective, ratio = context_fill(stats, messages, context_limit, reserve)
         has_ctx = context_limit > 0 and (used > 0 or user_turns > 0)
         if user_turns <= 0 and not total and not has_ctx:
             return None
         t = self.t
         parts = []
         if has_ctx:
-            parts.append(context_bar(used, context_limit, ratio, compact=True, theme=t))
+            parts.append(context_bar(used, effective, ratio, compact=True, theme=t))
         if total:
             parts.append(t.c(f"{format_tokens(total)} session", t.yellow))
         if user_turns > 0:
@@ -228,9 +230,9 @@ class Console:
         last_out = stats.get("last_completion_tokens", 0)
         parts = []
         if context_limit and messages is not None:
-            used, _, ratio = context_fill(stats, messages, context_limit, reserve)
+            used, effective, ratio = context_fill(stats, messages, context_limit, reserve)
             if used:
-                parts.append(context_bar(used, context_limit, ratio, width=20, theme=t))
+                parts.append(context_bar(used, effective, ratio, width=20, theme=t))
         if total:
             parts.append(t.c(
                 f"{format_tokens(total)} session"
@@ -274,11 +276,12 @@ class Console:
             est = " (estimated)" if not stats.get("last_prompt_tokens") and used else ""
             lines.append(row(
                 "context fill",
-                context_bar(used, context_limit, ratio, width=24, theme=t) + est,
+                context_bar(used, effective, ratio, width=24, theme=t) + est,
             ))
             lines.append(row(
                 "window",
-                f"{format_tokens(context_limit)} total · {format_tokens(reserve)} reserved for reply",
+                f"{format_tokens(effective)} usable · {format_tokens(context_limit)} total · "
+                f"{format_tokens(reserve)} reserved for reply",
                 t.dim,
             ))
         elif stats.get("last_prompt_tokens"):

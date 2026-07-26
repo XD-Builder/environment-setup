@@ -17,6 +17,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 STATE_ROOT = Path(os.environ.get("LMLOOP_HOME", str(Path.home() / ".lmloop")))
@@ -25,28 +26,49 @@ CONFIG_PATH = STATE_ROOT / "config.json"
 DEFAULTS = {
     "base_url": "http://127.0.0.1:1234/v1",
     "model": "",  # empty = first model the server reports
-    "max_rounds": 25,
+    "max_rounds": 60,
     "max_continue_nudges": 2,  # auto-resume when model narrates next step without tools
     "temperature": 0.7,
     "timeout_s": 600,
     "stream": True,  # stream tokens as they arrive (SSE); false = wait for full reply
     "context_learnings": 8,
     "context_decisions": 6,
-    "confirm_shell": True,
+    "confirm_shell": True,  # master: False disables all shell confirms
+    "confirm_destructive": True,
+    "confirm_shell_syntax": False,  # pipes/redirections; off to avoid fatigue
+    "shell_timeout_s": 120,
+    "web_timeout_s": 30,
+    "max_tool_output": 12000,
     "auto_start_server": True,
     "color": True,
     "context_length": 0,  # 0 = auto-detect from LM Studio; manual override in tokens
     "context_reserve": 2048,  # tokens reserved for model reply when showing fill bar
 }
 
+_CONFIG_WARNED = False
+
 
 def load_config() -> dict:
+    global _CONFIG_WARNED
     cfg = dict(DEFAULTS)
     if CONFIG_PATH.exists():
         try:
-            cfg.update(json.loads(CONFIG_PATH.read_text()))
-        except (json.JSONDecodeError, OSError):
-            pass
+            raw = json.loads(CONFIG_PATH.read_text())
+            if isinstance(raw, dict):
+                cfg.update(raw)
+            elif not _CONFIG_WARNED:
+                print(
+                    f"[lmloop] warning: {CONFIG_PATH} is not a JSON object; using defaults",
+                    file=sys.stderr,
+                )
+                _CONFIG_WARNED = True
+        except (json.JSONDecodeError, OSError) as e:
+            if not _CONFIG_WARNED:
+                print(
+                    f"[lmloop] warning: could not load {CONFIG_PATH} ({e}); using defaults",
+                    file=sys.stderr,
+                )
+                _CONFIG_WARNED = True
     return cfg
 
 

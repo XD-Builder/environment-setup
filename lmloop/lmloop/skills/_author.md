@@ -10,9 +10,10 @@ follows for a recurring kind of task.
 - First line must be: `# Skill: <name> — <short blurb>`
 - Use numbered steps or phases, English conditionals, and an explicit report
   format at the end (like other lmloop skills).
-- Keep it actionable and bounded for a local coding/research agent with tools:
-  shell, read/write file, list_dir, search_files, fetch_url, remember,
-  log_decision, recall_memory.
+- Keep it actionable and bounded for a local coding/research agent. Refer to
+  tools by purpose (shell, files, search, web, memory) rather than assuming a
+  fixed name list — the live registry may grow.
+
 - Prefer verify-with-evidence over guesswork. Include safety notes when the
   skill might touch destructive operations.
 - Aim for roughly 30–80 lines — dense, not encyclopedic.
