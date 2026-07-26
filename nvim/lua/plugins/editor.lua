@@ -1,7 +1,20 @@
 -- Small editor tweaks for neo-tree parity with NERDTree ignores.
+-- LazyVim's neo-tree extra binds <leader>e/E to explorer; disable those so
+-- vim-style quit (,e / ,E) wins, and bind ,z for the tree instead.
 return {
   {
     "nvim-neo-tree/neo-tree.nvim",
+    keys = {
+      { "<leader>e", false },
+      { "<leader>E", false },
+      {
+        "<leader>z",
+        function()
+          require("neo-tree.command").execute({ toggle = true, dir = LazyVim.root() })
+        end,
+        desc = "Toggle file tree",
+      },
+    },
     opts = {
       filesystem = {
         filtered_items = {
