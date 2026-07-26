@@ -471,7 +471,7 @@ def _default_echo_delta(piece: str) -> None:
 
 
 class _GeneratingIndicator:
-    """TTY spinner while SSE is in flight and live plain echo is off."""
+    """TTY spinner while waiting for the first streamed token."""
 
     _FRAMES = "⠋⠙⠹⠸⠴⠦⠧⠇⠏"
 
@@ -496,13 +496,19 @@ class _GeneratingIndicator:
         self._shown = False
 
 
-class _StreamPrinter:
-    """Optional live plain-token writer with blank-line suppression.
+def _rich_live_available() -> bool:
+    if not sys.stdout.isatty():
+        return False
+    try:
+        import rich.live  # noqa: F401
+        import rich.markdown  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
-    When ``write`` is None the printer only tracks whether non-whitespace
-    content arrived (silent mode). Display then goes through ``echo`` once
-    per round — required for rich markdown and to avoid plain+rich doubles.
-    """
+
+class _StreamPrinter:
+    """Live plain-token writer with blank-line suppression (or silent tracker)."""
 
     def __init__(self, write=None):
         self._write = write
@@ -547,7 +553,6 @@ class _StreamPrinter:
             self._trailing_nl = "\n"
 
     def finish(self) -> bool:
-        """End the round: at most one trailing newline if live text was shown."""
         self._leading = ""
         if not self._started:
             self._trailing_nl = ""
@@ -557,26 +562,103 @@ class _StreamPrinter:
         return True
 
 
-def _emit_assistant_content(echo, content: str, printer: "_StreamPrinter | None",
-                            live_plain: bool) -> None:
-    """Display assistant text once — never plain draft + echo.
+class _MarkdownLivePrinter:
+    """Stream tokens into a rich.Live Markdown view (live + prettied)."""
 
-    Live plain (opt-in): finish the stream writer and skip echo.
-    Silent (default): echo once (REPL → rich markdown, CLI → print).
-    """
+    def __init__(self, color: bool = True):
+        self._parts: list = []
+        self._leading = ""
+        self._started = False
+        self._live = None
+        self._color = color
+
+    @property
+    def visible(self) -> bool:
+        return self._started
+
+    def feed(self, piece: str) -> None:
+        if not piece:
+            return
+        if not self._started:
+            self._leading += piece
+            if not self._leading.strip():
+                return
+            text = self._leading.lstrip("\r\n")
+            self._leading = ""
+            self._started = True
+            self._ensure_live()
+            if text:
+                self._parts.append(text)
+                self._refresh()
+            return
+        self._parts.append(piece)
+        self._refresh()
+
+    def _ensure_live(self) -> None:
+        if self._live is not None:
+            return
+        from rich.console import Console
+        from rich.live import Live
+        from rich.markdown import Markdown
+
+        console = Console(
+            highlight=False,
+            soft_wrap=True,
+            color_system="auto" if self._color else None,
+            force_terminal=True,
+        )
+        self._live = Live(
+            Markdown(""),
+            console=console,
+            refresh_per_second=12,
+            vertical_overflow="visible",
+        )
+        self._live.start()
+
+    def _refresh(self) -> None:
+        if self._live is None:
+            return
+        from rich.markdown import Markdown
+        self._live.update(Markdown("".join(self._parts)))
+
+    def finish(self) -> bool:
+        self._leading = ""
+        if not self._started:
+            return False
+        if self._live is not None:
+            self._refresh()
+            self._live.stop()
+            self._live = None
+        return True
+
+
+def _emit_assistant_content(echo, content: str, printer, live_mode: str) -> None:
+    """Finish live display; echo only when nothing was streamed on-screen."""
     if printer is not None:
         printer.finish()
-    if not content or live_plain:
+    if not content or live_mode in ("plain", "markdown"):
         return
     echo(content)
 
 
-def _resolve_echo_delta(echo_delta):
-    """Map echo_delta to a live writer or None (silent).
+def _open_live_display(echo_delta, color: bool = True):
+    """Return (printer, mode) where mode is silent|plain|markdown."""
+    if echo_delta is False:
+        return _StreamPrinter(None), "silent"
+    if echo_delta is True:
+        return _StreamPrinter(_default_echo_delta), "plain"
+    if callable(echo_delta):
+        return _StreamPrinter(echo_delta), "plain"
+    # None = auto: stream markdown live when possible, else plain tokens.
+    if _rich_live_available():
+        return _MarkdownLivePrinter(color=color), "markdown"
+    return _StreamPrinter(_default_echo_delta), "plain"
 
-    - ``None`` / ``False`` → silent (default; display via echo when round ends)
-    - ``True`` → live plain stdout
-    - callable → custom live writer
+
+def _resolve_echo_delta(echo_delta):
+    """Back-compat helper for tests: False/None silent writer mapping.
+
+    Prefer ``_open_live_display`` for real display selection.
     """
     if echo_delta is None or echo_delta is False:
         return None
@@ -593,27 +675,36 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
-    is SSE. ``echo_delta`` controls live plain token echo:
-    - ``None`` / ``False`` (default): silent wire stream; show text via ``echo``
-      when each round completes (REPL rich markdown; CLI print)
-    - ``True``: live plain tokens to stdout (no second echo — avoids doubles)
-    - callable: custom live writer (same no-double-echo rule)
+    is SSE and tokens are shown live:
+    - ``echo_delta=None`` (default): rich.Live markdown when available, else plain
+    - ``echo_delta=True``: live plain tokens
+    - ``echo_delta=False``: spinner only; ``echo`` once when the round completes
+    - callable: custom live writer
+    Live modes do not also call ``echo`` (avoids plain+rich doubles).
     """
     if echo_tool is None:
         echo_tool = lambda name, preview: echo(f"  ⚙ {name}({preview})")
-    live_write = _resolve_echo_delta(echo_delta)
-    live_plain = live_write is not None
+    color = bool(cfg.get("color", True))
     tool_specs, impls = tools.build_tools(cfg, confirm_gate=confirm_gate)
     use_stream = bool(cfg.get("stream", True))
     turn_rounds = 0
     turn_tools = 0
     for round_idx in range(cfg.get("max_rounds", 25)):
-        printer = _StreamPrinter(live_write)
-        indicator = _GeneratingIndicator() if use_stream and not live_plain else None
+        printer, live_mode = _open_live_display(echo_delta, color=color)
+        # Spinner for silent rounds; for markdown, until the first visible token.
+        indicator = None
+        if use_stream and live_mode in ("silent", "markdown"):
+            indicator = _GeneratingIndicator()
+
+        def on_delta(piece: str, _printer=printer, _ind=indicator, _mode=live_mode) -> None:
+            was = _printer.visible
+            _printer.feed(piece)
+            if _ind is not None and _mode == "markdown" and _printer.visible and not was:
+                _ind.clear()
 
         msg, usage = _chat(
             cfg, model, messages, tool_specs,
-            on_delta=printer.feed if use_stream else None,
+            on_delta=on_delta if use_stream else None,
             on_activity=indicator.tick if indicator else None,
         )
         if indicator:
@@ -631,7 +722,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
         if content:
             _emit_assistant_content(
-                echo, content, printer if use_stream else None, live_plain,
+                echo, content, printer if use_stream else None, live_mode,
             )
             if session_log:
                 memory.log_event(session_log, "assistant", content)
