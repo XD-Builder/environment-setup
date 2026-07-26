@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import unittest
 from unittest import mock
 
@@ -65,6 +66,21 @@ class StreamPrinterTests(unittest.TestCase):
         p.feed("B")
         self.assertTrue(p.finish())
         self.assertEqual("".join(out), "A\nB\n")
+
+    def test_erase_clears_tracked_output_on_tty(self):
+        out, p = self._collect()
+        p.feed("Hello")
+        p.finish()
+        with mock.patch("sys.stdout.isatty", return_value=True), \
+             mock.patch("sys.stdout.write") as write, \
+             mock.patch("sys.stdout.flush"), \
+             mock.patch("lmloop.agent.shutil.get_terminal_size",
+                        return_value=os.terminal_size((80, 24))):
+            p.erase()
+        written = "".join(c.args[0] for c in write.call_args_list)
+        self.assertIn("\033[1A", written)
+        self.assertIn("\033[J", written)
+        self.assertEqual(p._written, [])
 
 
 class MergeToolCallDeltaTests(unittest.TestCase):

@@ -453,6 +453,9 @@ class _StreamPrinter:
     Models often emit whitespace-only content alongside tool calls. Printing
     those (plus an unconditional trailing newline) produced multiple blank
     lines between ⚙ tool rows in the REPL.
+
+    Tracks written text so the REPL can erase the plain stream and re-render
+    the final reply as markdown.
     """
 
     def __init__(self, write=_default_echo_delta):
@@ -460,6 +463,7 @@ class _StreamPrinter:
         self._leading = ""       # held until first non-whitespace
         self._trailing_nl = ""   # held newlines at end of visible text
         self._started = False
+        self._written: list = []
 
     @property
     def visible(self) -> bool:
@@ -480,6 +484,10 @@ class _StreamPrinter:
             return
         self._emit(piece)
 
+    def _out(self, text: str) -> None:
+        self._written.append(text)
+        self._write(text)
+
     def _emit(self, text: str) -> None:
         i = len(text)
         while i > 0 and text[i - 1] in "\r\n":
@@ -488,9 +496,9 @@ class _StreamPrinter:
         if body:
             if self._trailing_nl:
                 # Collapse any held blank lines to a single separator newline.
-                self._write("\n")
+                self._out("\n")
                 self._trailing_nl = ""
-            self._write(body)
+            self._out(body)
         if nl:
             self._trailing_nl = "\n"
 
@@ -500,9 +508,28 @@ class _StreamPrinter:
         if not self._started:
             self._trailing_nl = ""
             return False
-        self._write("\n")
+        self._out("\n")
         self._trailing_nl = ""
         return True
+
+    def erase(self) -> None:
+        """Clear plain streamed text from a TTY (after finish) so markdown can replace it."""
+        text = "".join(self._written)
+        self._written.clear()
+        if not text or not sys.stdout.isatty():
+            return
+        cols = max(shutil.get_terminal_size((80, 24)).columns, 1)
+        # finish() always ends with \\n, so the cursor sits on the line below.
+        body = text[:-1] if text.endswith("\n") else text
+        if not body:
+            return
+        lines = 0
+        for line in body.split("\n"):
+            lines += max(1, (len(line) + cols - 1) // cols) if line else 1
+        if lines > 0:
+            sys.stdout.write(f"\033[{lines}A")
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
 
 
 # ---------------------------------------------------------------- act loop
@@ -544,8 +571,16 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
         if use_stream:
             printed = printer.finish()
-            if printed and session_log and content:
-                memory.log_event(session_log, "assistant", content)
+            if content:
+                # Live plain stream for responsiveness; on a TTY replace with
+                # echo() (REPL: rich markdown) so final output is prettied.
+                if printed and sys.stdout.isatty():
+                    printer.erase()
+                    echo(content)
+                elif not printed:
+                    echo(content)
+                if session_log:
+                    memory.log_event(session_log, "assistant", content)
         elif content:
             echo(content)
             if session_log:
