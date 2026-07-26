@@ -2,7 +2,6 @@
 
 import io
 import json
-import os
 import unittest
 from unittest import mock
 
@@ -67,20 +66,33 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertTrue(p.finish())
         self.assertEqual("".join(out), "A\nB\n")
 
-    def test_erase_clears_tracked_output_on_tty(self):
-        out, p = self._collect()
-        p.feed("Hello")
-        p.finish()
+    def test_erase_restores_cursor_anchor_on_tty(self):
+        out = []
+        p = agent._StreamPrinter(out.append)
         with mock.patch("sys.stdout.isatty", return_value=True), \
              mock.patch("sys.stdout.write") as write, \
-             mock.patch("sys.stdout.flush"), \
-             mock.patch("lmloop.agent.shutil.get_terminal_size",
-                        return_value=os.terminal_size((80, 24))):
+             mock.patch("sys.stdout.flush"):
+            p.feed("Hello")
+            p.finish()
             p.erase()
-        written = "".join(c.args[0] for c in write.call_args_list)
-        self.assertIn("\033[1A", written)
-        self.assertIn("\033[J", written)
-        self.assertEqual(p._written, [])
+        ansi = "".join(c.args[0] for c in write.call_args_list)
+        self.assertIn("\0337", ansi)   # save cursor before draft
+        self.assertIn("\0338", ansi)   # restore before clear
+        self.assertIn("\033[J", ansi)
+        self.assertEqual("".join(out), "Hello\n")
+        self.assertFalse(p._anchored)
+
+    def test_emit_assistant_always_echoes_markdown_path(self):
+        echoed = []
+        out = []
+        p = agent._StreamPrinter(out.append)
+        with mock.patch("sys.stdout.isatty", return_value=True), \
+             mock.patch("sys.stdout.write"), \
+             mock.patch("sys.stdout.flush"):
+            p.feed("**hi**")
+            agent._emit_assistant_content(echoed.append, "**hi**", p, True)
+        self.assertEqual(echoed, ["**hi**"])
+        self.assertEqual("".join(out), "**hi**\n")
 
 
 class MergeToolCallDeltaTests(unittest.TestCase):

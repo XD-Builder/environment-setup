@@ -454,8 +454,8 @@ class _StreamPrinter:
     those (plus an unconditional trailing newline) produced multiple blank
     lines between ⚙ tool rows in the REPL.
 
-    Tracks written text so the REPL can erase the plain stream and re-render
-    the final reply as markdown.
+    On a TTY, anchors the cursor before the first visible byte so the plain
+    draft can be cleared reliably before rich markdown replaces it.
     """
 
     def __init__(self, write=_default_echo_delta):
@@ -463,7 +463,7 @@ class _StreamPrinter:
         self._leading = ""       # held until first non-whitespace
         self._trailing_nl = ""   # held newlines at end of visible text
         self._started = False
-        self._written: list = []
+        self._anchored = False
 
     @property
     def visible(self) -> bool:
@@ -485,7 +485,14 @@ class _StreamPrinter:
         self._emit(piece)
 
     def _out(self, text: str) -> None:
-        self._written.append(text)
+        if not text:
+            return
+        # DECSC/DECRC: save cursor once before the draft so erase() can restore
+        # without fragile line-counting (wraps, wide glyphs, tmux, …).
+        if not self._anchored and sys.stdout.isatty():
+            sys.stdout.write("\0337")
+            sys.stdout.flush()
+            self._anchored = True
         self._write(text)
 
     def _emit(self, text: str) -> None:
@@ -513,23 +520,31 @@ class _StreamPrinter:
         return True
 
     def erase(self) -> None:
-        """Clear plain streamed text from a TTY (after finish) so markdown can replace it."""
-        text = "".join(self._written)
-        self._written.clear()
-        if not text or not sys.stdout.isatty():
+        """Clear plain streamed draft from a TTY so markdown can replace it."""
+        if not self._anchored:
             return
-        cols = max(shutil.get_terminal_size((80, 24)).columns, 1)
-        # finish() always ends with \\n, so the cursor sits on the line below.
-        body = text[:-1] if text.endswith("\n") else text
-        if not body:
-            return
-        lines = 0
-        for line in body.split("\n"):
-            lines += max(1, (len(line) + cols - 1) // cols) if line else 1
-        if lines > 0:
-            sys.stdout.write(f"\033[{lines}A")
-        sys.stdout.write("\033[J")
-        sys.stdout.flush()
+        if sys.stdout.isatty():
+            # DECRC + erase from cursor to end of screen.
+            sys.stdout.write("\0338\033[J")
+            sys.stdout.flush()
+        self._anchored = False
+
+
+def _emit_assistant_content(echo, content: str, printer: "_StreamPrinter | None",
+                            use_stream: bool) -> None:
+    """Show assistant text via echo() (REPL: rich markdown).
+
+    When streaming on a TTY, the plain live draft is erased first so only the
+    prettied render remains. echo() is always used when there is content —
+    streaming must not permanently bypass markdown rendering.
+    """
+    if not content:
+        return
+    if use_stream and printer is not None:
+        printer.finish()
+        if sys.stdout.isatty():
+            printer.erase()
+    echo(content)
 
 
 # ---------------------------------------------------------------- act loop
@@ -541,7 +556,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
     When streaming is enabled (config ``stream``, default True), content tokens
     are written via ``echo_delta`` (or stdout) as they arrive so the UI is not
-    stuck waiting for a full non-streamed reply.
+    stuck waiting for a full non-streamed reply. After each round with content,
+    ``echo`` is still called (REPL: rich markdown) so final output is prettied.
     """
     if echo_tool is None:
         echo_tool = lambda name, preview: echo(f"  ⚙ {name}({preview})")
@@ -569,22 +585,13 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             assistant_entry["tool_calls"] = tool_calls
         messages.append(assistant_entry)
 
-        if use_stream:
-            printed = printer.finish()
-            if content:
-                # Live plain stream for responsiveness; on a TTY replace with
-                # echo() (REPL: rich markdown) so final output is prettied.
-                if printed and sys.stdout.isatty():
-                    printer.erase()
-                    echo(content)
-                elif not printed:
-                    echo(content)
-                if session_log:
-                    memory.log_event(session_log, "assistant", content)
-        elif content:
-            echo(content)
+        if content:
+            _emit_assistant_content(echo, content, printer if use_stream else None, use_stream)
             if session_log:
                 memory.log_event(session_log, "assistant", content)
+        elif use_stream:
+            # Discard whitespace-only drafts so they don't leave blank lines.
+            printer.finish()
 
         if not tool_calls:
             if stats is not None:
