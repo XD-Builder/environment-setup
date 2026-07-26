@@ -65,6 +65,19 @@ class UiTests(unittest.TestCase):
         self.assertNotIn("\n", text)
         self.assertTrue(text.endswith(" › "))
 
+    def test_confirm_prompt_embeds_command(self):
+        console = Console(color=False)
+        self.assertEqual(console.confirm_prompt(), "  run it? [y/N] ")
+        line = console.confirm_prompt('git push -u origin HEAD && gh pr create')
+        self.assertIn("git push", line)
+        self.assertTrue(line.endswith("[y/N] "))
+
+    def test_ask_yes_no_uses_plain_input(self):
+        from lmloop.ui import ask_yes_no
+        with patch("builtins.input", return_value="y") as mocked:
+            self.assertTrue(ask_yes_no("  run it? [y/N] ", prompt_session=object()))
+            mocked.assert_called_once_with("  run it? [y/N] ")
+
 
 if __name__ == "__main__":
     unittest.main()

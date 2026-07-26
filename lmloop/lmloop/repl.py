@@ -57,13 +57,16 @@ def _fresh_messages(cfg: dict) -> list:
 
 
 def _make_confirm_gate(console: Console, session_getter=None):
+    # session_getter kept for call-site compat; confirms use plain input()
+    # so prompt_toolkit does not redraw over the warning mid-turn.
+    del session_getter
+
     def confirm_gate(command: str) -> bool:
         label = "potentially destructive"
         if tools.needs_shell(command) and not tools.is_destructive(command):
             label = "shell-syntax (pipes/redirections)"
         console.warn(f"\n⚠ {label} command requested:\n    {command}")
-        session = session_getter() if session_getter else None
-        return ask_yes_no(console.confirm_prompt(), prompt_session=session)
+        return ask_yes_no(console.confirm_prompt(command))
     return confirm_gate
 
 

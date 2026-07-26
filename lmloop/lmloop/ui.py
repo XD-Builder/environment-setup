@@ -368,8 +368,14 @@ class Console:
             except ImportError:
                 pass
 
-    def confirm_prompt(self) -> str:
-        return "  run it? [y/N] "
+    def confirm_prompt(self, command: str = "") -> str:
+        """y/N prompt. Optionally embed a short command preview in the line."""
+        if not command:
+            return "  run it? [y/N] "
+        one_line = " ".join(command.split())
+        if len(one_line) > 72:
+            one_line = one_line[:71] + "…"
+        return f"  run it? ({one_line}) [y/N] "
 
     def suggest_command(self, suggestion: str) -> None:
         cmd = self.t.c(suggestion, self.t.green)
@@ -412,19 +418,19 @@ def format_input_prompt(model: str = "", cwd: "Path | None" = None) -> str:
 
 
 def ask_yes_no(message: str, prompt_session=None) -> bool:
-    """Read a y/N answer. Prefer prompt_session so REPL display stays intact."""
+    """Read a y/N answer via plain input().
+
+    Do not nest PromptSession.prompt() here during an agent turn: after
+    streaming, prompt_toolkit redraws the bottom toolbar and can hide the
+    command warning, leaving a bare ``run it? [y/N]`` that looks stuck.
+    ``prompt_session`` is accepted for back-compat but ignored.
+    """
+    del prompt_session  # mid-turn confirms must not nest the REPL session
     try:
-        if prompt_session is not None:
-            answer = prompt_session.prompt(message)
-        else:
-            answer = input(message)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        answer = input(message)
         return (answer or "").strip().lower() == "y"
     except (EOFError, KeyboardInterrupt):
         print()
         return False
-    except Exception as e:
-        # prompt.ExitREPL (double Ctrl-C) during an in-REPL confirm
-        if type(e).__name__ == "ExitREPL":
-            print()
-            return False
-        raise

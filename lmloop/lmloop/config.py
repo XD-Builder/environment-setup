@@ -28,6 +28,7 @@ DEFAULTS = {
     "max_rounds": 25,
     "temperature": 0.7,
     "timeout_s": 600,
+    "stream": True,  # stream tokens as they arrive (SSE); false = wait for full reply
     "context_learnings": 8,
     "context_decisions": 6,
     "confirm_shell": True,
