@@ -214,6 +214,23 @@ def build_prompt_session(
         else:
             b.start_completion(select_first=False)
 
+    # Ctrl-O expands the latest collapsed thinking or tool response once
+    # per collapse payload (new content resets via on_collapse).
+    @kb.add("c-o")
+    def _expand_collapse(event):
+        clear_exit_hint()
+        st = state_getter()
+        if st is None or not getattr(st, "last_collapse_text", ""):
+            return
+        if getattr(st, "collapse_expanded", False):
+            return
+        console = getattr(st, "console", None) or Console(color=color)
+        # Leave the prompt UI, print the block, then redraw.
+        event.app.renderer.erase()
+        console.expand_collapse(st.last_collapse_kind, st.last_collapse_text)
+        st.collapse_expanded = True
+        event.app.invalidate()
+
     def bottom_toolbar():
         st = state_getter()
         if st is not None and getattr(st, "_exit_hint", False):

@@ -86,11 +86,19 @@ def cmd_retro(cfg: dict, count: int, console: Console) -> int:
     task = agent.load_skill("retro") + "\n\n" + _session_transcript_for_retro(sessions)
     memory.log_event(session_log, "user", f"/retro over {len(sessions)} sessions")
     messages.append({"role": "user", "content": task})
-    agent.act(
-        cfg, model, messages, session_log=session_log,
-        confirm_gate=_make_confirm_gate(console),
-        echo_tool=console.tool_call,
-    )
+    try:
+        agent.act(
+            cfg, model, messages, session_log=session_log,
+            confirm_gate=_make_confirm_gate(console),
+            echo_tool=console.tool_call,
+            echo_round=console.round_usage,
+            context_limit=agent.get_context_limit(model, cfg),
+            context_reserve=int(cfg.get("context_reserve") or 2048),
+        )
+    except agent.ServerError as e:
+        memory.log_event(session_log, "system", f"error: {e}")
+        console.error(f"error: {e}")
+        return 1
     return 0
 
 

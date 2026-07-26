@@ -66,6 +66,45 @@ class ToolSafetyTests(unittest.TestCase):
         result = dispatch(impls, "list_dir", '{"path": ".", "extra": 1}')
         self.assertNotIn("ERROR", result)
 
+    def test_dispatch_missing_required(self):
+        _, impls = build_tools({"confirm_shell": False})
+        result = dispatch(impls, "run_shell", "{}")
+        self.assertIn("missing required argument 'command'", result)
+
+    def test_dispatch_write_file_allows_empty_content(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.chdir(d)
+            _, impls = build_tools({"confirm_shell": False})
+            result = dispatch(impls, "write_file", '{"path": "empty.txt", "content": ""}')
+            self.assertNotIn("ERROR", result)
+            self.assertTrue(os.path.isfile("empty.txt"))
+            with open("empty.txt") as f:
+                self.assertEqual(f.read(), "")
+
+    def test_dispatch_empty_tool_name(self):
+        _, impls = build_tools({"confirm_shell": False})
+        result = dispatch(impls, "", "{}")
+        self.assertIn("empty tool name", result)
+
+    def test_dispatch_bad_int_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.chdir(d)
+            with open("f.txt", "w") as f:
+                f.write("hi\n")
+            _, impls = build_tools({"confirm_shell": False})
+            result = dispatch(impls, "read_file", '{"path": "f.txt", "max_lines": "nope"}')
+            self.assertIn("'max_lines' must be an integer", result)
+
+    def test_dispatch_coerces_int_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.chdir(d)
+            with open("f.txt", "w") as f:
+                f.write("a\nb\nc\n")
+            _, impls = build_tools({"confirm_shell": False})
+            result = dispatch(impls, "read_file", '{"path": "f.txt", "max_lines": "2"}')
+            self.assertNotIn("ERROR", result)
+            self.assertIn("a", result)
+
 
 if __name__ == "__main__":
     unittest.main()

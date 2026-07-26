@@ -31,6 +31,10 @@ class SessionState:
     console: Console
     context_limit: int = 0
     prompt_session: object = None
+    # Latest collapsed thinking / tool block for Ctrl+O expand.
+    last_collapse_kind: str = ""
+    last_collapse_text: str = ""
+    collapse_expanded: bool = False
 
     @property
     def user_turns(self) -> int:
@@ -82,12 +86,17 @@ def _echo_assistant(console: Console):
     return echo
 
 
+def _on_collapse(state: SessionState, kind: str, text: str) -> None:
+    state.last_collapse_kind = kind
+    state.last_collapse_text = text
+    state.collapse_expanded = False
+
+
 def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
     # Expand @path refs for every turn (freeform, /skill, /continue, …).
     user_text = expand_at_refs(user_text)
     memory.log_event(state.session_log, "user", user_text)
     state.messages.append({"role": "user", "content": user_text})
-    echo_tool = state.console.tool_call
     try:
         agent.act(
             state.cfg, state.model, state.messages,
@@ -95,7 +104,11 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
             confirm_gate=confirm_gate,
             stats=state.stats,
             echo=_echo_assistant(state.console),
-            echo_tool=echo_tool,
+            echo_tool=state.console.tool_call,
+            echo_round=state.console.round_usage,
+            on_collapse=lambda kind, text: _on_collapse(state, kind, text),
+            context_limit=state.context_limit,
+            context_reserve=state.context_reserve,
         )
         footer = state.console.stats_footer(
             state.stats, state.context_limit, state.messages, state.context_reserve,
@@ -103,9 +116,14 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
         if footer:
             print(footer)
     except agent.ServerError as e:
+        memory.log_event(state.session_log, "system", f"error: {e}")
         state.console.error(f"error: {e}")
+        state.console.hint("  conversation kept — type to steer, or /continue")
     except KeyboardInterrupt:
-        state.console.hint("\n[interrupted — conversation kept, type to continue]")
+        memory.log_event(state.session_log, "system", "interrupted")
+        state.console.hint(
+            "\n[interrupted — conversation kept; type to steer, or /continue]"
+        )
 
 
 def _cmd_help(state: SessionState, _arg: str) -> bool:
