@@ -354,11 +354,13 @@ def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None")
         raise ServerError(f"Unexpected response shape: {json.dumps(data)[:500]}")
 
 
-def _read_sse(resp, on_delta=None) -> "tuple[dict, dict]":
+def _read_sse(resp, on_delta=None, on_activity=None) -> "tuple[dict, dict]":
     """Parse an OpenAI-style SSE body into (assistant message, usage)."""
     content_parts: list = []
+    reasoning_parts: list = []
     tool_acc: dict = {}
     usage: dict = {}
+    saw_data = False
     while True:
         raw = resp.readline()
         if not raw:
@@ -375,6 +377,9 @@ def _read_sse(resp, on_delta=None) -> "tuple[dict, dict]":
             chunk = json.loads(data)
         except json.JSONDecodeError:
             continue
+        saw_data = True
+        if on_activity:
+            on_activity()
         if chunk.get("usage"):
             usage = chunk["usage"]
         choices = chunk.get("choices") or []
@@ -386,35 +391,50 @@ def _read_sse(resp, on_delta=None) -> "tuple[dict, dict]":
             content_parts.append(piece)
             if on_delta:
                 on_delta(piece)
+        # Qwen / some LM Studio builds stream chain-of-thought separately.
+        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+        if reasoning:
+            reasoning_parts.append(reasoning)
         tc_deltas = delta.get("tool_calls")
         if tc_deltas:
             _merge_tool_call_delta(tool_acc, tc_deltas)
-    msg: dict = {"role": "assistant", "content": "".join(content_parts)}
+
+    if not saw_data:
+        raise ServerError("Empty stream from LM Studio (no SSE data)")
+
+    content = "".join(content_parts)
+    if not content.strip() and not tool_acc and reasoning_parts:
+        # Fallback when the server only streamed reasoning and no final content.
+        content = "".join(reasoning_parts)
+    msg: dict = {"role": "assistant", "content": content}
     if tool_acc:
         msg["tool_calls"] = [tool_acc[i] for i in sorted(tool_acc)]
     return msg, usage
 
 
 def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None",
-                 on_delta=None) -> "tuple[dict, dict]":
+                 on_delta=None, on_activity=None) -> "tuple[dict, dict]":
     """Streaming chat completion (SSE). Assembles message; optionally echoes content deltas."""
     req = _chat_request(cfg, model, messages, tool_specs, stream=True)
+
+    def _open_and_read(request):
+        with urllib.request.urlopen(request, timeout=cfg.get("timeout_s", 600)) as resp:
+            return _read_sse(resp, on_delta=on_delta, on_activity=on_activity)
+
     try:
-        with urllib.request.urlopen(req, timeout=cfg.get("timeout_s", 600)) as resp:
-            return _read_sse(resp, on_delta=on_delta)
+        return _open_and_read(req)
     except urllib.error.HTTPError as e:
         body = e.read().decode()[:500]
-        # Older servers may reject stream_options — retry without it.
-        if e.code == 400 and "stream_options" in body.lower():
-            payload = json.loads(req.data.decode())
+        payload = json.loads(req.data.decode())
+        # Older / stricter servers may reject stream_options — retry without it.
+        if e.code == 400 and "stream_options" in payload:
             payload.pop("stream_options", None)
             retry = urllib.request.Request(
                 req.full_url, data=json.dumps(payload).encode(),
                 headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
             )
             try:
-                with urllib.request.urlopen(retry, timeout=cfg.get("timeout_s", 600)) as resp:
-                    return _read_sse(resp, on_delta=on_delta)
+                return _open_and_read(retry)
             except urllib.error.HTTPError as e2:
                 raise ServerError(f"LM Studio returned HTTP {e2.code}: {e2.read().decode()[:500]}")
             except OSError as e2:
@@ -425,10 +445,13 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
 
 
 def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None",
-          on_delta=None) -> "tuple[dict, dict]":
+          on_delta=None, on_activity=None) -> "tuple[dict, dict]":
     """Chat completion. Streams when cfg['stream'] is true (default)."""
     if cfg.get("stream", True):
-        return _chat_stream(cfg, model, messages, tool_specs, on_delta=on_delta)
+        return _chat_stream(
+            cfg, model, messages, tool_specs,
+            on_delta=on_delta, on_activity=on_activity,
+        )
     return _chat_once(cfg, model, messages, tool_specs)
 
 
@@ -447,23 +470,45 @@ def _default_echo_delta(piece: str) -> None:
     sys.stdout.flush()
 
 
+class _GeneratingIndicator:
+    """TTY spinner while SSE is in flight and live plain echo is off."""
+
+    _FRAMES = "⠋⠙⠹⠸⠴⠦⠧⠇⠏"
+
+    def __init__(self):
+        self._n = 0
+        self._shown = False
+
+    def tick(self) -> None:
+        if not sys.stdout.isatty():
+            return
+        frame = self._FRAMES[self._n % len(self._FRAMES)]
+        self._n += 1
+        sys.stdout.write(f"\r  {frame} generating…")
+        sys.stdout.flush()
+        self._shown = True
+
+    def clear(self) -> None:
+        if not self._shown:
+            return
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+        self._shown = False
+
+
 class _StreamPrinter:
-    """Echo streamed tokens without blank rounds or stacked trailing newlines.
+    """Optional live plain-token writer with blank-line suppression.
 
-    Models often emit whitespace-only content alongside tool calls. Printing
-    those (plus an unconditional trailing newline) produced multiple blank
-    lines between ⚙ tool rows in the REPL.
-
-    On a TTY, anchors the cursor before the first visible byte so the plain
-    draft can be cleared reliably before rich markdown replaces it.
+    When ``write`` is None the printer only tracks whether non-whitespace
+    content arrived (silent mode). Display then goes through ``echo`` once
+    per round — required for rich markdown and to avoid plain+rich doubles.
     """
 
-    def __init__(self, write=_default_echo_delta):
+    def __init__(self, write=None):
         self._write = write
-        self._leading = ""       # held until first non-whitespace
-        self._trailing_nl = ""   # held newlines at end of visible text
+        self._leading = ""
+        self._trailing_nl = ""
         self._started = False
-        self._anchored = False
 
     @property
     def visible(self) -> bool:
@@ -485,15 +530,8 @@ class _StreamPrinter:
         self._emit(piece)
 
     def _out(self, text: str) -> None:
-        if not text or self._write is None:
-            return
-        # DECSC/DECRC: save cursor once before the draft so erase() can restore
-        # without fragile line-counting (wraps, wide glyphs, tmux, …).
-        if not self._anchored and sys.stdout.isatty():
-            sys.stdout.write("\0337")
-            sys.stdout.flush()
-            self._anchored = True
-        self._write(text)
+        if text and self._write is not None:
+            self._write(text)
 
     def _emit(self, text: str) -> None:
         i = len(text)
@@ -502,7 +540,6 @@ class _StreamPrinter:
         body, nl = text[:i], text[i:]
         if body:
             if self._trailing_nl:
-                # Collapse any held blank lines to a single separator newline.
                 self._out("\n")
                 self._trailing_nl = ""
             self._out(body)
@@ -510,7 +547,7 @@ class _StreamPrinter:
             self._trailing_nl = "\n"
 
     def finish(self) -> bool:
-        """End the round: at most one trailing newline if anything was shown."""
+        """End the round: at most one trailing newline if live text was shown."""
         self._leading = ""
         if not self._started:
             self._trailing_nl = ""
@@ -519,40 +556,31 @@ class _StreamPrinter:
         self._trailing_nl = ""
         return True
 
-    def erase(self) -> None:
-        """Clear plain streamed draft from a TTY so markdown can replace it."""
-        if not self._anchored:
-            return
-        if sys.stdout.isatty():
-            # DECRC + erase from cursor to end of screen.
-            sys.stdout.write("\0338\033[J")
-            sys.stdout.flush()
-        self._anchored = False
-
 
 def _emit_assistant_content(echo, content: str, printer: "_StreamPrinter | None",
                             live_plain: bool) -> None:
-    """Show assistant text via echo() (REPL: rich markdown).
+    """Display assistant text once — never plain draft + echo.
 
-    If a live plain draft was written, try to erase it first. Prefer
-    ``echo_delta=False`` (no live plain) whenever echo renders markdown —
-    cursor restore is unreliable across terminals/tmux and leaves a mangled
-    plain+rich double print.
+    Live plain (opt-in): finish the stream writer and skip echo.
+    Silent (default): echo once (REPL → rich markdown, CLI → print).
     """
-    if not content:
-        return
     if printer is not None:
         printer.finish()
-        if live_plain and sys.stdout.isatty():
-            printer.erase()
+    if not content or live_plain:
+        return
     echo(content)
 
 
 def _resolve_echo_delta(echo_delta):
-    """None → live plain stdout; False → silent (markdown echo only); else callable."""
-    if echo_delta is False:
+    """Map echo_delta to a live writer or None (silent).
+
+    - ``None`` / ``False`` → silent (default; display via echo when round ends)
+    - ``True`` → live plain stdout
+    - callable → custom live writer
+    """
+    if echo_delta is None or echo_delta is False:
         return None
-    if echo_delta is None:
+    if echo_delta is True:
         return _default_echo_delta
     return echo_delta
 
@@ -566,10 +594,10 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
     is SSE. ``echo_delta`` controls live plain token echo:
-    - ``None`` (default): write tokens to stdout as they arrive
-    - ``False``: buffer only — display via ``echo`` when the round completes
-      (use this in the REPL so rich markdown is the only on-screen render)
-    - callable: custom live writer
+    - ``None`` / ``False`` (default): silent wire stream; show text via ``echo``
+      when each round completes (REPL rich markdown; CLI print)
+    - ``True``: live plain tokens to stdout (no second echo — avoids doubles)
+    - callable: custom live writer (same no-double-echo rule)
     """
     if echo_tool is None:
         echo_tool = lambda name, preview: echo(f"  ⚙ {name}({preview})")
@@ -581,11 +609,15 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     turn_tools = 0
     for round_idx in range(cfg.get("max_rounds", 25)):
         printer = _StreamPrinter(live_write)
+        indicator = _GeneratingIndicator() if use_stream and not live_plain else None
 
         msg, usage = _chat(
             cfg, model, messages, tool_specs,
             on_delta=printer.feed if use_stream else None,
+            on_activity=indicator.tick if indicator else None,
         )
+        if indicator:
+            indicator.clear()
         _accumulate_usage(stats, usage)
         turn_rounds += 1
         tool_calls = msg.get("tool_calls") or []
@@ -604,7 +636,6 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             if session_log:
                 memory.log_event(session_log, "assistant", content)
         elif use_stream:
-            # Discard whitespace-only drafts so they don't leave blank lines.
             printer.finish()
 
         if not tool_calls:

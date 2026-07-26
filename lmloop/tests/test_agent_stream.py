@@ -1,9 +1,11 @@
-"""Tests for streaming chat assembly (SSE + tool_call deltas)."""
+"""Tests for streaming chat assembly, display rules, and act() integration."""
 
 import io
 import json
 import unittest
 from unittest import mock
+
+import urllib.error
 
 from lmloop import agent
 
@@ -66,51 +68,37 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertTrue(p.finish())
         self.assertEqual("".join(out), "A\nB\n")
 
-    def test_erase_restores_cursor_anchor_on_tty(self):
-        out = []
-        p = agent._StreamPrinter(out.append)
-        with mock.patch("sys.stdout.isatty", return_value=True), \
-             mock.patch("sys.stdout.write") as write, \
-             mock.patch("sys.stdout.flush"):
-            p.feed("Hello")
-            p.finish()
-            p.erase()
-        ansi = "".join(c.args[0] for c in write.call_args_list)
-        self.assertIn("\0337", ansi)   # save cursor before draft
-        self.assertIn("\0338", ansi)   # restore before clear
-        self.assertIn("\033[J", ansi)
-        self.assertEqual("".join(out), "Hello\n")
-        self.assertFalse(p._anchored)
-
-    def test_emit_assistant_always_echoes_markdown_path(self):
-        echoed = []
-        out = []
-        p = agent._StreamPrinter(out.append)
-        with mock.patch("sys.stdout.isatty", return_value=True), \
-             mock.patch("sys.stdout.write"), \
-             mock.patch("sys.stdout.flush"):
-            p.feed("**hi**")
-            agent._emit_assistant_content(echoed.append, "**hi**", p, True)
-        self.assertEqual(echoed, ["**hi**"])
-        self.assertEqual("".join(out), "**hi**\n")
-
     def test_silent_printer_does_not_write_live_plain(self):
-        out = []
         p = agent._StreamPrinter(None)
         p.feed("**hi**")
         self.assertTrue(p.finish())
-        self.assertEqual(out, [])
-        self.assertFalse(p._anchored)
+        self.assertTrue(p.visible)
 
-    def test_resolve_echo_delta(self):
-        self.assertIs(agent._resolve_echo_delta(None), agent._default_echo_delta)
+    def test_resolve_echo_delta_defaults_silent(self):
+        self.assertIsNone(agent._resolve_echo_delta(None))
         self.assertIsNone(agent._resolve_echo_delta(False))
+        self.assertIs(agent._resolve_echo_delta(True), agent._default_echo_delta)
         custom = lambda p: None
         self.assertIs(agent._resolve_echo_delta(custom), custom)
 
+    def test_emit_silent_calls_echo_once(self):
+        echoed = []
+        p = agent._StreamPrinter(None)
+        p.feed("**hi**")
+        agent._emit_assistant_content(echoed.append, "**hi**", p, live_plain=False)
+        self.assertEqual(echoed, ["**hi**"])
+
+    def test_emit_live_plain_skips_echo(self):
+        echoed = []
+        out = []
+        p = agent._StreamPrinter(out.append)
+        p.feed("hi")
+        agent._emit_assistant_content(echoed.append, "hi", p, live_plain=True)
+        self.assertEqual(echoed, [])
+        self.assertEqual("".join(out), "hi\n")
+
 
 class MergeToolCallDeltaTests(unittest.TestCase):
-
     def test_accumulates_arguments_by_index(self):
         acc = {}
         agent._merge_tool_call_delta(acc, [{
@@ -167,6 +155,35 @@ class ChatStreamTests(unittest.TestCase):
         self.assertEqual(msg["tool_calls"][0]["function"]["name"], "list_dir")
         self.assertEqual(msg["tool_calls"][0]["function"]["arguments"], '{"path":"."}')
 
+    def test_reasoning_content_fallback(self):
+        body = _sse(
+            {"choices": [{"delta": {"reasoning_content": "think…"}}]},
+            {"choices": [{"delta": {"reasoning_content": " more"}}]},
+            None,
+        )
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertEqual(msg["content"], "think… more")
+
+    def test_empty_stream_raises(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(b"")):
+            with self.assertRaises(agent.ServerError) as ctx:
+                agent._chat_stream(cfg, "m", [], None)
+        self.assertIn("Empty stream", str(ctx.exception))
+
+    def test_stream_options_retry_on_400(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5, "stream": True}
+        ok = _sse({"choices": [{"delta": {"content": "ok"}}]}, None)
+        http_err = urllib.error.HTTPError(
+            url="http://x/v1/chat/completions", code=400, msg="bad",
+            hdrs=None, fp=io.BytesIO(b"nope"),
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=[http_err, FakeResp(ok)]):
+            msg, _usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertEqual(msg["content"], "ok")
+
     def test_chat_respects_stream_false(self):
         payload = {
             "choices": [{"message": {"role": "assistant", "content": "ok"}}],
@@ -177,6 +194,59 @@ class ChatStreamTests(unittest.TestCase):
             msg, usage = agent._chat(cfg, "m", [], None)
         self.assertEqual(msg["content"], "ok")
         self.assertEqual(usage["total_tokens"], 2)
+
+
+class ActIntegrationTests(unittest.TestCase):
+    def test_act_silent_default_echoes_once_no_live_plain(self):
+        body = _sse(
+            {"choices": [{"delta": {"content": "**hello**"}}]},
+            None,
+        )
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7,
+            "timeout_s": 5,
+            "stream": True,
+            "confirm_shell": False,
+        }
+        echoed = []
+        live = []
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
+             mock.patch.object(agent, "_default_echo_delta", live.append), \
+             mock.patch.object(agent, "_GeneratingIndicator") as ind_cls:
+            ind = mock.Mock()
+            ind_cls.return_value = ind
+            agent.act(cfg, "m", messages, echo=echoed.append, echo_tool=lambda n, a: None)
+        self.assertEqual(echoed, ["**hello**"])
+        self.assertEqual(live, [])
+        ind.tick.assert_called()
+        ind.clear.assert_called_once()
+
+    def test_act_live_plain_true_skips_echo(self):
+        body = _sse(
+            {"choices": [{"delta": {"content": "plain"}}]},
+            None,
+        )
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7,
+            "timeout_s": 5,
+            "stream": True,
+            "confirm_shell": False,
+        }
+        echoed = []
+        out = []
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            agent.act(
+                cfg, "m", messages,
+                echo=echoed.append,
+                echo_delta=out.append,
+                echo_tool=lambda n, a: None,
+            )
+        self.assertEqual(echoed, [])
+        self.assertEqual("".join(out), "plain\n")
 
 
 if __name__ == "__main__":

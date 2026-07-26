@@ -95,10 +95,6 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
             confirm_gate=confirm_gate,
             stats=state.stats,
             echo=_echo_assistant(state.console),
-            # No live plain draft — erase/replace is unreliable and left a
-            # mangled plain+rich double print. SSE still streams on the wire;
-            # on-screen text is rich markdown once each round completes.
-            echo_delta=False,
             echo_tool=echo_tool,
         )
         footer = state.console.stats_footer(
