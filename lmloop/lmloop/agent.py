@@ -447,6 +447,64 @@ def _default_echo_delta(piece: str) -> None:
     sys.stdout.flush()
 
 
+class _StreamPrinter:
+    """Echo streamed tokens without blank rounds or stacked trailing newlines.
+
+    Models often emit whitespace-only content alongside tool calls. Printing
+    those (plus an unconditional trailing newline) produced multiple blank
+    lines between ⚙ tool rows in the REPL.
+    """
+
+    def __init__(self, write=_default_echo_delta):
+        self._write = write
+        self._leading = ""       # held until first non-whitespace
+        self._trailing_nl = ""   # held newlines at end of visible text
+        self._started = False
+
+    @property
+    def visible(self) -> bool:
+        return self._started
+
+    def feed(self, piece: str) -> None:
+        if not piece:
+            return
+        if not self._started:
+            self._leading += piece
+            if not self._leading.strip():
+                return
+            text = self._leading.lstrip("\r\n")
+            self._leading = ""
+            self._started = True
+            if text:
+                self._emit(text)
+            return
+        self._emit(piece)
+
+    def _emit(self, text: str) -> None:
+        i = len(text)
+        while i > 0 and text[i - 1] in "\r\n":
+            i -= 1
+        body, nl = text[:i], text[i:]
+        if body:
+            if self._trailing_nl:
+                # Collapse any held blank lines to a single separator newline.
+                self._write("\n")
+                self._trailing_nl = ""
+            self._write(body)
+        if nl:
+            self._trailing_nl = "\n"
+
+    def finish(self) -> bool:
+        """End the round: at most one trailing newline if anything was shown."""
+        self._leading = ""
+        if not self._started:
+            self._trailing_nl = ""
+            return False
+        self._write("\n")
+        self._trailing_nl = ""
+        return True
+
+
 # ---------------------------------------------------------------- act loop
 
 def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None,
@@ -467,15 +525,11 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     turn_rounds = 0
     turn_tools = 0
     for round_idx in range(cfg.get("max_rounds", 25)):
-        streamed = {"n": 0}
-
-        def on_delta(piece: str, _streamed=streamed) -> None:
-            echo_delta(piece)
-            _streamed["n"] += len(piece)
+        printer = _StreamPrinter(echo_delta)
 
         msg, usage = _chat(
             cfg, model, messages, tool_specs,
-            on_delta=on_delta if use_stream else None,
+            on_delta=printer.feed if use_stream else None,
         )
         _accumulate_usage(stats, usage)
         turn_rounds += 1
@@ -488,11 +542,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             assistant_entry["tool_calls"] = tool_calls
         messages.append(assistant_entry)
 
-        if streamed["n"]:
-            # Live tokens already printed; finish the line before tools / next round.
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            if session_log and content:
+        if use_stream:
+            printed = printer.finish()
+            if printed and session_log and content:
                 memory.log_event(session_log, "assistant", content)
         elif content:
             echo(content)

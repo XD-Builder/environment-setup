@@ -35,7 +35,40 @@ class FakeResp:
         return False
 
 
+class StreamPrinterTests(unittest.TestCase):
+    def _collect(self):
+        out = []
+        return out, agent._StreamPrinter(out.append)
+
+    def test_skips_whitespace_only_rounds(self):
+        out, p = self._collect()
+        p.feed("\n\n")
+        p.feed("  \n")
+        self.assertFalse(p.finish())
+        self.assertEqual(out, [])
+
+    def test_strips_leading_blank_lines(self):
+        out, p = self._collect()
+        p.feed("\n\nHello")
+        self.assertTrue(p.finish())
+        self.assertEqual("".join(out), "Hello\n")
+
+    def test_collapses_trailing_newlines_to_one(self):
+        out, p = self._collect()
+        p.feed("Hello\n\n\n")
+        self.assertTrue(p.finish())
+        self.assertEqual("".join(out), "Hello\n")
+
+    def test_single_separator_between_paragraphs(self):
+        out, p = self._collect()
+        p.feed("A\n\n")
+        p.feed("B")
+        self.assertTrue(p.finish())
+        self.assertEqual("".join(out), "A\nB\n")
+
+
 class MergeToolCallDeltaTests(unittest.TestCase):
+
     def test_accumulates_arguments_by_index(self):
         acc = {}
         agent._merge_tool_call_delta(acc, [{
