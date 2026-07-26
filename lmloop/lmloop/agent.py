@@ -485,7 +485,7 @@ class _StreamPrinter:
         self._emit(piece)
 
     def _out(self, text: str) -> None:
-        if not text:
+        if not text or self._write is None:
             return
         # DECSC/DECRC: save cursor once before the draft so erase() can restore
         # without fragile line-counting (wraps, wide glyphs, tmux, …).
@@ -531,20 +531,30 @@ class _StreamPrinter:
 
 
 def _emit_assistant_content(echo, content: str, printer: "_StreamPrinter | None",
-                            use_stream: bool) -> None:
+                            live_plain: bool) -> None:
     """Show assistant text via echo() (REPL: rich markdown).
 
-    When streaming on a TTY, the plain live draft is erased first so only the
-    prettied render remains. echo() is always used when there is content —
-    streaming must not permanently bypass markdown rendering.
+    If a live plain draft was written, try to erase it first. Prefer
+    ``echo_delta=False`` (no live plain) whenever echo renders markdown —
+    cursor restore is unreliable across terminals/tmux and leaves a mangled
+    plain+rich double print.
     """
     if not content:
         return
-    if use_stream and printer is not None:
+    if printer is not None:
         printer.finish()
-        if sys.stdout.isatty():
+        if live_plain and sys.stdout.isatty():
             printer.erase()
     echo(content)
+
+
+def _resolve_echo_delta(echo_delta):
+    """None → live plain stdout; False → silent (markdown echo only); else callable."""
+    if echo_delta is False:
+        return None
+    if echo_delta is None:
+        return _default_echo_delta
+    return echo_delta
 
 
 # ---------------------------------------------------------------- act loop
@@ -554,21 +564,23 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         stats: "dict | None" = None) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
-    When streaming is enabled (config ``stream``, default True), content tokens
-    are written via ``echo_delta`` (or stdout) as they arrive so the UI is not
-    stuck waiting for a full non-streamed reply. After each round with content,
-    ``echo`` is still called (REPL: rich markdown) so final output is prettied.
+    When streaming is enabled (config ``stream``, default True), the HTTP body
+    is SSE. ``echo_delta`` controls live plain token echo:
+    - ``None`` (default): write tokens to stdout as they arrive
+    - ``False``: buffer only — display via ``echo`` when the round completes
+      (use this in the REPL so rich markdown is the only on-screen render)
+    - callable: custom live writer
     """
     if echo_tool is None:
         echo_tool = lambda name, preview: echo(f"  ⚙ {name}({preview})")
-    if echo_delta is None:
-        echo_delta = _default_echo_delta
+    live_write = _resolve_echo_delta(echo_delta)
+    live_plain = live_write is not None
     tool_specs, impls = tools.build_tools(cfg, confirm_gate=confirm_gate)
     use_stream = bool(cfg.get("stream", True))
     turn_rounds = 0
     turn_tools = 0
     for round_idx in range(cfg.get("max_rounds", 25)):
-        printer = _StreamPrinter(echo_delta)
+        printer = _StreamPrinter(live_write)
 
         msg, usage = _chat(
             cfg, model, messages, tool_specs,
@@ -586,7 +598,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         messages.append(assistant_entry)
 
         if content:
-            _emit_assistant_content(echo, content, printer if use_stream else None, use_stream)
+            _emit_assistant_content(
+                echo, content, printer if use_stream else None, live_plain,
+            )
             if session_log:
                 memory.log_event(session_log, "assistant", content)
         elif use_stream:

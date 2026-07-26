@@ -94,6 +94,20 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertEqual(echoed, ["**hi**"])
         self.assertEqual("".join(out), "**hi**\n")
 
+    def test_silent_printer_does_not_write_live_plain(self):
+        out = []
+        p = agent._StreamPrinter(None)
+        p.feed("**hi**")
+        self.assertTrue(p.finish())
+        self.assertEqual(out, [])
+        self.assertFalse(p._anchored)
+
+    def test_resolve_echo_delta(self):
+        self.assertIs(agent._resolve_echo_delta(None), agent._default_echo_delta)
+        self.assertIsNone(agent._resolve_echo_delta(False))
+        custom = lambda p: None
+        self.assertIs(agent._resolve_echo_delta(custom), custom)
+
 
 class MergeToolCallDeltaTests(unittest.TestCase):
 
