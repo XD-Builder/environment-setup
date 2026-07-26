@@ -2,7 +2,7 @@
 
 A small, fully-local research and coding agent. It runs any model you have in
 LM Studio (or any OpenAI-compatible server), gives it real tools (shell, files,
-code search, web fetch), and wraps it in persistent per-project memory so it
+code search, web search, web fetch), and wraps it in persistent per-project memory so it
 gets smarter about your projects over time. Everything — model, loop, memory —
 stays on your machine.
 
@@ -132,8 +132,9 @@ REPL UX (prompt_toolkit + rich):
 └─────┬──────┘        tool_calls                 └───────────────┘
       │ runs tools locally, feeds results back (multi-round loop)
       ▼
- shell · read/write file · list_dir · search (rg) · fetch_url
+ shell · read/write file · list_dir · search (rg) · web_search · fetch_url
  remember · log_decision · recall_memory
+ (ToolDef registry + commands.py + status.py as single sources of truth)
       │
       ▼
  ~/.lmloop/projects/<slug>/          (slug = git remote or dir name)

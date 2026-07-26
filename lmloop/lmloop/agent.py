@@ -18,22 +18,28 @@ import urllib.request
 from pathlib import Path
 
 from . import memory, tools
+from .commands import RESERVED_SKILL_NAMES
 from .config import STATE_ROOT
+from . import status as status_mod
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 USER_SKILLS_DIR = STATE_ROOT / "skills"
 SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-# Names that collide with CLI/REPL commands (not creatable as user skills).
-# Packaged skill names like compact/retro stay allowed so users can override them.
-RESERVED_SKILL_NAMES = frozenset({
-    "system", "new", "names", "skill", "skills", "help", "quit", "exit", "q",
-    "transcript", "stats", "model", "memory", "save", "undo", "history",
-    "checkpoints", "restore", "decisions", "context", "continue",
-})
 
 # Stream assembly: some servers send cumulative snapshots instead of true deltas.
 _REPEAT_WINDOW = 400
 _REPEAT_TIMES = 3
+
+# OpenAI-compatible SSE / API protocol constants (external wire format).
+SSE_DATA_PREFIX = "data:"
+SSE_DONE = "[DONE]"
+API_CHAT_PATH = "/chat/completions"
+API_MODELS_PATH = "/models"
+NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")
+REASONING_FIELDS = ("reasoning_content", "reasoning")
+CHARS_PER_TOKEN_ESTIMATE = 4
+CONTEXT_PRESSURE_RATIO = 0.80
+CONTINUE_NUDGE_MAX_CHARS = 400
 
 # Cached optional rich imports: (Console, Live, Markdown) or False if unavailable.
 _RICH = None
@@ -52,7 +58,7 @@ def _get(base_url: str, path: str, timeout: int = 5):
 
 def list_models(base_url: str) -> "list[str]":
     try:
-        data = _get(base_url, "/models")
+        data = _get(base_url, API_MODELS_PATH)
         return [m["id"] for m in data.get("data", [])]
     except (OSError, json.JSONDecodeError, KeyError):
         return []
@@ -71,12 +77,16 @@ def _get_json(url: str, timeout: int = 5) -> dict:
 
 
 def _model_matches(entry: dict, model: str) -> bool:
-    ids = [
-        entry.get("id", ""),
-        entry.get("key", ""),
-        entry.get("display_name", ""),
-    ]
-    return model in ids or any(model == i or model.endswith(i) or i.endswith(model) for i in ids if i)
+    """Prefer exact id/key match; allow suffix match only for multi-segment ids."""
+    ids = [entry.get("id", ""), entry.get("key", ""), entry.get("display_name", "")]
+    ids = [i for i in ids if i]
+    if model in ids:
+        return True
+    # Avoid bare endswith on short fragments (wrong-model context window).
+    if "/" in model or len(model) >= 8:
+        return any(model == i or i.endswith("/" + model) or model.endswith("/" + i)
+                   for i in ids)
+    return False
 
 
 def get_context_limit(model: str, cfg: dict) -> int:
@@ -86,7 +96,7 @@ def get_context_limit(model: str, cfg: dict) -> int:
         return manual
 
     base = _native_base(cfg["base_url"])
-    for path in ("/api/v0/models", "/api/v1/models"):
+    for path in NATIVE_MODELS_PATHS:
         try:
             data = _get_json(base + path)
         except (OSError, json.JSONDecodeError):
@@ -106,13 +116,13 @@ def get_context_limit(model: str, cfg: dict) -> int:
 
 
 def estimate_context_tokens(messages: list) -> int:
-    """Rough token estimate when the server has not reported usage yet."""
+    """Rough token estimate (chars / CHARS_PER_TOKEN_ESTIMATE) when usage missing."""
     chars = 0
     for m in messages:
         chars += len(str(m.get("content") or ""))
         if m.get("tool_calls"):
             chars += len(json.dumps(m["tool_calls"]))
-    return max(0, chars // 4)
+    return max(0, chars // CHARS_PER_TOKEN_ESTIMATE)
 
 
 def _run_lms(args: list, echo=print, timeout: int = 60) -> bool:
@@ -293,6 +303,18 @@ def load_prompt(name: str) -> str:
 
 def system_prompt(cfg: dict) -> str:
     base = load_skill("system")
+    names = tools.tool_names()
+    tools_block = (
+        "\n\n## Tools available\n\n"
+        + ", ".join(f"`{n}`" for n in names)
+        + ".\n"
+    )
+    # Inject after the first paragraph / before "## How to work" when present.
+    marker = "\n## How to work"
+    if marker in base:
+        base = base.replace(marker, tools_block + marker, 1)
+    else:
+        base += tools_block
     ctx = memory.context_block(cfg)
     if ctx:
         base += "\n\n## Context recovery (from project memory)\n\n" + ctx
@@ -339,7 +361,7 @@ def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | Non
                   stream: bool) -> urllib.request.Request:
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": status_mod.api_messages(messages),
         "temperature": cfg.get("temperature", 0.7),
         "stream": stream,
     }
@@ -349,10 +371,24 @@ def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | Non
     if tool_specs:
         payload["tools"] = tool_specs
     return urllib.request.Request(
-        cfg["base_url"].rstrip("/") + "/chat/completions",
+        cfg["base_url"].rstrip("/") + API_CHAT_PATH,
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", "Accept": "text/event-stream" if stream else "application/json"},
     )
+
+
+def _raise_http_error(e: urllib.error.HTTPError, cfg: dict) -> None:
+    body = ""
+    try:
+        body = e.read().decode("utf-8", errors="replace")[:800]
+    except Exception:
+        body = ""
+    lower = body.lower()
+    if e.code in (400, 413) and any(
+        t in lower for t in ("context", "token", "length", "too long", "maximum")
+    ):
+        raise ServerError(status_mod.msg_context_overflow()) from e
+    raise ServerError(f"LM Studio returned HTTP {e.code}: {body[:500]}") from e
 
 
 def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
@@ -362,7 +398,7 @@ def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None")
         with urllib.request.urlopen(req, timeout=cfg.get("timeout_s", 600)) as resp:
             data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        raise ServerError(f"LM Studio returned HTTP {e.code}: {e.read().decode()[:500]}")
+        _raise_http_error(e, cfg)
     except OSError as e:
         raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e}")
     try:
@@ -429,10 +465,10 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
         line = raw.decode("utf-8", errors="replace").strip()
         if not line or line.startswith(":"):
             continue
-        if not line.startswith("data:"):
+        if not line.startswith(SSE_DATA_PREFIX):
             continue
-        data = line[5:].strip()
-        if data == "[DONE]":
+        data = line[len(SSE_DATA_PREFIX):].strip()
+        if data == SSE_DONE:
             break
         try:
             chunk = json.loads(data)
@@ -456,7 +492,11 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
                 if _tail_repeats("".join(content_parts)):
                     content_halted = True
         # Qwen / some LM Studio builds stream chain-of-thought separately.
-        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+        reasoning = None
+        for field in REASONING_FIELDS:
+            if delta.get(field):
+                reasoning = delta[field]
+                break
         if reasoning:
             incr_r = _ingest_text_delta(reasoning_parts, reasoning)
             if incr_r and on_reasoning:
@@ -510,7 +550,7 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
     try:
         return _open_and_read(req)
     except urllib.error.HTTPError as e:
-        body = e.read().decode()[:500]
+        body = e.read().decode()[:800]
         payload = json.loads(req.data.decode())
         # Older / stricter servers may reject stream_options — retry without it.
         if e.code == 400 and "stream_options" in payload:
@@ -522,10 +562,16 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
             try:
                 return _open_and_read(retry)
             except urllib.error.HTTPError as e2:
-                raise ServerError(f"LM Studio returned HTTP {e2.code}: {e2.read().decode()[:500]}")
+                _raise_http_error(e2, cfg)
             except OSError as e2:
                 raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e2}")
-        raise ServerError(f"LM Studio returned HTTP {e.code}: {body}")
+        # Reconstruct HTTPError-like handling with already-read body.
+        lower = body.lower()
+        if e.code in (400, 413) and any(
+            t in lower for t in ("context", "token", "length", "too long", "maximum")
+        ):
+            raise ServerError(status_mod.msg_context_overflow())
+        raise ServerError(f"LM Studio returned HTTP {e.code}: {body[:500]}")
     except OSError as e:
         raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e}")
 
@@ -843,21 +889,38 @@ def _emit_assistant_content(echo, content: str, printer, live_mode: str) -> None
     echo(content)
 
 
-# Narration that signals more work without actually calling tools (common on
-# small local models). Keep tight: short, intent-only lines after tool use.
+# Soft-stop fallback: phrase list as data (models lack a "meant to tool-call" signal).
+CONTINUE_INTENT_PHRASES = (
+    r"let me\b",
+    r"i(?:'ll| will)\b",
+    r"i(?:'m| am) (?:going to|about to)\b",
+    r"next[,:]?\s",
+    r"now (?:i(?:'ll| will)|let me)\b",
+    r"(?:i need to|looking (?:at|into)|diving|exploring|checking|investigating)\b",
+)
+_CONTINUE_PHRASE = "|".join(CONTINUE_INTENT_PHRASES)
 _CONTINUE_INTENT_RE = re.compile(
-    r"(?is)^\s*(?:"
-    r"let me\b|i(?:'ll| will)\b|i(?:'m| am) (?:going to|about to)\b|"
-    r"next[,:]?\s|now (?:i(?:'ll| will)|let me)\b|"
-    r"(?:i need to|looking (?:at|into)|diving|exploring|checking|investigating)\b"
-    r").{0,400}$"
+    rf"(?is)(?:^\s*(?:{_CONTINUE_PHRASE}).{{0,{CONTINUE_NUDGE_MAX_CHARS}}}$|"
+    rf"(?:{_CONTINUE_PHRASE}).{{0,80}}$)"
+)
+# Grounded answers that open with "Looking at…" should not be nudged.
+# Prefer hard evidence (paths, URLs, code) — not numbered plan lists.
+_EVIDENCE_RE = re.compile(
+    r"(?:"
+    r"`[^`]+`|"                              # inline code
+    r"\b[\w./+-]+\.(?:py|md|go|ts|js|tsx|jsx|rs|java|c|h|cpp):\d+\b|"
+    r"(?:^|\s)/(?:[\w.-]+/)+[\w.-]+|"        # path-like
+    r"https?://"
+    r")",
+    re.M,
 )
 
-_NUDGE_CONTINUE = (
-    "[lmloop] You described a next step but did not call any tools and did not "
-    "finish the user's request. Continue now: either call the tools you need, "
-    "or give the final answer."
-)
+# Back-compat alias for tests / rollback that historically compared nudge text.
+_NUDGE_CONTINUE = status_mod.NUDGE_CONTINUE_TEXT
+
+
+def _looks_grounded(text: str) -> bool:
+    return bool(_EVIDENCE_RE.search(text or ""))
 
 
 def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
@@ -865,14 +928,22 @@ def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
     """True when the model soft-stopped mid-task with intent-only narration.
 
     An empty final message after tools is treated as done — many models end a
-    successful tool turn with no trailing prose.
+    successful tool turn with no trailing prose. Also nudges first-round
+    intent-only narration (turn_tools == 0) — classic local-model hang.
     """
-    if nudges >= max_nudges or turn_tools <= 0:
+    if nudges >= max_nudges:
         return False
     text = (content or "").strip()
     if not text:
         return False
-    return len(text) <= 400 and bool(_CONTINUE_INTENT_RE.search(text))
+    if len(text) > CONTINUE_NUDGE_MAX_CHARS:
+        return False
+    if not _CONTINUE_INTENT_RE.search(text):
+        return False
+    if _looks_grounded(text):
+        return False
+    # After tools, or first-round plan-only (no tools yet).
+    return True
 
 
 def _open_live_display(echo_delta, color: bool = True):
@@ -928,7 +999,7 @@ def _rollback_incomplete_messages(messages: list, start: int) -> None:
     while len(messages) > start:
         last = messages[-1]
         role = last.get("role")
-        if role == "user" and (last.get("content") or "") == _NUDGE_CONTINUE:
+        if role == "user" and status_mod.is_nudge_message(last):
             messages.pop()
             continue
         if role == "tool":
@@ -988,8 +1059,9 @@ def _safe_close_thinking(thinking, *, keep: bool = False) -> None:
 
 def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None,
         confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
-        stats: "dict | None" = None, echo_round=None, on_collapse=None,
-        context_limit: int = 0, context_reserve: int = 2048) -> list:
+        echo_status=None, stats: "dict | None" = None, echo_round=None,
+        on_collapse=None, context_limit: int = 0,
+        context_reserve: int = 2048) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
@@ -1001,6 +1073,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     Live modes do not also call ``echo`` (avoids plain+rich doubles).
 
     Optional callbacks:
+    - ``echo_status(text)`` for lmloop status lines (defaults to ``echo``)
     - ``echo_round(round_idx, stats, messages)`` after each model round
     - ``on_collapse(kind, text)`` when thinking/tool detail is stored for Ctrl+O
       (kind is ``\"thinking\"`` or ``\"tool\"``)
@@ -1008,6 +1081,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
     """
+    if echo_status is None:
+        echo_status = echo
     if echo_tool is None:
         echo_tool = lambda name, preview, *_a: echo(f"  ⚙ {name}({preview})")
     color = bool(cfg.get("color", True))
@@ -1017,8 +1092,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     turn_tools = 0
     nudge_count = 0
     max_nudges = max(0, int(cfg.get("max_continue_nudges", 2)))
-    max_rounds = int(cfg.get("max_rounds", 25))
+    max_rounds = int(cfg.get("max_rounds", 60))
     checkpoint = len(messages)
+    context_warned = False
 
     def _mark_interrupted() -> None:
         if stats is not None:
@@ -1026,6 +1102,18 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
     try:
         for round_idx in range(max_rounds):
+            if context_limit and not context_warned:
+                used = 0
+                if stats is not None:
+                    used = int(stats.get("last_prompt_tokens") or 0)
+                if not used:
+                    used = estimate_context_tokens(messages)
+                effective = max(context_limit - max(context_reserve, 0), 1)
+                ratio = min(used / effective, 1.0)
+                if ratio >= CONTEXT_PRESSURE_RATIO:
+                    echo_status(status_mod.msg_context_pressure(int(ratio * 100)))
+                    context_warned = True
+
             printer, live_mode = _open_live_display(echo_delta, color=color)
             thinking = _ThinkingLive(color=color) if use_stream else None
             indicator = None
@@ -1143,20 +1231,17 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     # Only inject a nudge when another model round can still run.
                     if soft_stop and round_idx + 1 < max_rounds:
                         nudge_count += 1
-                        echo("[lmloop] model paused mid-task — continuing…")
-                        messages.append({"role": "user", "content": _NUDGE_CONTINUE})
+                        echo_status(status_mod.msg_paused_continuing())
+                        messages.append(status_mod.nudge_message())
                         continue
                     # Nudges exhausted, or soft-stop on the final allowed round.
                     if soft_stop or (
-                        turn_tools > 0
-                        and nudge_count >= max_nudges
+                        nudge_count >= max_nudges
                         and content
                         and _CONTINUE_INTENT_RE.search(content)
+                        and not _looks_grounded(content)
                     ):
-                        echo(
-                            "[lmloop] model stopped without finishing — "
-                            "type /continue to resume"
-                        )
+                        echo_status(status_mod.msg_stopped_unfinished())
                     if stats is not None:
                         stats["turns"] = stats.get("turns", 0) + 1
                         stats["rounds"] = stats.get("rounds", 0) + turn_rounds
@@ -1196,7 +1281,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             stats["rounds"] = stats.get("rounds", 0) + turn_rounds
             stats["tool_calls"] = stats.get("tool_calls", 0) + turn_tools
             stats["interrupted"] = False
-        echo("[lmloop] hit max_rounds — stopping. Say 'continue' to keep going.")
+        echo_status(status_mod.msg_hit_max_rounds())
         return messages
     except KeyboardInterrupt:
         _mark_interrupted()

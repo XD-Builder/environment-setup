@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import Callable
 
 from . import agent, memory, tools
+from .commands import slash_command_metas
 from .config import project_slug
 from .files_index import expand_at_refs
+from .status import MSG_RESUME
 from .ui import Console, ask_yes_no, fresh_stats
 
 
@@ -75,12 +77,9 @@ def _make_confirm_gate(console: Console, session_getter=None):
 
 
 def _echo_assistant(console: Console):
-    """Echo callback: render markdown for model replies; plain for status lines."""
+    """Echo callback for model replies (markdown). Status uses echo_status."""
     def echo(text: str) -> None:
         if not text:
-            return
-        if text.startswith("[lmloop]") or text.startswith("[lml]"):
-            console.hint(text)
             return
         console.print_markdown(text)
     return echo
@@ -104,6 +103,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
             confirm_gate=confirm_gate,
             stats=state.stats,
             echo=_echo_assistant(state.console),
+            echo_status=state.console.hint,
             echo_tool=state.console.tool_call,
             echo_round=state.console.round_usage,
             on_collapse=lambda kind, text: _on_collapse(state, kind, text),
@@ -118,11 +118,11 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
     except agent.ServerError as e:
         memory.log_event(state.session_log, "system", f"error: {e}")
         state.console.error(f"error: {e}")
-        state.console.hint("  conversation kept — type to steer, or /continue")
+        state.console.hint(f"  conversation kept — type to steer, or {MSG_RESUME}")
     except KeyboardInterrupt:
         memory.log_event(state.session_log, "system", "interrupted")
         state.console.hint(
-            "\n[interrupted — conversation kept; type to steer, or /continue]"
+            f"\n[interrupted — conversation kept; type to steer, or {MSG_RESUME}]"
         )
 
 
@@ -162,10 +162,13 @@ def _cmd_model(state: SessionState, arg: str) -> bool:
 
 
 def _cmd_memory(state: SessionState, arg: str) -> bool:
-    for r in memory.get_learnings(query=arg, limit=20):
+    rows = memory.get_learnings(query=arg, limit=20)
+    for r in rows:
         state.console.info(
             f"- [{r['key']}] ({r['type']}, {r['confidence']}/10) {r['insight']}"
         )
+    if not rows:
+        state.console.info("(no learnings yet — run tasks, then /retro)")
     return True
 
 
@@ -239,7 +242,30 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
     prompt = agent.load_skill("compact") + "\n\nTranscript:\n" + transcript
     if arg:
         prompt += "\n\nFocus: " + arg
+    before = len(state.messages)
     _run_turn(state, prompt, confirm_gate)
+    summary = ""
+    for m in reversed(state.messages[before:]):
+        if m.get("role") == "assistant" and (m.get("content") or "").strip():
+            summary = (m.get("content") or "").strip()
+            break
+    if not summary:
+        return True
+    state.console.hint("Replace the in-memory thread with this summary?")
+    if ask_yes_no("Replace thread with summary? [y/N] "):
+        system = state.messages[0] if state.messages and state.messages[0].get("role") == "system" else None
+        handoff = (
+            "Context was compacted. Continue from this handoff summary:\n\n" + summary
+        )
+        state.messages = []
+        if system:
+            state.messages.append(system)
+        state.messages.append({"role": "user", "content": handoff})
+        state.messages.append({
+            "role": "assistant",
+            "content": "Understood — continuing from the compacted handoff.",
+        })
+        state.console.info("[thread replaced with compact summary]")
     return True
 
 
@@ -382,43 +408,39 @@ def _cmd_transcript(state: SessionState, _arg: str) -> bool:
 
 
 def _build_slash_commands(confirm_gate) -> list:
-    commands = [
-        SlashCommand("/help", "show available commands", _cmd_help),
-        SlashCommand("/stats", "show token usage and session activity", _cmd_stats),
-        SlashCommand("/transcript", "view rendered session in less (q to quit)",
-                     _cmd_transcript),
-        SlashCommand("/skills", "list skills, or: new <name> [brief] to author one",
-                     lambda s, a: _cmd_skills(s, a, confirm_gate),
-                     "[new <name> brief]", accepts_arg=True),
-        SlashCommand("/history", "list recent session logs",
-                     lambda s, a: _cmd_history(s, a), "[n]", accepts_arg=True),
-        SlashCommand("/checkpoints", "list saved checkpoints",
-                     lambda s, a: _cmd_checkpoints(s, a), "[n]", accepts_arg=True),
-        SlashCommand("/restore", "inject checkpoint or prior session transcript",
-                     lambda s, a: _cmd_restore(s, a, confirm_gate),
-                     "checkpoint|session <query> [fresh]", accepts_arg=True),
-        SlashCommand("/decisions", "show active project decisions", _cmd_decisions),
-        SlashCommand("/context", "show memory injected into the system prompt", _cmd_context),
-        SlashCommand("/continue", "resume after max_rounds or an interruption",
-                     lambda s, a: _cmd_continue(s, a, confirm_gate), "[message]", accepts_arg=True),
-        SlashCommand("/undo", "drop the last user turn from the in-memory thread", _cmd_undo),
-        SlashCommand("/compact", "summarize thread for context recovery",
-                     lambda s, a: _cmd_compact(s, a, confirm_gate), "[focus]", accepts_arg=True),
-        SlashCommand("/new", "reset conversation (memory context re-injected)", _cmd_new),
-        SlashCommand("/model", "switch model, or list models with no argument",
-                     lambda s, a: _cmd_model(s, a), "<name>", accepts_arg=True),
-        SlashCommand("/memory", "show project learnings",
-                     lambda s, a: _cmd_memory(s, a), "[query]", accepts_arg=True),
-        SlashCommand("/save", "checkpoint session for later restore",
-                     lambda s, a: _cmd_save(s, a, confirm_gate), "[title]", accepts_arg=True),
-        SlashCommand("/retro", "extract learnings from this session",
-                     lambda s, a: _cmd_retro(s, a, confirm_gate)),
-        SlashCommand("/skill", "run any skill prompt by name",
-                     lambda s, a: _cmd_skill(s, a, confirm_gate), "<name> [task]", accepts_arg=True),
-        SlashCommand("/quit", "exit", lambda s, a: False, exits=True),
-        SlashCommand("/exit", "exit", lambda s, a: False, exits=True),
-        SlashCommand("/q", "exit", lambda s, a: False, exits=True),
-    ]
+    """Bind handlers to CommandMeta rows from commands.py (single name source)."""
+    handlers = {
+        "help": _cmd_help,
+        "stats": _cmd_stats,
+        "transcript": _cmd_transcript,
+        "skills": lambda s, a: _cmd_skills(s, a, confirm_gate),
+        "history": _cmd_history,
+        "checkpoints": _cmd_checkpoints,
+        "restore": lambda s, a: _cmd_restore(s, a, confirm_gate),
+        "decisions": _cmd_decisions,
+        "context": _cmd_context,
+        "continue": lambda s, a: _cmd_continue(s, a, confirm_gate),
+        "undo": _cmd_undo,
+        "compact": lambda s, a: _cmd_compact(s, a, confirm_gate),
+        "new": _cmd_new,
+        "model": _cmd_model,
+        "memory": _cmd_memory,
+        "save": lambda s, a: _cmd_save(s, a, confirm_gate),
+        "retro": lambda s, a: _cmd_retro(s, a, confirm_gate),
+        "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
+        "quit": lambda s, a: False,
+        "exit": lambda s, a: False,
+        "q": lambda s, a: False,
+    }
+    commands = []
+    for meta in slash_command_metas():
+        handler = handlers.get(meta.name)
+        if handler is None:
+            continue
+        commands.append(SlashCommand(
+            f"/{meta.name}", meta.desc, handler,
+            arg_hint=meta.arg_hint, accepts_arg=meta.accepts_arg, exits=meta.exits,
+        ))
     taken = {c.name for c in commands}
     for name in agent.list_skills():
         slash = f"/{name}"

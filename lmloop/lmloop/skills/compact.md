@@ -23,5 +23,5 @@ doesn't re-derive them.
 
 Keep under ~800 words. Be concrete — names, paths, error messages, not vibes.
 
-After the summary, ask the user: "Replace thread with this summary? (/new then
-paste, or I'll continue with both)." Do not call `/new` yourself.
+After the summary, stop. The REPL will ask the user whether to replace the
+in-memory thread with this summary (session log is kept either way).

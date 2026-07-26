@@ -273,19 +273,27 @@ def main(argv=None) -> int:
                 console.error(f"unknown key '{key}'. Keys: {', '.join(DEFAULTS)}")
                 return 1
             default = DEFAULTS[key]
-            if isinstance(default, bool):
-                cfg[key] = value.lower() in ("1", "true", "yes", "y")
-            elif isinstance(default, int):
-                cfg[key] = int(value)
-            elif isinstance(default, float):
-                cfg[key] = float(value)
-            else:
-                cfg[key] = value
+            try:
+                if isinstance(default, bool):
+                    cfg[key] = value.lower() in ("1", "true", "yes", "y")
+                elif isinstance(default, int):
+                    cfg[key] = int(value)
+                elif isinstance(default, float):
+                    cfg[key] = float(value)
+                else:
+                    cfg[key] = value
+            except ValueError:
+                console.error(f"invalid value for {key}: expected {type(default).__name__}")
+                return 1
             save_config(cfg)
             console.info(f"{key} = {cfg[key]}")
             return 0
         if len(words) >= 3 and words[1] == "get":
-            console.info(cfg.get(words[2], ""))
+            key = words[2]
+            if key not in DEFAULTS:
+                console.error(f"unknown key '{key}'. Keys: {', '.join(DEFAULTS)}")
+                return 1
+            console.info(str(cfg.get(key, DEFAULTS[key])))
             return 0
         console.info(f"# {CONFIG_PATH}")
         for k in DEFAULTS:

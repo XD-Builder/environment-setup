@@ -162,7 +162,8 @@ class ContinueNudgeTests(unittest.TestCase):
             "the architecture and find potential improvements."
         )
         self.assertTrue(agent._should_nudge_continue(text, turn_tools=3, nudges=0, max_nudges=2))
-        self.assertFalse(agent._should_nudge_continue(text, turn_tools=0, nudges=0, max_nudges=2))
+        # First-round plan-only (no tools yet) should also nudge.
+        self.assertTrue(agent._should_nudge_continue(text, turn_tools=0, nudges=0, max_nudges=2))
         self.assertFalse(agent._should_nudge_continue(text, turn_tools=3, nudges=2, max_nudges=2))
 
     def test_empty_after_tools_is_done_not_nudge(self):
@@ -177,6 +178,29 @@ class ContinueNudgeTests(unittest.TestCase):
         )
         self.assertFalse(
             agent._should_nudge_continue(answer, turn_tools=5, nudges=0, max_nudges=2),
+        )
+
+    def test_skips_grounded_looking_at_answers(self):
+        answer = (
+            "Looking at the logs, the crash is a nil deref in main.go:42."
+        )
+        self.assertFalse(
+            agent._should_nudge_continue(answer, turn_tools=3, nudges=0, max_nudges=2),
+        )
+
+    def test_detects_intent_after_status_preamble(self):
+        """Local models often say 'No prior memory… Let me search' then stop."""
+        text = (
+            "No prior memory. Let me do fresh, thorough research. I'll search for:\n"
+            "1. Karpathy's post about raising a child researcher\n"
+            "2. Fairfax County public library early resources (0-3)\n"
+            "3. Fairfax County public schools early childhood programs\n"
+            "4. Herndon-specific resources\n"
+            "\n"
+            "Let me start with web searches."
+        )
+        self.assertTrue(
+            agent._should_nudge_continue(text, turn_tools=2, nudges=0, max_nudges=2),
         )
 
     def test_act_nudges_when_model_narrates_without_tools(self):
@@ -777,6 +801,7 @@ class ActIntegrationTests(unittest.TestCase):
                 echo_tool=lambda n, a, *r: None,
             )
         self.assertTrue(any("max_rounds" in str(x) for x in echoed))
+        self.assertTrue(any("/continue" in str(x) for x in echoed))
 
     def test_act_skips_empty_tool_names(self):
         body = _sse(
