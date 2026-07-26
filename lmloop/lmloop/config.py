@@ -26,6 +26,7 @@ DEFAULTS = {
     "base_url": "http://127.0.0.1:1234/v1",
     "model": "",  # empty = first model the server reports
     "max_rounds": 25,
+    "max_continue_nudges": 2,  # auto-resume when model narrates next step without tools
     "temperature": 0.7,
     "timeout_s": 600,
     "stream": True,  # stream tokens as they arrive (SSE); false = wait for full reply

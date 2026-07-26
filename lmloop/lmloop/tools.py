@@ -295,7 +295,61 @@ def build_tools(cfg: dict, confirm_gate=None) -> "tuple[list[dict], dict]":
     return specs, impls
 
 
+# Required keys and int coercions — keep in sync with build_tools() specs above.
+TOOL_REQUIRED = {
+    "run_shell": ["command"],
+    "read_file": ["path"],
+    "write_file": ["path", "content"],
+    "list_dir": [],
+    "search_files": ["pattern"],
+    "fetch_url": ["url"],
+    "remember": ["insight"],
+    "log_decision": ["decision"],
+    "recall_memory": ["query"],
+}
+TOOL_INT_FIELDS = {
+    "read_file": ("start_line", "max_lines"),
+    "remember": ("confidence",),
+}
+# Required string fields that may legitimately be empty (e.g. truncate a file).
+TOOL_ALLOW_EMPTY_STRING = frozenset({
+    ("write_file", "content"),
+})
+
+
+def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
+    """Return an ERROR string if kwargs are invalid, else None."""
+    required = TOOL_REQUIRED.get(name)
+    if required is None:
+        return None  # unknown tools handled by dispatch caller
+    for key in required:
+        if key not in kwargs or kwargs[key] is None:
+            return f"ERROR: missing required argument '{key}'"
+        if (
+            isinstance(kwargs[key], str)
+            and not kwargs[key].strip()
+            and (name, key) not in TOOL_ALLOW_EMPTY_STRING
+        ):
+            return f"ERROR: missing required argument '{key}'"
+    for key in TOOL_INT_FIELDS.get(name, ()):
+        if key not in kwargs or kwargs[key] is None:
+            continue
+        try:
+            kwargs[key] = int(kwargs[key])
+        except (TypeError, ValueError):
+            return f"ERROR: '{key}' must be an integer"
+    if name == "remember" and kwargs.get("type") is not None:
+        if kwargs["type"] not in memory.LEARNING_TYPES:
+            return (
+                "ERROR: type must be one of "
+                + ", ".join(memory.LEARNING_TYPES)
+            )
+    return None
+
+
 def dispatch(impls: dict, name: str, arguments: str) -> str:
+    if not (name or "").strip():
+        return "ERROR: empty tool name"
     fn = impls.get(name)
     if not fn:
         return f"ERROR: unknown tool {name}"
@@ -305,6 +359,9 @@ def dispatch(impls: dict, name: str, arguments: str) -> str:
             return "ERROR: tool arguments must be a JSON object"
     except json.JSONDecodeError as e:
         return f"ERROR: bad tool arguments: {e}"
+    err = _validate_tool_kwargs(name, kwargs)
+    if err:
+        return err
     try:
         params = inspect.signature(fn).parameters
         filtered = {k: v for k, v in kwargs.items() if k in params}

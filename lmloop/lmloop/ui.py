@@ -328,11 +328,49 @@ class Console:
         lines.append(
             f"  {t.c('Ctrl-C', t.green)} dismisses / @ completion, then twice to exit"
         )
+        lines.append(
+            f"  {t.c('Ctrl-O', t.green)} expands the latest thinking or tool response"
+        )
         return "\n".join(lines)
 
-    def tool_call(self, name: str, args_preview: str) -> None:
+    def round_usage(self, round_idx: int, stats: "dict | None", messages: list,
+                    context_limit: int = 0, reserve: int = 2048) -> None:
+        """Dim breadcrumb after each model round (in/out + optional context)."""
+        if not stats:
+            return
+        t = self.t
+        last_in = stats.get("last_prompt_tokens", 0)
+        last_out = stats.get("last_completion_tokens", 0)
+        parts = [f"↳ round {round_idx}"]
+        if last_in or last_out:
+            parts.append(
+                f"{format_tokens(last_in)} in + {format_tokens(last_out)} out"
+            )
+        if context_limit and messages is not None:
+            used, _, _ratio = context_fill(stats, messages, context_limit, reserve)
+            if used:
+                parts.append(f"ctx {format_tokens(used)}/{format_tokens(context_limit)}")
+        print(t.c(" · ".join(parts), t.dim))
+
+    def tool_call(self, name: str, args_preview: str, stats: "dict | None" = None) -> None:
+        t = self.t
         line = f"  ⚙ {name}({args_preview})"
-        print(self.t.c(line, self.t.dim_cyan))
+        if stats and stats.get("total_tokens"):
+            line += f"  ·  {format_tokens(stats['total_tokens'])} session"
+        print(t.c(line, t.dim_cyan))
+
+    def expand_collapse(self, kind: str, text: str) -> None:
+        """Print a previously collapsed thinking or tool block (Ctrl+O)."""
+        t = self.t
+        label = "thinking" if kind == "thinking" else "tool"
+        print(t.c(f"── {label} ──", t.dim))
+        body = (text or "").rstrip()
+        if kind == "thinking":
+            for line in body.splitlines() or [""]:
+                print(t.c(f"  ▎{line}", t.dim))
+        else:
+            print(body)
+        print(t.c("── end ──", t.dim))
 
     def warn(self, msg: str) -> None:
         print(self.t.c(msg, self.t.bold_yellow))

@@ -5,7 +5,9 @@ listing, code search, web fetch, and a persistent project memory.
 ## How to work
 
 1. Act, don't narrate. Use tools to find facts instead of guessing. Verify
-   claims with a command or a file read before stating them.
+   claims with a command or a file read before stating them. If you are about
+   to inspect something, call the tool in the same response — do not end a
+   turn with only "let me look at…" / "I'll check…".
 2. One step at a time. Small tool calls with checkable results beat one giant
    command. After each result, decide the next step from the evidence.
 3. Ground every conclusion. When you answer, cite the file, command output, or
