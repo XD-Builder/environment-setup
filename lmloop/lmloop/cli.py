@@ -59,12 +59,15 @@ def _session_transcript_for_retro(paths) -> str:
 
 
 def _make_confirm_gate(console: Console, prompt_session=None):
+    # prompt_session ignored — mid-turn confirms must use plain input().
+    del prompt_session
+
     def confirm_gate(command: str) -> bool:
         label = "potentially destructive"
         if tools.needs_shell(command) and not tools.is_destructive(command):
             label = "shell-syntax (pipes/redirections)"
         console.warn(f"\n⚠ {label} command requested:\n    {command}")
-        return ask_yes_no(console.confirm_prompt(), prompt_session=prompt_session)
+        return ask_yes_no(console.confirm_prompt(command))
     return confirm_gate
 
 

@@ -11,6 +11,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -294,20 +295,51 @@ def system_prompt(cfg: dict) -> str:
 
 # ---------------------------------------------------------------- chat call
 
-def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
+def _merge_tool_call_delta(acc: dict, deltas: list) -> None:
+    """Accumulate streamed tool_call deltas keyed by index (OpenAI SSE shape)."""
+    for tc in deltas:
+        idx = int(tc.get("index") or 0)
+        if idx not in acc:
+            acc[idx] = {
+                "id": "",
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            }
+        entry = acc[idx]
+        if tc.get("id"):
+            entry["id"] = tc["id"]
+        if tc.get("type"):
+            entry["type"] = tc["type"]
+        fn = tc.get("function") or {}
+        if fn.get("name"):
+            entry["function"]["name"] += fn["name"]
+        if "arguments" in fn and fn["arguments"] is not None:
+            entry["function"]["arguments"] += fn["arguments"]
+
+
+def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | None",
+                  stream: bool) -> urllib.request.Request:
     payload = {
         "model": model,
         "messages": messages,
         "temperature": cfg.get("temperature", 0.7),
-        "stream": False,
+        "stream": stream,
     }
+    if stream:
+        # Ask the server for a final usage chunk (OpenAI-compatible; ignored if unsupported).
+        payload["stream_options"] = {"include_usage": True}
     if tool_specs:
         payload["tools"] = tool_specs
-    req = urllib.request.Request(
+    return urllib.request.Request(
         cfg["base_url"].rstrip("/") + "/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream" if stream else "application/json"},
     )
+
+
+def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
+    """Non-streaming chat completion."""
+    req = _chat_request(cfg, model, messages, tool_specs, stream=False)
     try:
         with urllib.request.urlopen(req, timeout=cfg.get("timeout_s", 600)) as resp:
             data = json.loads(resp.read().decode())
@@ -322,6 +354,84 @@ def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "
         raise ServerError(f"Unexpected response shape: {json.dumps(data)[:500]}")
 
 
+def _read_sse(resp, on_delta=None) -> "tuple[dict, dict]":
+    """Parse an OpenAI-style SSE body into (assistant message, usage)."""
+    content_parts: list = []
+    tool_acc: dict = {}
+    usage: dict = {}
+    while True:
+        raw = resp.readline()
+        if not raw:
+            break
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line or line.startswith(":"):
+            continue
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        delta = choices[0].get("delta") or {}
+        piece = delta.get("content")
+        if piece:
+            content_parts.append(piece)
+            if on_delta:
+                on_delta(piece)
+        tc_deltas = delta.get("tool_calls")
+        if tc_deltas:
+            _merge_tool_call_delta(tool_acc, tc_deltas)
+    msg: dict = {"role": "assistant", "content": "".join(content_parts)}
+    if tool_acc:
+        msg["tool_calls"] = [tool_acc[i] for i in sorted(tool_acc)]
+    return msg, usage
+
+
+def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None",
+                 on_delta=None) -> "tuple[dict, dict]":
+    """Streaming chat completion (SSE). Assembles message; optionally echoes content deltas."""
+    req = _chat_request(cfg, model, messages, tool_specs, stream=True)
+    try:
+        with urllib.request.urlopen(req, timeout=cfg.get("timeout_s", 600)) as resp:
+            return _read_sse(resp, on_delta=on_delta)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()[:500]
+        # Older servers may reject stream_options — retry without it.
+        if e.code == 400 and "stream_options" in body.lower():
+            payload = json.loads(req.data.decode())
+            payload.pop("stream_options", None)
+            retry = urllib.request.Request(
+                req.full_url, data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+            )
+            try:
+                with urllib.request.urlopen(retry, timeout=cfg.get("timeout_s", 600)) as resp:
+                    return _read_sse(resp, on_delta=on_delta)
+            except urllib.error.HTTPError as e2:
+                raise ServerError(f"LM Studio returned HTTP {e2.code}: {e2.read().decode()[:500]}")
+            except OSError as e2:
+                raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e2}")
+        raise ServerError(f"LM Studio returned HTTP {e.code}: {body}")
+    except OSError as e:
+        raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e}")
+
+
+def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None",
+          on_delta=None) -> "tuple[dict, dict]":
+    """Chat completion. Streams when cfg['stream'] is true (default)."""
+    if cfg.get("stream", True):
+        return _chat_stream(cfg, model, messages, tool_specs, on_delta=on_delta)
+    return _chat_once(cfg, model, messages, tool_specs)
+
+
 def _accumulate_usage(stats: "dict | None", usage: dict) -> None:
     if not stats or not usage:
         return
@@ -332,29 +442,59 @@ def _accumulate_usage(stats: "dict | None", usage: dict) -> None:
     stats["last_completion_tokens"] = int(usage.get("completion_tokens") or 0)
 
 
+def _default_echo_delta(piece: str) -> None:
+    sys.stdout.write(piece)
+    sys.stdout.flush()
+
+
 # ---------------------------------------------------------------- act loop
 
 def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None,
-        confirm_gate=None, echo=print, echo_tool=None, stats: "dict | None" = None) -> list:
-    """Run the multi-round tool loop. Mutates and returns `messages`."""
+        confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
+        stats: "dict | None" = None) -> list:
+    """Run the multi-round tool loop. Mutates and returns `messages`.
+
+    When streaming is enabled (config ``stream``, default True), content tokens
+    are written via ``echo_delta`` (or stdout) as they arrive so the UI is not
+    stuck waiting for a full non-streamed reply.
+    """
     if echo_tool is None:
         echo_tool = lambda name, preview: echo(f"  ⚙ {name}({preview})")
+    if echo_delta is None:
+        echo_delta = _default_echo_delta
     tool_specs, impls = tools.build_tools(cfg, confirm_gate=confirm_gate)
+    use_stream = bool(cfg.get("stream", True))
     turn_rounds = 0
     turn_tools = 0
     for round_idx in range(cfg.get("max_rounds", 25)):
-        msg, usage = _chat(cfg, model, messages, tool_specs)
+        streamed = {"n": 0}
+
+        def on_delta(piece: str, _streamed=streamed) -> None:
+            echo_delta(piece)
+            _streamed["n"] += len(piece)
+
+        msg, usage = _chat(
+            cfg, model, messages, tool_specs,
+            on_delta=on_delta if use_stream else None,
+        )
         _accumulate_usage(stats, usage)
         turn_rounds += 1
         tool_calls = msg.get("tool_calls") or []
-        content = (msg.get("content") or "").strip()
+        raw_content = msg.get("content") or ""
+        content = raw_content.strip()
 
-        assistant_entry = {"role": "assistant", "content": msg.get("content") or ""}
+        assistant_entry = {"role": "assistant", "content": raw_content}
         if tool_calls:
             assistant_entry["tool_calls"] = tool_calls
         messages.append(assistant_entry)
 
-        if content:
+        if streamed["n"]:
+            # Live tokens already printed; finish the line before tools / next round.
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            if session_log and content:
+                memory.log_event(session_log, "assistant", content)
+        elif content:
             echo(content)
             if session_log:
                 memory.log_event(session_log, "assistant", content)
