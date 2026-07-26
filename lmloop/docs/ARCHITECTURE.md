@@ -66,7 +66,7 @@ Key properties:
 - **No SDK dependency.** Plain `urllib` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible.
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
-- **Streaming is on by default** (`stream: true` in config). Completions use SSE; content tokens are echoed as they arrive. Set `stream: false` to wait for the full reply (useful for debugging).
+- **Streaming is on by default** (`stream: true` in config). Completions use SSE; tokens render live via `rich.Live` markdown when available (else plain tokens). A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
 
 ### Server management (`ensure_server`)
 

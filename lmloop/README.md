@@ -118,7 +118,7 @@ REPL UX (prompt_toolkit + rich):
 - **Ctrl-C** dismisses an open `/` or `@` completion menu first; with no menu, once shows “Ctrl-C again to exit”, twice exits. Ctrl-D exits immediately.
 - **Post-turn footer** shows a context bar, token breakdown, rounds, and tools.
 - **Colors** for banners/tools when stdout is a TTY; disable with `NO_COLOR=1` or `lmloop config set color false`.
-- **Streaming** is on by default — tokens print as they arrive. Disable with `lmloop config set stream false`.
+- **Streaming** is on by default (SSE). Tokens appear live as rich markdown (`rich.Live`); a spinner shows until the first token. Disable with `lmloop config set stream false`.
 - **Context window** is auto-detected from LM Studio (`/api/v0/models`); override with `lmloop config set context_length 8192`.
 - **Completion while typing** for `/` and `@` (no Tab required). Tab / Ctrl-Space still work.
 - Prompt history is in `~/.lmloop/history` (↑/↓; Ctrl-R incremental search).
