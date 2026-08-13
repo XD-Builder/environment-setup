@@ -47,7 +47,8 @@
 ## About environment-setup neovim
 * Config is based on [LazyVim](https://github.com/LazyVim/LazyVim) / [starter](https://github.com/LazyVim/starter) and lives under `nvim/`. Run `./setup.sh nvim` to symlink it to `~/.config/nvim` and sync plugins (`nvim --headless "+Lazy! sync" +qa`).
 * Leader is `,` (same as the vim config). Colorscheme is [wombat.nvim](https://github.com/ViViDboarder/wombat.nvim) (wombat256mod port).
-* LSP: typescript-language-server (`ts_ls`), pyright (python extra), gopls (go extra). Completion uses LazyVim's built-in completion stack.
+* LSP: typescript-language-server (`ts_ls`), pyright (python extra), gopls (go extra; skipped until `go` is on PATH — Mason builds it with the Go compiler), marksman (markdown extra). Completion uses LazyVim's built-in completion stack.
+* Markdown (LazyVim `lang.markdown` extra): [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) restyles the buffer in-editor; [markdown-preview.nvim](https://github.com/iamcco/markdown-preview.nvim) opens a live browser preview (runs via node — the prebuilt macOS arm64 binary is broken). markdownlint is disabled so notes are not flooded with line-length / heading-blank warnings.
 * Core bindings (vim parity):
     * `,z` - toggle neo-tree file explorer
     * `<C-p>` / `,pf` - find files
@@ -57,6 +58,9 @@
     * `,x` / `<C-c>` / insert `jk` - save; `,e` / `,E` - quit / force quit all
     * `,tt` `,tn` `,tp` `,tc` - tabs; `,bn` `,bp` `,bc` - buffers
     * `,wh` `,wj` `,wk` `,wl` - resize windows
+    * `,um` - toggle in-buffer markdown rendering
+    * `,cp` - toggle browser markdown preview (markdown buffers)
+    * `,n` - notification history; Enter focuses the right pane (`v`/`y` to copy). `:MasonLog` has full Mason install logs.
 
 # Tmux
 ## About tmux
