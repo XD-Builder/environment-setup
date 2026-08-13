@@ -40,4 +40,19 @@ return {
       },
     },
   },
+
+  -- `,n` notification picker: Enter focuses the preview so you can visual-select
+  -- (`v`/`V` then `y`). Default confirm just closed the picker.
+  {
+    "folke/snacks.nvim",
+    opts = {
+      picker = {
+        sources = {
+          notifications = {
+            confirm = "focus_preview",
+          },
+        },
+      },
+    },
+  },
 }
