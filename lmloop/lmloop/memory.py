@@ -34,17 +34,23 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _append_jsonl(path: Path, row: dict) -> None:
+def append_jsonl(path: Path, row: dict) -> None:
+    """Append one JSON object as a line. Creates parent dirs."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _append_jsonl(path: Path, row: dict) -> None:
+    append_jsonl(path, row)
 
 
 def _fence_memory(body: str) -> str:
     return _MEMORY_FENCE_PREFIX + body + _MEMORY_FENCE_SUFFIX
 
 
-def _read_jsonl(path: Path) -> "list[dict]":
+def read_jsonl(path: Path) -> "list[dict]":
+    """Load JSONL records, skipping corrupt lines (warn once per path)."""
     if not path.exists():
         return []
     rows = []
@@ -67,6 +73,10 @@ def _read_jsonl(path: Path) -> "list[dict]":
                 file=sys.stderr,
             )
     return rows
+
+
+def _read_jsonl(path: Path) -> "list[dict]":
+    return read_jsonl(path)
 
 
 # ---------------------------------------------------------------- learnings
@@ -264,7 +274,7 @@ def format_sessions_for_retro(paths) -> str:
 
 
 def format_messages_transcript(messages, max_chars: int = 20000) -> str:
-    """Render a live thread for compact/retro — honors /undo.
+    """Render a live thread for compact/memory mine — honors /undo.
 
     Includes truncated tool rows (live payloads can be huge). Skips system
     messages and empty contents.

@@ -1,8 +1,31 @@
-# Design: Loop and Graph Engineering for lmloop
+# Design: Knowledge Graph Memory for lmloop
 
-**Status:** proposal
-**Date:** 2025-07-13
+**Status:** proposal (knowledge graph — not implemented)
+**Updated:** 2026-08-14
+**Original date:** 2025-07-13
 **References:** [Bian et al., "LLM-empowered knowledge graph construction: A survey" (arXiv 2510.20345v1)](https://arxiv.org/html/2510.20345v1)
+
+This file is **only** a knowledge-graph memory proposal (nodes/edges over learnings, decisions, sessions). It is not a spec for control-flow.
+
+## What shipped (August 2026)
+
+Control-flow **goal loop** is implemented. Do not re-implement it here.
+
+| Piece | Where |
+|-------|--------|
+| `lmloop until` / `/until` | [`loop.py`](../lmloop/loop.py) — isolated maker `act()` until `--check` exit 0 or an isolated eval `STATUS:` line |
+| Resume | `/continue` (REPL) or `lmloop until` with no goal (CLI) |
+| Mine after pass | existing `retro.md` playbook via `memory mine` (`until_mine`, default true) |
+| Command fold | `lmloop retro` / `/retro` are aliases that print `[memory mine]` |
+
+Eval is a **fresh thread**. Missing `STATUS:` is `blocked`, never `pass`. Run logs: `~/.lmloop/projects/<slug>/until/<ts>.jsonl`.
+
+## What to implement next (not this file)
+
+1. **Control-flow graphs** (specialized loops with sparse authored edges): follow **[DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md)** first. Until is the inner node. Do not add LangGraph.
+2. **This document** stays the knowledge-graph layer. Implement it only after until-as-a-node is proven. Do not mix JSONL knowledge edges into `loop.py`.
+
+`ARCHITECTURE.md` describes current until behavior. This file must not be copied into README as if graph memory exists.
 
 ---
 
@@ -78,11 +101,11 @@ Following the survey's three-layered KG pipeline (Section 2):
 - When `remember()` is called, create a `learning` node + `in_session` edge to current session
 - When `log_decision()` is called, create a `decision` node + `in_session` edge
 - When a tool reads/writes a file, create/update a `file` node + `references` edge from current learning/decision
-- When `/retro` runs, create `uses_skill` edge from session → retro skill
+- When `/memory mine` runs, create `uses_skill` edge from session → retro skill
 
 **Layer 3: Knowledge Fusion** — LLM-driven edge creation:
 - A new `graph_reason` tool lets the agent propose edges between existing nodes
-- `/retro` gains a graph phase: after extracting learnings, the agent proposes `leads_to`, `contradicts`, and `related_to` edges
+- `/memory mine` gains a graph phase: after extracting learnings, the agent proposes `leads_to`, `contradicts`, and `related_to` edges
 - Periodic `/graph reconcile` resolves contradictions by asking the agent to review conflicting learnings
 
 ### 3.3 The Enhanced Agent Loop
@@ -167,7 +190,7 @@ The agent sees not just the fact, but its provenance and connections.
 ### Phase 3: LLM-Driven Graph Engineering
 
 - Add `graph_add_edge()` tool for the agent to propose relationships
-- Enhance `/retro` skill with a graph phase
+- Enhance the retro skill (loaded by `/memory mine`) with a graph phase
 - Add `/graph reconcile` skill: review contradictions, merge duplicates
 - Enhance `context_block()` to include 1-hop neighbors
 

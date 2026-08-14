@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import agent, memory
+from . import agent, loop as loop_mod, memory
 from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
@@ -24,6 +24,7 @@ class SlashCommand:
     arg_hint: str = ""
     accepts_arg: bool = False
     exits: bool = False
+    hidden: bool = False
 
 
 @dataclass
@@ -40,6 +41,7 @@ class SessionState:
     # Prior-turn thinking for Ctrl+O (newest last). Live thinking is not stored
     # here until the turn retires it.
     thinking_history: list = field(default_factory=list)
+    until_run: "Path | None" = None
 
     @property
     def user_turns(self) -> int:
@@ -96,6 +98,7 @@ def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
     state.messages = _fresh_messages(state.cfg)
     state.session_log = memory.new_session_log()
     state.thinking_history = []
+    state.until_run = None
     if not keep_stats:
         state.stats = fresh_stats()
 
@@ -193,22 +196,19 @@ def _cmd_model(state: SessionState, arg: str) -> bool:
     return True
 
 
-def _cmd_memory(state: SessionState, arg: str) -> bool:
+def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
+    parts = (arg or "").split(None, 1)
+    if parts and parts[0] == "mine":
+        rest = parts[1] if len(parts) > 1 else ""
+        return _cmd_memory_mine(state, rest, confirm_gate)
     rows = memory.get_learnings(query=arg, limit=30)
     for r in rows:
         state.console.info(
             f"- [{r['key']}] ({r['type']}, {r['confidence']}/10) {r['insight']}"
         )
     if not rows:
-        state.console.info("(no learnings yet — run tasks, then /retro)")
+        state.console.info("(no learnings yet — run tasks, then /memory mine)")
     return True
-
-
-def _last_assistant(messages: list) -> str:
-    for m in reversed(messages):
-        if m.get("role") == "assistant" and (m.get("content") or "").strip():
-            return (m.get("content") or "").strip()
-    return ""
 
 
 def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
@@ -228,7 +228,7 @@ def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
     if result is None:
         state.console.hint("[checkpoint not saved]")
         return True
-    body = _last_assistant(result)
+    body = loop_mod.last_assistant(result)
     if not body:
         state.console.hint("[checkpoint not saved — empty reply]")
         return True
@@ -245,45 +245,34 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
             console.info("no sessions recorded yet")
             return 0
         transcript = memory.format_sessions_for_retro(paths)
-        label = f"/retro over {len(paths)} session(s)"
+        label = f"/memory mine over {len(paths)} session(s)"
     else:
         if not transcript.strip():
             console.info("no sessions recorded yet")
             return 0
-        label = "/retro this session"
+        label = "/memory mine this session"
     try:
         task = agent.load_skill("retro") + "\n\n" + transcript
     except FileNotFoundError as e:
         console.error(str(e))
         return 1
-    messages = _fresh_messages(cfg)
-    session_log = memory.new_session_log()
-    memory.log_event(session_log, "user", label)
-    messages.append({"role": "user", "content": task})
-    try:
-        agent.act(
-            cfg, model, messages, session_log=session_log,
-            confirm_gate=confirm_gate,
-            echo=_echo_assistant(console),
-            echo_status=console.hint,
-            echo_tool=console.tool_call,
-            echo_round=console.round_usage,
-            context_limit=agent.get_context_limit(model, cfg),
-            context_reserve=int(cfg.get("context_reserve") or 2048),
-            workspace_root=Path.cwd().resolve(),
-        )
-    except agent.ServerError as e:
-        memory.log_event(session_log, "system", f"error: {e}")
-        console.error(f"error: {e}")
-        return 1
-    except KeyboardInterrupt:
-        memory.log_event(session_log, "system", "interrupted")
-        console.hint("\n[interrupted — retro stopped; current conversation kept]")
-        return 1
-    return 0
+    result = loop_mod.isolated_act(
+        cfg, model, task,
+        confirm_gate=confirm_gate,
+        echo=_echo_assistant(console),
+        echo_status=console.hint,
+        echo_error=console.error,
+        echo_tool=console.tool_call,
+        echo_round=console.round_usage,
+        context_limit=agent.get_context_limit(model, cfg),
+        context_reserve=int(cfg.get("context_reserve") or 2048),
+        workspace_root=Path.cwd().resolve(),
+        log_label=label,
+    )
+    return 0 if result is not None else 1
 
 
-def _cmd_retro(state: SessionState, arg: str, confirm_gate) -> bool:
+def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
     arg = (arg or "").strip()
     if arg.isdigit() and int(arg) > 0:
         n = int(arg)
@@ -293,27 +282,34 @@ def _cmd_retro(state: SessionState, arg: str, confirm_gate) -> bool:
             if p.resolve() != current
         ][-n:]
         if not paths:
-            state.console.info("no prior sessions to mine — try /retro for this session")
+            state.console.info(
+                "no prior sessions to mine — try /memory mine for this session"
+            )
             return True
         label = f"last {len(paths)} session(s)"
-        state.console.hint(f"[retro · {label} · current conversation unchanged]")
+        state.console.hint(f"[memory mine · {label} · current conversation unchanged]")
         mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
         return True
     if arg:
-        state.console.info("usage: /retro [n]")
-        state.console.info("  /retro       mine this session")
-        state.console.info("  /retro 3     mine last 3 sessions")
+        state.console.info("usage: /memory mine [n]")
+        state.console.info("  /memory mine       mine this session")
+        state.console.info("  /memory mine 3     mine last 3 sessions")
         return True
     transcript = memory.format_messages_transcript(state.messages)
     if not transcript:
         state.console.info("(no session transcript to mine)")
         return True
-    state.console.hint("[retro · this session · current conversation unchanged]")
+    state.console.hint("[memory mine · this session · current conversation unchanged]")
     mine_sessions(
         state.cfg, state.model, None, state.console, confirm_gate,
         transcript=transcript,
     )
     return True
+
+
+def _cmd_retro(state: SessionState, arg: str, confirm_gate) -> bool:
+    state.console.hint("[memory mine]")
+    return _cmd_memory_mine(state, arg, confirm_gate)
 
 
 def _run_named_skill(state: SessionState, name: str, task: str, confirm_gate) -> bool:
@@ -373,7 +369,7 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
     result = _isolated_act(state, prompt, confirm_gate, log_label="/compact")
     if result is None:
         return True
-    summary = _last_assistant(result)
+    summary = loop_mod.last_assistant(result)
     if not summary:
         return True
     state.console.hint("Replace the in-memory thread with this summary?")
@@ -403,32 +399,22 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
 def _isolated_act(state: SessionState, user_text: str, confirm_gate,
                   *, log_label: str) -> "list | None":
     """Run act() on a fresh thread. Returns messages, or None on failure."""
-    messages = _fresh_messages(state.cfg)
-    session_log = memory.new_session_log()
-    memory.log_event(session_log, "user", log_label)
-    messages.append({"role": "user", "content": user_text})
-    try:
-        agent.act(
-            state.cfg, state.model, messages, session_log=session_log,
-            confirm_gate=confirm_gate,
-            echo=_echo_assistant(state.console),
-            echo_status=state.console.hint,
-            echo_tool=state.console.tool_call,
-            echo_round=state.console.round_usage,
-            context_limit=state.context_limit,
-            context_reserve=state.context_reserve,
-            workspace_root=state.workspace_root,
-        )
-    except agent.ServerError as e:
-        memory.log_event(session_log, "system", f"error: {e}")
-        state.console.error(f"error: {e}")
+    result = loop_mod.isolated_act(
+        state.cfg, state.model, user_text,
+        confirm_gate=confirm_gate,
+        echo=_echo_assistant(state.console),
+        echo_status=state.console.hint,
+        echo_error=state.console.error,
+        echo_tool=state.console.tool_call,
+        echo_round=state.console.round_usage,
+        context_limit=state.context_limit,
+        context_reserve=state.context_reserve,
+        workspace_root=state.workspace_root,
+        log_label=log_label,
+    )
+    if result is None:
         return None
-    except KeyboardInterrupt:
-        memory.log_event(session_log, "system", "interrupted")
-        state.console.hint(
-            f"\n[interrupted — current conversation kept; {MSG_RESUME}]"
-        )
-        return None
+    messages, _session_log = result
     return messages
 
 
@@ -595,7 +581,59 @@ def _cmd_restore(state: SessionState, arg: str) -> bool:
     return True
 
 
+def _until_callbacks(state: SessionState, confirm_gate):
+    def mine(paths):
+        if not paths:
+            return
+        mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
+
+    return dict(
+        confirm_gate=confirm_gate,
+        echo=_echo_assistant(state.console),
+        echo_status=state.console.hint,
+        echo_error=state.console.error,
+        echo_tool=state.console.tool_call,
+        echo_round=state.console.round_usage,
+        context_limit=state.context_limit,
+        context_reserve=state.context_reserve,
+        workspace_root=state.workspace_root,
+        ask_gate=ask_yes_no,
+        mine=mine if state.cfg.get("until_mine", True) else None,
+    )
+
+
+def _advance_until(state: SessionState, run: loop_mod.UntilRun, confirm_gate) -> None:
+    state.until_run = run.path
+    loop_mod.run_until(state.cfg, state.model, run=run, **_until_callbacks(state, confirm_gate))
+    loaded = loop_mod.UntilRun.load(run.path)
+    if loaded.is_done():
+        state.until_run = None
+
+
+def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
+    goal, check_cmd, err = loop_mod.parse_until_arg_line(arg)
+    if err:
+        state.console.info(err)
+        state.console.info("  /until [--check <cmd>] <goal>")
+        state.console.info("  /continue resumes a paused until-run")
+        return True
+    hint = loop_mod.superseded_until_hint()
+    run = loop_mod.UntilRun.create(goal, check_cmd=check_cmd)
+    state.console.hint(f"[until · {goal}]")
+    if hint:
+        state.console.hint(hint)
+    _advance_until(state, run, confirm_gate)
+    return True
+
+
 def _cmd_continue(state: SessionState, arg: str, confirm_gate) -> bool:
+    if state.until_run and state.until_run.exists():
+        run = loop_mod.UntilRun.load(state.until_run)
+        if not run.is_done():
+            state.console.hint("[until · resume]")
+            _advance_until(state, run, confirm_gate)
+            return True
+        state.until_run = None
     _run_turn(state, arg or "Continue where you left off.", confirm_gate)
     return True
 
@@ -634,9 +672,9 @@ def _build_slash_commands(confirm_gate) -> list:
         "compact": lambda s, a: _cmd_compact(s, a, confirm_gate),
         "new": _cmd_new,
         "model": _cmd_model,
-        "memory": _cmd_memory,
+        "memory": lambda s, a: _cmd_memory(s, a, confirm_gate),
+        "until": lambda s, a: _cmd_until(s, a, confirm_gate),
         "save": lambda s, a: _cmd_save(s, a, confirm_gate),
-        "retro": lambda s, a: _cmd_retro(s, a, confirm_gate),
         "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
         "quit": lambda s, a: False,
         "exit": lambda s, a: False,
@@ -651,6 +689,11 @@ def _build_slash_commands(confirm_gate) -> list:
             f"/{meta.name}", meta.desc, handler,
             arg_hint=meta.arg_hint, accepts_arg=meta.accepts_arg, exits=meta.exits,
         ))
+    commands.append(SlashCommand(
+        "/retro", "alias for /memory mine",
+        lambda s, a: _cmd_retro(s, a, confirm_gate),
+        arg_hint="[n]", accepts_arg=True, hidden=True,
+    ))
     taken = {c.name for c in commands}
     for name in agent.list_skills():
         slash = f"/{name}"

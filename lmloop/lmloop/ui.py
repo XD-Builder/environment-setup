@@ -379,7 +379,7 @@ class Console:
         t = self.t
         lines = [t.c("commands:", t.bold)]
         for cmd in commands:
-            if cmd.exits:
+            if cmd.exits or getattr(cmd, "hidden", False):
                 continue
             name = t.c(cmd.name, t.green)
             arg = f" {cmd.arg_hint}" if cmd.arg_hint else ""

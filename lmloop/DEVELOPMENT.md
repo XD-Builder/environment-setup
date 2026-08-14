@@ -91,6 +91,7 @@ find yourself updating two lists, you have already added debt.
 | Slash/CLI names, reserved skill stems | `commands.py` |
 | Status / resume / nudge copy | `status.py` |
 | JSONL memory | `memory.py` |
+| Goal loop (`until` maker/check/eval) | `loop.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
 | Paths, `DEFAULTS`, project slug | `config.py` |
 | `@path` completion + ref expansion | `files_index.py` |
@@ -111,6 +112,8 @@ belongs in those modules, not as more private helpers in `agent.py`.
   not `agent`.
 - `ui.py` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
+- `loop.py` may import `agent.act`, `memory`, `status`, and `tools.run_shell` for the check command.
+- `agent.py` / `stream.py` / `display.py` must not import `loop`.
 
 ### Keep components small
 
@@ -197,7 +200,7 @@ Same operation, different types, no `if kind ==` ladders at the call site.
 - Search backends are `(name, fn)` callables with the same `(query, …) ->
   (body, err)` shape. Add a backend by appending to the list.
 - Slash handlers are `Callable[[SessionState, str], bool]`. The dispatcher
-  does not know about `/retro` vs `/stats`.
+  does not know about `/memory` vs `/stats`.
 
 If you need `isinstance` to pick behavior, the abstraction is leaking. Put
 the behavior on the type.
@@ -235,7 +238,7 @@ Follow [PEP 8](https://peps.python.org/pep-0008/) and [PEP 257](https://peps.pyt
 | Module-private | leading `_` | `_tty_write`, `_TOOL_DEFS`, `_HtmlToolParser` |
 | Type aliases / records | `CapWords` dataclass | `CommandMeta` |
 | Boolean helpers | `is_` / `has_` / `needs_` | `needs_shell`, `is_nudge_message` |
-| CLI handlers | `cmd_<stem>` | `cmd_retro`, `cmd_skills_new` |
+| CLI handlers | `cmd_<stem>` | `cmd_memory_mine`, `cmd_skills_new` |
 | REPL handlers | `_cmd_<stem>` | `_cmd_restore` |
 | Tests | `test_<behavior>` on `*Tests(unittest.TestCase)` | `test_list_skills_excludes_system` |
 
@@ -374,6 +377,7 @@ Docs are part of the diff, not a follow-up.
 |---|---|---|
 | Users | `README.md` | Flags, slash commands, tools, setup, troubleshooting |
 | Internals | `docs/ARCHITECTURE.md` | Component map, loop, memory layout, design choices |
+| Next-step proposals | `docs/DESIGN_*.md` | Stay labeled proposal until the code exists |
 | Contributors | `DEVELOPMENT.md` | Module ownership, contracts, conventions |
 | Skills | `lmloop/skills/*.md` | Playbook behavior the model must follow |
 

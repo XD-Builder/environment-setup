@@ -16,7 +16,8 @@ lmloop/
 ├── DEVELOPMENT.md              # contribution practices
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
-│   └── DESIGN_LOOP_AND_GRAPH.md
+│   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (proposal)
+│   └── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs next (proposal)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -34,6 +35,7 @@ lmloop/
 │   ├── ui.py                   # Console: ANSI theming, status bars, stats
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
 │   ├── status.py               # status/resume copy
+│   ├── loop.py                 # until goal loop: isolated maker + check/eval
 │   └── skills/                 # packaged skill prompts (markdown playbooks)
 │       ├── system.md           # system prompt: how to work, memory, safety
 │       ├── _author.md          # meta-prompt for skill drafting (not user-facing)
@@ -84,6 +86,29 @@ Before the loop starts, `ensure_server()` checks if LM Studio is reachable. If n
 
 ---
 
+## Goal loop
+
+**File:** `loop.py`
+
+`until` is a while-statement around isolated `act()` calls. The maker does not declare the goal done — an external check or a **fresh** eval thread does.
+
+```
+until goal:
+    maker  — isolated act() with the goal + prior handoff
+    if --check: run that shell command (exit 0 → pass)
+    else, or on check fail: isolated eval act(); last line STATUS: pass|fail|blocked
+    fail → next maker cycle; blocked → y/N gate; pass → optional memory mine → done
+```
+
+- Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
+- `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
+- Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role.
+- `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
+
+This is control-flow, not a knowledge graph. Next control-flow step: [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md). Knowledge-graph memory remains a proposal in [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
+
+---
+
 ## Tools
 
 **File:** `tools.py`
@@ -126,7 +151,8 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
     ├── learnings.jsonl             # append-only; dedup at read time
     ├── decisions.jsonl             # event-sourced (decide / supersede)
     ├── sessions/<ts>.jsonl         # per-session transcript history
-    └── checkpoints/<ts>-<t>.md     # context-save handoffs
+    ├── checkpoints/<ts>-<t>.md     # context-save handoffs
+    └── until/<ts>.jsonl            # goal-loop run log (maker / check / eval)
 ```
 
 **Project slug** is resolved from git remote (`owner-repo`) or directory name.
@@ -147,11 +173,11 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ### Sessions (`sessions/*.jsonl`)
 
 - Full transcript of role/content pairs. Created per REPL session.
-- Used by `/retro` to mine learnings and by `/restore` to reload a prior conversation.
+- Used by `/memory mine` to mine learnings and by `/restore` to reload a prior conversation.
 - `read_session()` renders log files (including truncated tool rows) up to `max_chars`.
-- `format_messages_transcript()` renders the live thread (honors `/undo`) for `/compact` and this-session `/retro`. Tool rows are included truncated (live payloads can be huge); system messages are omitted.
+- `format_messages_transcript()` renders the live thread (honors `/undo`) for `/compact` and this-session `/memory mine`. Tool rows are included truncated (live payloads can be huge); system messages are omitted.
 - `session_messages()` rebuilds user/assistant turns for `/restore`. Tool/system rows are transcript-only (truncated, not API-shaped) and are omitted. Restore loads those turns into the in-memory thread and prints the last assistant reply — it does not start a new model turn.
-- `/compact`, `/retro`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log).
+- `/compact`, `/memory mine`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log).
 
 ### Checkpoints (`checkpoints/*.md`)
 
@@ -185,7 +211,7 @@ The interactive mode uses `prompt_toolkit` for:
 - **Bottom toolbar** showing context fill bar, session tokens, and turn count.
 - **Double Ctrl-C to exit** (first dismisses completion menu, second exits).
 
-Slash commands (`/help`, `/stats`, `/retro`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately.
+Slash commands (`/help`, `/stats`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately.
 
 Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input()` without completions.
 
@@ -201,13 +227,14 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 |---------|-------------|
 | `lmloop` | Interactive REPL |
 | `lmloop "task"` | One-shot task, exits after reply |
+| `lmloop until [--check cmd] <goal>` | Goal loop: isolated maker until a check or evaluator passes |
 | `lmloop skill <name> [task]` | Start with a skill prompt |
 | `lmloop skills` | List skill prompts |
 | `lmloop skills new <name> [brief]` | AI-draft a skill, review, then save |
 | `lmloop memory [query]` | Peek curated learnings |
+| `lmloop memory mine [N]` | Mine last N sessions into learnings |
 | `lmloop decisions` | Peek durable decisions |
 | `lmloop history` | List session transcripts |
-| `lmloop retro [N]` | Mine last N sessions into learnings |
 | `lmloop models` | List models on server |
 | `lmloop config get\|set\|show` | Manage settings |
 | `lmloop completion zsh` | Print zsh completion script |

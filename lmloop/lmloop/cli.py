@@ -2,29 +2,31 @@
 
     lmloop                          interactive REPL
     lmloop "prompt"                 one-shot task
+    lmloop until [--check cmd] goal work until a check or evaluator passes
     lmloop skills [names]           list skill prompts (names = one per line)
     lmloop skills new <name> [brief]  draft a skill with AI, review, then save
     lmloop skill <name> [task]      start with a skill
     lmloop memory [query]           peek curated learnings (read-only)
+    lmloop memory mine [N]          mine last N sessions into learnings (writes)
     lmloop decisions                peek durable project decisions (read-only)
     lmloop history                  list past session transcript files
-    lmloop retro [N]                mine last N sessions into learnings (writes)
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
 
 Project memory commands:
 
-    memory     peek curated learnings (read-only)
-    decisions  peek durable project decisions (read-only)
-    history    list past session transcript files
-    retro [N]  mine last N sessions into learnings (writes memory)
+    memory            peek curated learnings (read-only)
+    memory mine [N]   mine last N sessions into learnings (writes memory)
+    decisions         peek durable project decisions (read-only)
+    history           list past session transcript files
 """
 
 import argparse
 import sys
+from pathlib import Path
 
-from . import agent, memory
+from . import agent, loop as loop_mod, memory
 from .commands import cli_subcommand_metas, cli_subcommand_names
 from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
 from .repl import mine_sessions, run_repl
@@ -33,22 +35,23 @@ from .ui import Console, ask_yes_no, make_confirm_gate
 EPILOG = """
 project memory commands:
   memory [query]   peek curated learnings (read-only)
+  memory mine [N]  mine last N sessions into learnings (writes memory)
   decisions        peek durable project decisions (read-only)
   history          list past session transcript files
-  retro [N]        mine last N sessions into learnings (writes memory)
 
 examples:
   lmloop
   lmloop "why does setup.sh fail?"
+  lmloop until --check 'pytest -q' make tests pass
   lmloop skills
   lmloop skills new deploy "roll out staging safely"
   lmloop skill investigate "vim plug install hangs"
   lmloop skill review
-  lmloop retro 3
+  lmloop memory mine 3
 """
 
 
-def cmd_retro(cfg: dict, count: int, console: Console) -> int:
+def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
     sessions = memory.list_sessions(limit=count)
     if not sessions:
         console.info("no sessions recorded yet")
@@ -59,6 +62,11 @@ def cmd_retro(cfg: dict, count: int, console: Console) -> int:
         console.error(f"error: {e}")
         return 1
     return mine_sessions(cfg, model, sessions, console, make_confirm_gate(console))
+
+
+def cmd_retro(cfg: dict, count: int, console: Console) -> int:
+    console.hint("[memory mine]")
+    return cmd_memory_mine(cfg, count, console)
 
 
 def cmd_skills(console: Console, names_only: bool = False, *, repl: bool = False) -> int:
@@ -194,7 +202,12 @@ __SUBS__
           # surface unrelated zsh completion keywords in the menu.
           (( CURRENT == 2 )) && compadd - zsh
           ;;
-        retro|memory|decisions|history|models)
+        memory)
+          if (( CURRENT == 2 )); then
+            compadd - mine
+          fi
+          ;;
+        retro|until|decisions|history|models)
           ;;
       esac
       ;;
@@ -236,6 +249,10 @@ def cmd_config(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_memory(cfg: dict, words: list, console: Console) -> int:
+    if words and words[0] == "mine":
+        rest = words[1:]
+        count = int(rest[0]) if rest and rest[0].isdigit() else 3
+        return cmd_memory_mine(cfg, count, console)
     q = " ".join(words)
     rows = memory.get_learnings(query=q, limit=30)
     for r in rows:
@@ -243,7 +260,7 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
             f"- [{r['key']}] ({r['type']}, {r['confidence']}/10, {r['ts'][:10]}) {r['insight']}"
         )
     if not rows:
-        console.info("(no learnings yet — run tasks, then `lmloop retro`)")
+        console.info("(no learnings yet — run tasks, then `lmloop memory mine`)")
     return 0
 
 
@@ -268,6 +285,66 @@ def cmd_history(cfg: dict, words: list, console: Console) -> int:
 def cmd_models(cfg: dict, words: list, console: Console) -> int:
     models = agent.list_models(cfg["base_url"])
     console.info("\n".join(models) if models else f"(no server at {cfg['base_url']} or nothing loaded)")
+    return 0
+
+
+def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
+    if not words:
+        run = loop_mod.latest_open_until_run()
+        if run is None:
+            console.error("usage: lmloop until [--check <cmd>] <goal>")
+            console.info("  no paused until-run to resume")
+            return 1
+        return _cli_run_until(cfg, console, run)
+    goal, check_cmd, err = loop_mod.parse_until_args(words)
+    if err:
+        console.error(err)
+        return 1
+    try:
+        model = agent.ensure_server(cfg, echo=console.info)
+    except agent.ServerError as e:
+        console.error(f"error: {e}")
+        return 1
+    hint = loop_mod.superseded_until_hint()
+    run = loop_mod.UntilRun.create(goal, check_cmd=check_cmd)
+    console.hint(f"[until · {goal}]")
+    if hint:
+        console.hint(hint)
+    return _cli_run_until(cfg, console, run, model=model)
+
+
+def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
+                   model: "str | None" = None) -> int:
+    if model is None:
+        try:
+            model = agent.ensure_server(cfg, echo=console.info)
+        except agent.ServerError as e:
+            console.error(f"error: {e}")
+            return 1
+    confirm_gate = make_confirm_gate(console)
+
+    def mine(paths):
+        if not paths:
+            return
+        mine_sessions(cfg, model, paths, console, confirm_gate)
+
+    loop_mod.run_until(
+        cfg, model, run=run,
+        confirm_gate=confirm_gate,
+        echo=lambda text: console.print_markdown(text) if text else None,
+        echo_status=console.hint,
+        echo_error=console.error,
+        echo_tool=console.tool_call,
+        echo_round=console.round_usage,
+        context_limit=agent.get_context_limit(model, cfg),
+        context_reserve=int(cfg.get("context_reserve") or 2048),
+        workspace_root=Path.cwd().resolve(),
+        ask_gate=ask_yes_no,
+        mine=mine if cfg.get("until_mine", True) else None,
+    )
+    loaded = loop_mod.UntilRun.load(run.path)
+    if loaded.is_paused():
+        console.hint("paused — run `lmloop until` with no goal to resume")
     return 0
 
 
@@ -314,6 +391,7 @@ def cli_handlers() -> dict:
     return {
         "config": cmd_config,
         "memory": cmd_memory,
+        "until": cmd_until_cli,
         "decisions": cmd_decisions,
         "history": cmd_history,
         "models": cmd_models,
@@ -332,7 +410,9 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model", help="override model for this run")
-    parser.add_argument("words", nargs="*", help="task / subcommand")
+    parser.add_argument("cmd", nargs="?", default="", help="task / subcommand")
+    # REMAINDER keeps flags like until --check from being eaten as argparse options.
+    parser.add_argument("args", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     cfg = load_config()
@@ -340,7 +420,7 @@ def main(argv=None) -> int:
         cfg["model"] = args.model
     console = Console(cfg.get("color", True))
 
-    words = list(args.words)
+    words = ([args.cmd] if args.cmd else []) + list(args.args)
     sub = words[0] if words else ""
     handlers = cli_handlers()
     if sub in handlers:

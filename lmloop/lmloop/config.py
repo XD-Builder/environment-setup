@@ -10,7 +10,8 @@ State layout (gstack-inspired, file-only):
         ├── learnings.jsonl            # append-only, dedup at read time
         ├── decisions.jsonl            # event-sourced (decide / supersede)
         ├── sessions/<ts>.jsonl        # per-session transcript history
-        └── checkpoints/<ts>-<t>.md    # context-save handoffs
+        ├── checkpoints/<ts>-<t>.md    # context-save handoffs
+        └── until/<ts>.jsonl           # goal-loop run log (maker/check/eval)
 """
 
 import json
@@ -43,6 +44,8 @@ DEFAULTS = {
     "color": True,
     "context_length": 0,  # 0 = auto-detect from LM Studio; manual override in tokens
     "context_reserve": 2048,  # tokens reserved for model reply when showing fill bar
+    "until_max_steps": 12,  # maker cycles per until invocation before pause
+    "until_mine": True,  # after until pass, mine learnings from the run
 }
 
 _CONFIG_WARNED = False
