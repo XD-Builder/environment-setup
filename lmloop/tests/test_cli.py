@@ -20,6 +20,8 @@ class SkillsDiscoveryTests(unittest.TestCase):
         self.assertIn("investigate", names)
         self.assertNotIn("system", names)
         self.assertNotIn("_author", names)
+        self.assertNotIn("_graph_mine", names)
+        self.assertNotIn("_reconcile", names)
 
     def test_skill_blurb(self):
         blurb = agent.skill_blurb("ceo")
@@ -207,6 +209,7 @@ class AutoSlashTests(unittest.TestCase):
         self.assertIn("/skills", names)
         self.assertIn("/compact", names)
         self.assertIn("/until", names)
+        self.assertIn("/graph", names)
         self.assertIn("/retro", names)
         self.assertEqual(sum(1 for c in cmds if c.name == "/compact"), 1)
         self.assertEqual(sum(1 for c in cmds if c.name == "/retro"), 1)
@@ -214,6 +217,8 @@ class AutoSlashTests(unittest.TestCase):
         self.assertTrue(retro.hidden)
         help_text = Console(color=False).help_text(cmds)
         self.assertIn("/until", help_text)
+        self.assertIn("/graph", help_text)
+        self.assertNotIn("/graphs", help_text)
         self.assertIn("/memory", help_text)
         self.assertIn("mine", help_text)
         self.assertNotIn("/retro", help_text)
@@ -831,6 +836,79 @@ class MemoryMineAndUntilTests(unittest.TestCase):
             self.assertIn("wrote findings.md", state.messages[-2]["content"])
             self.assertEqual(state.messages[-1]["content"], _UNTIL_FOLLOWUP)
             self.assertIsNone(state.until_run)
+
+
+    def test_graph_cli_requires_name_or_open_run(self):
+        err = io.StringIO()
+        with patch("lmloop.cli.graph_mod.latest_open_graph_run", return_value=None), \
+             patch("lmloop.cli.graph_mod.list_graphs", return_value=["company"]), \
+             redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["graph"])
+        self.assertEqual(code, 1)
+        self.assertIn("usage", err.getvalue())
+
+    def test_graph_empty_resumes_open_run(self):
+        fake = Mock()
+        fake.path = Path("/tmp/graphs/company/run.jsonl")
+        fake.name = "company"
+        fake.is_paused.return_value = True
+        defn = Mock()
+        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+             patch("lmloop.cli.graph_mod.latest_open_graph_run", return_value=fake), \
+             patch("lmloop.cli.graph_mod.load_graph", return_value=defn), \
+             patch("lmloop.cli.graph_mod.run_graph") as run, \
+             patch("lmloop.cli.graph_mod.GraphRun.load", return_value=fake), \
+             patch("sys.stdin.isatty", return_value=False), \
+             redirect_stdout(io.StringIO()):
+            code = main(["graph"])
+        self.assertEqual(code, 0)
+        run.assert_called_once()
+
+    def test_graph_cli_runs_named(self):
+        fake = Mock()
+        fake.path = Path("/tmp/graphs/company/run.jsonl")
+        fake.name = "company"
+        fake.is_paused.return_value = False
+        defn = Mock()
+        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+             patch("lmloop.cli.graph_mod.load_graph", return_value=defn), \
+             patch("lmloop.cli.graph_mod.GraphRun.create", return_value=fake) as create, \
+             patch("lmloop.cli.graph_mod.superseded_graph_hint", return_value=None), \
+             patch("lmloop.cli.graph_mod.run_graph") as run, \
+             patch("lmloop.cli.graph_mod.GraphRun.load", return_value=fake), \
+             patch("sys.stdin.isatty", return_value=False), \
+             redirect_stdout(io.StringIO()):
+            code = main(["graph", "company"])
+        self.assertEqual(code, 0)
+        create.assert_called_once_with("company")
+        run.assert_called_once()
+
+    def test_continue_resumes_graph_over_until(self):
+        from lmloop.graph import GraphRun
+        from lmloop.loop import UntilRun
+        from lmloop.repl import _cmd_continue
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.graph.project_dir", return_value=root), \
+                 patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root):
+                grun = GraphRun.create("company")
+                grun.append("pause", "paused", node="ceo")
+                urun = UntilRun.create("ship it")
+                urun.append("pause", "paused")
+            log = root / "s.jsonl"
+            log.write_text("")
+            state = self._state(root, log)
+            state.graph_run = grun.path
+            state.until_run = urun.path
+            with patch("lmloop.repl.graph_mod.load_graph") as load, \
+                 patch("lmloop.repl._advance_graph") as adv, \
+                 redirect_stdout(io.StringIO()):
+                _cmd_continue(state, "", lambda _: False)
+            load.assert_called_once_with("company")
+            adv.assert_called_once()
+            self.assertEqual(adv.call_args[0][1].path, grun.path)
 
 
 class RegistryTests(unittest.TestCase):

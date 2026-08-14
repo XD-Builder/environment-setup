@@ -210,5 +210,139 @@ class JsonlAndContextTests(unittest.TestCase):
             self.assertIn("<<<end untrusted-memory>>>", block)
 
 
+class KnowledgeGraphTests(unittest.TestCase):
+    def test_use_graph_false_creates_no_files(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.add_learning("setup.sh fails on Linux", key="line-endings")
+                memory_mod.ensure_graph({"use_graph": False})
+                self.assertFalse((root / "graph_nodes.jsonl").exists())
+                self.assertFalse((root / "graph_edges.jsonl").exists())
+                text = memory_mod.search_memory("setup")
+                self.assertIn("setup.sh", text)
+                self.assertNotIn("in_session", text)
+
+    def test_backfill_and_hops(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.add_learning(
+                    "pytest.ini belongs in src/", key="pytest-config",
+                )
+                dec = memory_mod.add_decision("Use pytest for testing")
+                memory_mod.ensure_graph({"use_graph": True})
+                self.assertTrue((root / "graph_nodes.jsonl").exists())
+                nodes = memory_mod.get_graph_nodes()
+                self.assertIn(("learning", "pytest-config"), nodes)
+                self.assertIn(("decision", dec["id"]), nodes)
+                memory_mod.add_graph_edge(
+                    "decision", dec["id"], "learning", "pytest-config",
+                    "leads_to", note="that choice produced the learning",
+                )
+                text = memory_mod.search_memory(
+                    "pytest", cfg={"use_graph": True},
+                )
+                self.assertIn("leads_to", text)
+
+    def test_auto_edges_from_learning(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "sessions" / "20250814-120000.jsonl"
+            log.parent.mkdir()
+            log.write_text("")
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.ensure_graph({"use_graph": True})
+                memory_mod.set_active_session(log)
+                try:
+                    memory_mod.add_learning(
+                        "setup.sh fails because of line endings",
+                        key="line-endings",
+                    )
+                finally:
+                    memory_mod.set_active_session(None)
+                edges = memory_mod.get_graph_edges()
+                kinds = {e["edge_type"] for e in edges}
+                self.assertIn("in_session", kinds)
+                self.assertIn("references", kinds)
+                files = [
+                    e["to_key"] for e in edges if e["edge_type"] == "references"
+                ]
+                self.assertIn("setup.sh", files)
+
+    def test_decay_hides_learning_nodes(self):
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        old = (datetime.now(timezone.utc) - timedelta(days=40)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.ensure_graph({"use_graph": True})
+                memory_mod.add_graph_node(
+                    "learning", "stale", label="old fact",
+                    confidence=1, source="observed", extra={"ts": old},
+                )
+                memory_mod.add_graph_node(
+                    "learning", "fresh", label="new fact",
+                    confidence=8, source="observed",
+                )
+                nodes = memory_mod.get_graph_nodes()
+                self.assertNotIn(("learning", "stale"), nodes)
+                self.assertIn(("learning", "fresh"), nodes)
+
+    def test_graph_add_edge_requires_note(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.ensure_graph({"use_graph": True})
+                memory_mod.add_learning("a", key="aa")
+                memory_mod.add_learning("b", key="bb")
+                err = memory_mod.try_add_graph_edge(
+                    "learning", "aa", "learning", "bb", "related_to", "",
+                )
+                self.assertTrue(err.startswith("ERROR:"))
+                ok = memory_mod.try_add_graph_edge(
+                    "learning", "aa", "learning", "bb", "related_to",
+                    "same topic",
+                )
+                self.assertIn("Saved edge", ok)
+
+    def test_graph_stats_lists_contradicts(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.ensure_graph({"use_graph": True})
+                memory_mod.add_learning("use pip", key="pip")
+                memory_mod.add_learning("use uv", key="uv")
+                memory_mod.add_graph_edge(
+                    "learning", "pip", "learning", "uv", "contradicts",
+                    note="cannot both be the installer",
+                )
+                stats = memory_mod.graph_stats()
+                self.assertIn("contradicts: 1", stats)
+                self.assertIn("pip", stats)
+                cluster = memory_mod.contradiction_clusters()
+                self.assertIn("pip", cluster)
+
+
 if __name__ == "__main__":
     unittest.main()

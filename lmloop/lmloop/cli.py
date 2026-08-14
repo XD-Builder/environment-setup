@@ -3,6 +3,7 @@
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
     lmloop until [--check cmd] goal work until a check or evaluator passes; REPL on a TTY
+    lmloop graph <name>             run an authored workflow graph; REPL on a TTY
     lmloop skills [names]           list skill prompts (names = one per line)
     lmloop skills new <name> [brief]  draft a skill with AI, review, then save
     lmloop skill <name> [task]      start with a skill
@@ -27,6 +28,7 @@ import sys
 from pathlib import Path
 
 from . import agent, loop as loop_mod, memory
+from . import graph as graph_mod
 from .commands import cli_subcommand_metas, cli_subcommand_names
 from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
 from .repl import mine_sessions, run_repl
@@ -43,6 +45,7 @@ examples:
   lmloop
   lmloop "why does setup.sh fail?"
   lmloop until --check 'pytest -q' make tests pass
+  lmloop graph company
   lmloop skills
   lmloop skills new deploy "roll out staging safely"
   lmloop skill investigate "vim plug install hangs"
@@ -208,10 +211,10 @@ __SUBS__
           ;;
         memory)
           if (( CURRENT == 2 )); then
-            compadd - mine
+            compadd - mine graph reconcile
           fi
           ;;
-        retro|until|decisions|history|models)
+        retro|until|graph|decisions|history|models)
           ;;
       esac
       ;;
@@ -257,6 +260,46 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         rest = words[1:]
         count = int(rest[0]) if rest and rest[0].isdigit() else 3
         return cmd_memory_mine(cfg, count, console)
+    if words and words[0] == "graph":
+        if not cfg.get("use_graph"):
+            console.info("knowledge graph is off — `lmloop config set use_graph true`")
+            return 0
+        memory.ensure_graph(cfg)
+        console.info(memory.graph_stats())
+        return 0
+    if words and words[0] == "reconcile":
+        if not cfg.get("use_graph"):
+            console.info("knowledge graph is off — `lmloop config set use_graph true`")
+            return 0
+        memory.ensure_graph(cfg)
+        cluster = memory.contradiction_clusters()
+        if cluster.startswith("(no "):
+            console.info(cluster)
+            return 0
+        try:
+            model = agent.ensure_server(cfg, echo=console.info)
+        except agent.ServerError as e:
+            console.error(f"error: {e}")
+            return 1
+        try:
+            prompt = agent.load_skill("_reconcile") + "\n\n" + cluster
+        except FileNotFoundError as e:
+            console.error(str(e))
+            return 1
+        result = loop_mod.isolated_act(
+            cfg, model, prompt,
+            confirm_gate=make_confirm_gate(console),
+            echo=lambda text: console.print_markdown(text) if text else None,
+            echo_status=console.hint,
+            echo_error=console.error,
+            echo_tool=console.tool_call,
+            echo_round=console.round_usage,
+            context_limit=agent.get_context_limit(model, cfg),
+            context_reserve=int(cfg.get("context_reserve") or 2048),
+            workspace_root=Path.cwd().resolve(),
+            log_label="/memory reconcile",
+        )
+        return 0 if result is not None else 1
     q = " ".join(words)
     rows = memory.get_learnings(query=q, limit=30)
     for r in rows:
@@ -354,6 +397,77 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
     return 0
 
 
+def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
+    if not words:
+        run = graph_mod.latest_open_graph_run()
+        if run is None:
+            console.error("usage: lmloop graph <name>")
+            console.info("  no paused graph-run to resume")
+            known = ", ".join(graph_mod.list_graphs()) or "(none)"
+            console.info(f"  graphs: {known}")
+            return 1
+        try:
+            defn = graph_mod.load_graph(run.name)
+        except graph_mod.GraphError as e:
+            console.error(str(e))
+            return 1
+        return _cli_run_graph(cfg, console, run, defn)
+    name = words[0]
+    try:
+        defn = graph_mod.load_graph(name)
+    except graph_mod.GraphError as e:
+        console.error(str(e))
+        return 1
+    try:
+        model = agent.ensure_server(cfg, echo=console.info)
+    except agent.ServerError as e:
+        console.error(f"error: {e}")
+        return 1
+    hint = graph_mod.superseded_graph_hint()
+    run = graph_mod.GraphRun.create(name)
+    console.hint(f"[graph · {name}]")
+    if hint:
+        console.hint(hint)
+    return _cli_run_graph(cfg, console, run, defn, model=model)
+
+
+def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
+                   defn: graph_mod.GraphDef, model: "str | None" = None) -> int:
+    if model is None:
+        try:
+            model = agent.ensure_server(cfg, echo=console.info)
+        except agent.ServerError as e:
+            console.error(f"error: {e}")
+            return 1
+    confirm_gate = make_confirm_gate(console)
+
+    def mine(paths):
+        if not paths:
+            return
+        mine_sessions(cfg, model, paths, console, confirm_gate)
+
+    graph_mod.run_graph(
+        cfg, model, run=run, defn=defn,
+        confirm_gate=confirm_gate,
+        echo=lambda text: console.print_markdown(text) if text else None,
+        echo_status=console.hint,
+        echo_error=console.error,
+        echo_tool=console.tool_call,
+        echo_round=console.round_usage,
+        context_limit=agent.get_context_limit(model, cfg),
+        context_reserve=int(cfg.get("context_reserve") or 2048),
+        workspace_root=Path.cwd().resolve(),
+        ask_gate=ask_until_gate,
+        mine=mine if cfg.get("graph_mine", True) else None,
+    )
+    loaded = graph_mod.GraphRun.load(run.path)
+    if sys.stdin.isatty():
+        return run_repl(cfg, console=console, graph_run=loaded)
+    if loaded.is_paused():
+        console.hint("paused — run `lmloop graph` with no name to resume")
+    return 0
+
+
 def cmd_retro_cli(cfg: dict, words: list, console: Console) -> int:
     count = int(words[0]) if words and words[0].isdigit() else 3
     return cmd_retro(cfg, count, console)
@@ -398,6 +512,7 @@ def cli_handlers() -> dict:
         "config": cmd_config,
         "memory": cmd_memory,
         "until": cmd_until_cli,
+        "graph": cmd_graph_cli,
         "decisions": cmd_decisions,
         "history": cmd_history,
         "models": cmd_models,

@@ -45,6 +45,7 @@ After installing the binary, open a new shell (or re-source `~/.zshrc`).
 lmloop                                  # interactive REPL
 lmloop "why does setup.sh fail on linux?"   # one-shot task
 lmloop until --check 'pytest -q' make tests pass
+lmloop graph company
 lmloop skills                           # list skill prompts
 lmloop skills new deploy "roll out staging safely"   # AI draft → review → save
 lmloop skill investigate "vim plug install hangs"
@@ -75,6 +76,8 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | Command | What it does | Read / write |
 |---------|--------------|--------------|
 | `lmloop memory [query]` | Peek **learnings** — curated tips (patterns, pitfalls, prefs) in `learnings.jsonl`. Deduped by key; confidence decays over time. | Peek |
+| `lmloop memory graph` | Peek **knowledge graph** stats (`use_graph` must be true). | Peek |
+| `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
 | `lmloop decisions` | Peek **decisions** — durable choices with rationale in `decisions.jsonl` (can be superseded). | Peek |
 | `lmloop history` | List **session transcript** files under `sessions/*.jsonl` (raw logs, not summarized). | Peek |
 | `lmloop memory mine [N]` | Mine the last N **session files** (default 3) and **write new learnings**. CLI never mines “this conversation.” `/retro` and `lmloop retro` are aliases that print `[memory mine]` then do the same work. | Write |
@@ -106,10 +109,11 @@ Inside the REPL:
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
 | `/context` | show memory injected into the system prompt |
-| `/continue [message]` | resume after max_rounds, an interruption, or a paused `/until` |
-| `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; then type to continue from a handoff |
+| `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` / `lmloop until` with no name still resume the latest open run) |
+| `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
+| `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
-| `/memory [query \| mine [n]]` | peek learnings, or mine this session (or last n prior files) |
+| `/memory [query \| mine [n] \| graph \| reconcile]` | peek learnings; mine this session (or last n prior files); when `use_graph`, show graph stats or reconcile contradictions |
 | `/model <name>` | switch model, or list models with no argument |
 | `/stats` | show token usage and session activity |
 | `/new` | reset conversation (memory context re-injected) |
@@ -153,7 +157,10 @@ REPL UX (prompt_toolkit + rich):
  ├── decisions.jsonl     event-sourced; supersede retires old decisions
  ├── sessions/*.jsonl    full transcript history
  ├── checkpoints/*.md    resumable session handoffs
- └── until/<ts>.jsonl    goal-loop run log (maker / check / eval)
+ ├── until/<ts>.jsonl    goal-loop run log (maker / check / eval)
+ ├── graphs/<name>/<ts>.jsonl  workflow-graph run log
+ ├── graph_nodes.jsonl   knowledge-graph nodes (when use_graph)
+ └── graph_edges.jsonl   knowledge-graph edges (when use_graph)
 ```
 
 Design choices, and why:
@@ -189,6 +196,9 @@ local, single-user research loop needs.
   a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/skills/<name>.md` —
   numbered steps, English conditionals, explicit report format. Immediately
   available as `lmloop skill <name>`, `/skill <name>`, and `/name`.
+- **New graph:** drop `~/.lmloop/graphs/<name>.md` (overrides packaged). Line-based
+  `node` / `edge` markdown; see `lmloop/graphs/company.md`. Run with
+  `lmloop graph <name>` or `/graph <name>`.
 - **New tool:** add an impl + JSON-schema spec in `tools.py::build_tools`.
 - **Different server:** `lmloop config set base_url http://localhost:11434/v1`
   (Ollama example), `lmloop config set model llama3.1`.
@@ -221,6 +231,9 @@ zsh completion for `config set` is generated from these keys.
 | `context_reserve` | `2048` | Tokens reserved for the model reply on the fill bar |
 | `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` resumes) |
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
+| `graph_max_steps` | `24` | Node entries per `graph` invocation before pause (`/continue` or `lmloop graph` resumes) |
+| `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
+| `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |
 
 ## Troubleshooting
 

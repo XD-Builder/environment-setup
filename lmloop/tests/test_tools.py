@@ -406,6 +406,30 @@ class WebResearchToolTests(unittest.TestCase):
             self.assertIsInstance(s["function"]["name"], str)
             self.assertTrue(s["function"]["parameters"]["properties"] or True)
 
+    def test_readonly_omits_write_tools(self):
+        from lmloop.tools import READONLY_OMIT
+
+        full_specs, _ = build_tools({"confirm_shell": False})
+        full_names = {s["function"]["name"] for s in full_specs}
+        specs, impls = build_tools({"confirm_shell": False}, readonly=True)
+        names = {s["function"]["name"] for s in specs}
+        self.assertEqual(names, set(impls))
+        self.assertEqual(names & READONLY_OMIT, set())
+        self.assertIn("run_shell", names)
+        self.assertIn("read_file", names)
+        self.assertIn("recall_memory", names)
+        self.assertEqual(set(tool_names()), full_names)
+        self.assertGreaterEqual(len(full_names), 10)
+        self.assertNotIn("graph_add_edge", full_names)
+
+    def test_graph_add_edge_only_when_use_graph(self):
+        specs, impls = build_tools({"confirm_shell": False, "use_graph": True})
+        names = {s["function"]["name"] for s in specs}
+        self.assertIn("graph_add_edge", names)
+        self.assertIn("graph_add_edge", impls)
+        off, _ = build_tools({"confirm_shell": False})
+        self.assertNotIn("graph_add_edge", {s["function"]["name"] for s in off})
+
     def test_command_table_reserves_slash_stems(self):
         slash = {c.name for c in slash_command_metas() if c.reserve_skill}
         self.assertTrue(slash <= RESERVED_SKILL_NAMES)
@@ -415,6 +439,7 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertNotIn("compact", RESERVED_SKILL_NAMES)
         self.assertNotIn("retro", RESERVED_SKILL_NAMES)
         self.assertIn("until", RESERVED_SKILL_NAMES)
+        self.assertIn("graph", RESERVED_SKILL_NAMES)
 
     def test_fetch_url_http_error(self):
         err = urllib.error.HTTPError(

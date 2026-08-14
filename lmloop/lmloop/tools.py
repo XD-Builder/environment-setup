@@ -107,10 +107,13 @@ class ToolDef:
         }
 
 
-def tool_names(defs: "list[ToolDef] | None" = None) -> list:
+def tool_names(defs: "list[ToolDef] | None" = None, cfg: "dict | None" = None) -> list:
     """Registered tool names (for prompt injection)."""
     if defs is not None:
         return [d.name for d in defs]
+    if cfg is not None:
+        specs, _ = build_tools(cfg)
+        return [s["function"]["name"] for s in specs]
     if not _TOOL_DEFS:
         build_tools({})
     return list(_TOOL_DEFS)
@@ -924,7 +927,11 @@ def fetch_url(url: str, timeout_s: int = DEFAULT_WEB_TIMEOUT_S) -> str:
 # ------------------------------------------------------------------ registry
 
 # Module-level registry filled by the latest build_tools() call (for validation).
+# Optional tools (graph_add_edge) are omitted from the registry when disabled so
+# tool_names() matches what the model can call. readonly filtering applies only
+# to returned specs/impls — it does not shrink this registry.
 _TOOL_DEFS: "dict[str, ToolDef]" = {}
+READONLY_OMIT = frozenset({"write_file", "remember", "log_decision", "graph_add_edge"})
 
 
 def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
@@ -938,8 +945,15 @@ def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
 
 
 def build_tools(cfg: dict, confirm_gate=None,
-                workspace_root: "Path | None" = None) -> "tuple[list[dict], dict]":
-    """Returns (openai tool specs, name -> callable) derived from ToolDef list."""
+                workspace_root: "Path | None" = None,
+                readonly: bool = False) -> "tuple[list[dict], dict]":
+    """Returns (openai tool specs, name -> callable) derived from ToolDef list.
+
+    ``readonly=True`` omits write_file / remember / log_decision /
+    graph_add_edge from the returned specs and impls. The module registry
+    keeps those names when they are enabled so ``tool_names()`` and
+    ``dispatch()`` are not poisoned by the last readonly build.
+    """
     global _TOOL_DEFS, MAX_OUTPUT
 
     max_out = int(cfg.get("max_tool_output") or MAX_OUTPUT)
@@ -959,7 +973,13 @@ def build_tools(cfg: dict, confirm_gate=None,
         return f"Logged decision [{row['id']}] to {memory.decisions_file()}"
 
     def _recall(query: str) -> str:
-        return memory.search_memory(query, learning_limit=10, decision_limit=10)
+        return memory.search_memory(query, learning_limit=10, decision_limit=10, cfg=cfg)
+
+    def _graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
+                    edge_type: str, note: str) -> str:
+        return memory.try_add_graph_edge(
+            from_type, from_key, to_type, to_key, edge_type, note,
+        )
 
     s = {"type": "string"}
     defs = [
@@ -1058,8 +1078,33 @@ def build_tools(cfg: dict, confirm_gate=None,
             "Keyword-search past learnings and decisions for this project.",
             {"query": s}, ["query"], _recall,
         ),
+        ToolDef(
+            "graph_add_edge",
+            "Record a relationship between two existing memory-graph nodes. "
+            "Requires a note explaining the rationale.",
+            {
+                "from_type": {"type": "string", "enum": sorted(memory.GRAPH_NODE_TYPES)},
+                "from_key": s,
+                "to_type": {"type": "string", "enum": sorted(memory.GRAPH_NODE_TYPES)},
+                "to_key": s,
+                "edge_type": {"type": "string", "enum": sorted(memory.GRAPH_EDGE_TYPES)},
+                "note": s,
+            },
+            ["from_type", "from_key", "to_type", "to_key", "edge_type", "note"],
+            _graph_edge,
+            enum_fields={
+                "from_type": sorted(memory.GRAPH_NODE_TYPES),
+                "to_type": sorted(memory.GRAPH_NODE_TYPES),
+                "edge_type": sorted(memory.GRAPH_EDGE_TYPES),
+            },
+        ),
     ]
     _TOOL_DEFS = {d.name: d for d in defs}
+    if not cfg.get("use_graph"):
+        defs = [d for d in defs if d.name != "graph_add_edge"]
+        _TOOL_DEFS = {d.name: d for d in defs}
+    if readonly:
+        defs = [d for d in defs if d.name not in READONLY_OMIT]
     specs = [d.openai_spec() for d in defs]
     impls = {d.name: d.impl for d in defs}
     return specs, impls

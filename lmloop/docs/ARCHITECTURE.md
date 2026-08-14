@@ -17,7 +17,7 @@ lmloop/
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
 │   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (proposal)
-│   └── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs next (proposal)
+│   └── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -36,16 +36,21 @@ lmloop/
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
 │   ├── status.py               # status/resume copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
-│   └── skills/                 # packaged skill prompts (markdown playbooks)
-│       ├── system.md           # system prompt: how to work, memory, safety
-│       ├── _author.md          # meta-prompt for skill drafting (not user-facing)
-│       ├── retro.md            # mine sessions → learnings
-│       ├── investigate.md      # root-cause debugging
-│       ├── review.md           # pre-landing code review
-│       ├── compact.md          # compress thread for context recovery
-│       ├── qa.md               # run tests, verify changes
-│       ├── learn.md            # curate and audit learnings
-│       └── ceo.md              # strategy / plan review
+│   ├── graph.py                # authored workflow graphs: parser + runner
+│   ├── skills/                 # packaged skill prompts (markdown playbooks)
+│   │   ├── system.md           # system prompt: how to work, memory, safety
+│   │   ├── _author.md          # meta-prompt for skill drafting (not user-facing)
+│   │   ├── _graph_mine.md      # mine phase: propose graph edges (private)
+│   │   ├── _reconcile.md       # review contradicts edges (private)
+│   │   ├── retro.md            # mine sessions → learnings
+│   │   ├── investigate.md      # root-cause debugging
+│   │   ├── review.md           # pre-landing code review
+│   │   ├── compact.md          # compress thread for context recovery
+│   │   ├── qa.md               # run tests, verify changes
+│   │   ├── learn.md            # curate and audit learnings
+│   │   └── ceo.md              # strategy / plan review
+│   └── graphs/                 # packaged workflow graphs
+│       └── company.md          # ceo → build → qa → mine
 ├── tests/                      # stdlib unittest; named test_<area>.py
 ```
 
@@ -95,18 +100,46 @@ Before the loop starts, `ensure_server()` checks if LM Studio is reachable. If n
 ```
 until goal:
     maker  — isolated act() with the goal + prior handoff
-    if --check: run that shell command (exit 0 → pass)
-    else, or on check fail: isolated eval act(); last line STATUS: pass|fail|blocked
+    if --check: run that shell command (exit 0 → pass; nonzero → next maker)
+    else: isolated eval act() with read-only tools (+ run_shell); last line STATUS: pass|fail|blocked
     fail → next maker cycle; blocked → y/N gate; pass → optional memory mine → done
 ```
 
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
+- Eval cannot `write_file`, `remember`, or `log_decision`. It may `run_shell` to verify.
+- `--check` fail (nonzero exit) goes straight back to maker — no eval turn. Check `DENIED:` is `blocked` → gate.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
+- REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
 - Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role.
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
-This is control-flow, not a knowledge graph. Next control-flow step: [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md). Knowledge-graph memory remains a proposal in [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
+This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `memory.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
+
+---
+
+## Workflow graph
+
+**File:** `graph.py`
+
+A graph is a list of named loops with **authored** sparse edges. Until is the inner node. There is no LLM router over a fully connected graph.
+
+```
+node <name> skill <skill> [task…]     isolated act + eval STATUS: (read-only tools) unless --check
+node <name> until [--check cmd] <goal>  existing run_until
+node <name> mine                      memory mine over this graph run's session logs
+edge <from> -> <to> [on pass|fail|blocked]
+```
+
+- Packaged graphs live in `lmloop/graphs/*.md`; `~/.lmloop/graphs/<name>.md` overrides the same name.
+- One packaged graph: `company` (ceo → build → qa → mine).
+- Each node is an isolated thread. Handoff is the last assistant summary, not the tool transcript.
+- Missing edge for fail/blocked → HITL gate; pass with no outgoing edge is terminal success.
+- `graph_max_steps` (default 24) counts **node entries this invocation**. Pause, then `/continue` or `lmloop graph` with no name resumes.
+- REPL `/continue` prefers a paused `state.graph_run` over `state.until_run`. `/new` clears both pointers.
+- `lmloop graph <name>` starts a run (name required). `lmloop graph` with no name resumes the latest open graph run.
+- Run logs: `projects/<slug>/graphs/<name>/<ts>.jsonl`. Event written last, so a crash retries the same node.
+- `loop.py` must not import `graph`. `agent.py` / `stream.py` / `display.py` must not import `graph`. Handlers stay in `cli.py` / `repl.py`.
 
 ---
 
@@ -127,7 +160,8 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | `fetch_url` | HTTP(S) fetch with HTML→text + on-page links | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
 | `remember` | Save a learning to project memory | Writes `~/.lmloop/projects/<slug>/learnings.jsonl`; tool result cites that path |
 | `log_decision` | Record a durable decision | Writes `~/.lmloop/projects/<slug>/decisions.jsonl`; tool result cites that path |
-| `recall_memory` | Keyword-search learnings + decisions | Read-only view |
+| `recall_memory` | Keyword-search learnings + decisions | Read-only view. When `use_graph` is on, includes 1-hop graph neighbors. |
+| `graph_add_edge` | Record a relationship between existing memory-graph nodes | Only registered when `use_graph` is true. Requires a `note`. |
 
 Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
 
@@ -148,12 +182,16 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ├── config.json                     # user settings (base_url, model, max_rounds, …)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
+├── graphs/<name>.md                # user-authored graphs (override packaged)
 └── projects/<slug>/
     ├── learnings.jsonl             # append-only; dedup at read time
     ├── decisions.jsonl             # event-sourced (decide / supersede)
     ├── sessions/<ts>.jsonl         # per-session transcript history
     ├── checkpoints/<ts>-<t>.md     # context-save handoffs
-    └── until/<ts>.jsonl            # goal-loop run log (maker / check / eval)
+    ├── until/<ts>.jsonl            # goal-loop run log (maker / check / eval)
+    ├── graphs/<name>/<ts>.jsonl    # workflow-graph run log
+    ├── graph_nodes.jsonl           # knowledge-graph nodes (when use_graph)
+    └── graph_edges.jsonl           # knowledge-graph edges (when use_graph)
 ```
 
 **Project slug** is resolved from git remote (`owner-repo`) or directory name.
@@ -185,6 +223,15 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 - Markdown files with YAML frontmatter (title, timestamp).
 - Created via `/save [title]` which asks the model to summarize the session.
 - Auto-injected into context if < 14 days old.
+
+### Knowledge graph (`graph_nodes.jsonl`, `graph_edges.jsonl`)
+
+Opt-in (`use_graph`, default false). When off, no graph files are created and `recall_memory` is unchanged.
+
+- Nodes are typed (`learning`, `decision`, `session`, `file`, `skill`, `concept`). Latest row per `(type, key)` wins. Learning/concept nodes reuse confidence decay; others stay live.
+- Edges are typed (`leads_to`, `contradicts`, `in_session`, `references`, `uses_skill`, `related_to`, `supersedes`). Endpoints that decayed away are dropped at read time.
+- First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
+- `recall_memory` does keyword match plus 1-hop BFS. `graph_add_edge` (tool, `use_graph` only) requires a `note`. `/memory graph` prints counts and an adjacency list. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
 
 ---
 
@@ -229,11 +276,14 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop` | Interactive REPL |
 | `lmloop "task"` | Task, then REPL prompt when stdin is a TTY (exits when piped) |
 | `lmloop until [--check cmd] <goal>` | Goal loop, then REPL prompt when stdin is a TTY |
+| `lmloop graph <name>` | Authored workflow graph, then REPL prompt when stdin is a TTY |
 | `lmloop skill <name> [task]` | Skill, then REPL prompt when stdin is a TTY |
 | `lmloop skills` | List skill prompts |
 | `lmloop skills new <name> [brief]` | AI-draft a skill, review, then save |
 | `lmloop memory [query]` | Peek curated learnings |
 | `lmloop memory mine [N]` | Mine last N sessions into learnings |
+| `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |
+| `lmloop memory reconcile` | Review `contradicts` clusters (requires `use_graph`) |
 | `lmloop decisions` | Peek durable decisions |
 | `lmloop history` | List session transcripts |
 | `lmloop models` | List models on server |

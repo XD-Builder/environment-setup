@@ -276,7 +276,7 @@ def generate_skill_draft(cfg: dict, model: str, name: str, brief: str) -> str:
 
 def system_prompt(cfg: dict) -> str:
     base = load_skill("system")
-    names = tools.tool_names()
+    names = tools.tool_names(cfg=cfg)
     tools_block = (
         "\n\n## Tools available\n\n"
         + ", ".join(f"`{n}`" for n in names)
@@ -550,7 +550,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         echo_status=None, stats: "dict | None" = None, echo_round=None,
         on_thinking=None, context_limit: int = 0,
         context_reserve: int = 2048,
-        workspace_root: "Path | None" = None) -> list:
+        workspace_root: "Path | None" = None,
+        readonly: bool = False) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
@@ -576,6 +577,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     color = bool(cfg.get("color", True))
     tool_specs, impls = tools.build_tools(
         cfg, confirm_gate=confirm_gate, workspace_root=workspace_root,
+        readonly=readonly,
     )
     use_stream = bool(cfg.get("stream", True))
     turn_rounds = 0
@@ -585,6 +587,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     max_rounds = int(cfg.get("max_rounds", 60))
     checkpoint = len(messages)
     context_warned = False
+    prev_session = memory.set_active_session(session_log)
 
     def _mark_interrupted() -> None:
         if stats is not None:
@@ -757,3 +760,5 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         _mark_interrupted()
         _rollback_incomplete_messages(messages, checkpoint)
         raise
+    finally:
+        memory.set_active_session(prev_session)

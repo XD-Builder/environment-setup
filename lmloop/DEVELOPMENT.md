@@ -92,6 +92,7 @@ find yourself updating two lists, you have already added debt.
 | Status / resume / nudge copy | `status.py` |
 | JSONL memory | `memory.py` |
 | Goal loop (`until` maker/check/eval) | `loop.py` |
+| Authored workflow graphs | `graph.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
 | Paths, `DEFAULTS`, project slug | `config.py` |
 | `@path` completion + ref expansion | `files_index.py` |
@@ -113,7 +114,9 @@ belongs in those modules, not as more private helpers in `agent.py`.
 - `ui.py` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
 - `loop.py` may import `agent.act`, `memory`, `status`, and `tools.run_shell` for the check command.
-- `agent.py` / `stream.py` / `display.py` must not import `loop`.
+- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, check helpers), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`.
+- `loop.py` must not import `graph`.
+- `agent.py` / `stream.py` / `display.py` must not import `loop` or `graph`.
 
 ### Keep components small
 
