@@ -241,9 +241,32 @@ class AtRefTurnTests(unittest.TestCase):
             self.assertIn("Referenced files (use read_file):", captured["content"])
             self.assertIn("- a.py", captured["content"])
 
+    def test_run_turn_keeps_repl_on_unexpected_error(self):
+        from lmloop.repl import SessionState, _run_turn
+        from lmloop.ui import Console, fresh_stats
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            state = SessionState(
+                cfg={},
+                model="m",
+                messages=[{"role": "system", "content": "s"}],
+                session_log=root / "session.jsonl",
+                stats=fresh_stats(),
+                console=Console(color=False),
+            )
+            state.session_log.write_text("")
+            with patch("lmloop.repl.agent.act", side_effect=RuntimeError("boom")), \
+                 redirect_stdout(io.StringIO()), \
+                 redirect_stderr(io.StringIO()) as err:
+                ok = _run_turn(state, "hello", lambda _: False)
+            self.assertFalse(ok)
+            self.assertIn("RuntimeError", err.getvalue())
+            self.assertEqual(state.messages[-1]["role"], "user")
+
     def test_cli_skill_rejects_author(self):
         err = io.StringIO()
-        with redirect_stderr(err):
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
             code = main(["skill", "_author"])
         self.assertEqual(code, 1)
         self.assertIn("No skill", err.getvalue())
@@ -643,12 +666,54 @@ class RegistryTests(unittest.TestCase):
             self.assertIn(meta.name, names, f"missing handler for /{meta.name}")
 
     def test_cli_subcommands_match_registry(self):
+        from lmloop.cli import cli_handlers
         from lmloop.commands import cli_subcommand_names
-        handled = {
-            "config", "memory", "decisions", "history", "models",
-            "retro", "skills", "skill", "completion",
-        }
-        self.assertEqual(set(cli_subcommand_names()), handled)
+        self.assertEqual(set(cli_subcommand_names()), set(cli_handlers()))
+
+    def test_completion_script_lists_cli_stems(self):
+        from lmloop.commands import cli_subcommand_names
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["completion", "zsh"])
+        self.assertEqual(code, 0)
+        script = out.getvalue()
+        for name in cli_subcommand_names():
+            self.assertIn(f"'{name}:", script)
+
+
+class EnsureServerTests(unittest.TestCase):
+    def test_uses_configured_model_when_loaded(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "mine",
+               "auto_start_server": False}
+        with patch("lmloop.agent.list_models", return_value=["other", "mine"]):
+            self.assertEqual(agent.ensure_server(cfg, echo=lambda *_a: None), "mine")
+
+    def test_falls_back_when_configured_model_missing(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "missing",
+               "auto_start_server": False}
+        notes = []
+        with patch("lmloop.agent.list_models", return_value=["loaded"]):
+            self.assertEqual(agent.ensure_server(cfg, echo=notes.append), "loaded")
+        self.assertTrue(any("missing" in n and "loaded" in n for n in notes))
+
+    def test_starts_server_when_empty(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "m",
+               "auto_start_server": True}
+        with patch("lmloop.agent.list_models", side_effect=[[], ["m"]]), \
+             patch("lmloop.agent.shutil.which", return_value="/usr/bin/lms"), \
+             patch("lmloop.agent._run_lms", return_value=True) as run, \
+             patch("lmloop.agent.time.sleep"):
+            self.assertEqual(agent.ensure_server(cfg, echo=lambda *_a: None), "m")
+        run.assert_called()
+
+    def test_raises_when_no_models(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "",
+               "auto_start_server": False}
+        with patch("lmloop.agent.list_models", return_value=[]), \
+             patch("lmloop.agent.shutil.which", return_value=None):
+            with self.assertRaises(agent.ServerError) as ctx:
+                agent.ensure_server(cfg, echo=lambda *_a: None)
+            self.assertIn("No models available", str(ctx.exception))
 
 
 if __name__ == "__main__":

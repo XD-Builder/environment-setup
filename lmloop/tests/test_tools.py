@@ -7,6 +7,8 @@ import unittest
 import urllib.error
 from unittest import mock
 
+from pathlib import Path
+
 from lmloop.commands import RESERVED_SKILL_NAMES, slash_command_metas
 from lmloop.tools import (
     _search_ddgs,
@@ -17,6 +19,7 @@ from lmloop.tools import (
     list_dir,
     needs_shell,
     read_file,
+    run_shell,
     tool_names,
     web_search,
     write_file,
@@ -164,6 +167,59 @@ class ToolSafetyTests(unittest.TestCase):
             result = read_file("hello.txt")
             self.assertIn("line1", result)
             self.assertNotIn("ERROR", result)
+
+    def test_file_tools_stay_pinned_after_chdir(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "hello.txt").write_text("line1\n")
+            other = tempfile.mkdtemp()
+            try:
+                os.chdir(other)
+                _, impls = build_tools({"confirm_shell": False}, workspace_root=root)
+                result = impls["read_file"]("hello.txt")
+                self.assertIn("line1", result)
+                self.assertNotIn("ERROR", result)
+            finally:
+                os.chdir(self._orig_cwd)
+                os.rmdir(other)
+
+    def test_run_shell_uses_pinned_cwd(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            other = tempfile.mkdtemp()
+            try:
+                os.chdir(other)
+                _, impls = build_tools({"confirm_shell": False}, workspace_root=root)
+                result = impls["run_shell"]("pwd")
+                self.assertIn(str(root), result)
+            finally:
+                os.chdir(self._orig_cwd)
+                os.rmdir(other)
+
+    def test_confirm_destructive_calls_gate(self):
+        gate = mock.Mock(return_value=False)
+        result = run_shell("rm -rf /tmp/lmloop-test-rm", confirm_gate=gate)
+        gate.assert_called()
+        self.assertIn("DENIED", result)
+
+    def test_confirm_shell_syntax_off_skips_pipe_gate(self):
+        gate = mock.Mock(return_value=False)
+        result = run_shell(
+            "echo a | cat",
+            confirm_gate=gate,
+            confirm_destructive=True,
+            confirm_shell_syntax=False,
+        )
+        gate.assert_not_called()
+        self.assertNotIn("DENIED", result)
+
+    def test_run_shell_kills_on_keyboard_interrupt(self):
+        proc = mock.Mock()
+        proc.communicate.side_effect = KeyboardInterrupt()
+        with mock.patch("lmloop.tools.subprocess.Popen", return_value=proc):
+            with self.assertRaises(KeyboardInterrupt):
+                run_shell("sleep 999", confirm_destructive=False)
+        proc.kill.assert_called()
 
     def test_list_dir_includes_dotfiles(self):
         with tempfile.TemporaryDirectory() as d:

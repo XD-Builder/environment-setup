@@ -9,6 +9,7 @@ from unittest import mock
 
 from lmloop import config as config_mod
 from lmloop import memory
+from lmloop.config import coerce_config_value, normalize_config
 
 
 class ConfigQualityTests(unittest.TestCase):
@@ -22,6 +23,35 @@ class ConfigQualityTests(unittest.TestCase):
                 cfg = config_mod.load_config()
             self.assertEqual(cfg["max_rounds"], config_mod.DEFAULTS["max_rounds"])
             self.assertIn("confirm_shell_syntax", cfg)
+
+    def test_string_int_and_bool_are_coerced(self):
+        self.assertEqual(coerce_config_value("max_rounds", "60"), 60)
+        self.assertIs(coerce_config_value("stream", "false"), False)
+        self.assertIs(coerce_config_value("stream", True), True)
+        self.assertEqual(coerce_config_value("temperature", "0.2"), 0.2)
+
+    def test_garbage_int_falls_back_on_load(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            path.write_text(json.dumps({"max_rounds": "nope", "stream": True}))
+            with mock.patch.object(config_mod, "CONFIG_PATH", path), \
+                 mock.patch.object(config_mod, "_CONFIG_WARNED", False), \
+                 mock.patch("sys.stderr"):
+                cfg = config_mod.load_config()
+            self.assertEqual(cfg["max_rounds"], config_mod.DEFAULTS["max_rounds"])
+            self.assertIs(cfg["stream"], True)
+
+    def test_normalize_drops_unknown_and_invalid(self):
+        out = normalize_config({
+            "max_rounds": "12",
+            "stream": "yes",
+            "unknown": 1,
+            "timeout_s": "abc",
+        })
+        self.assertEqual(out["max_rounds"], 12)
+        self.assertIs(out["stream"], True)
+        self.assertNotIn("unknown", out)
+        self.assertNotIn("timeout_s", out)
 
 
 class MemoryResolveTests(unittest.TestCase):

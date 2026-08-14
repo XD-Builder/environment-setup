@@ -25,8 +25,8 @@ import argparse
 import sys
 
 from . import agent, memory
-from .commands import cli_subcommand_names
-from .config import CONFIG_PATH, DEFAULTS, load_config, save_config
+from .commands import cli_subcommand_metas, cli_subcommand_names
+from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
 from .repl import mine_sessions, run_repl
 from .ui import Console, ask_yes_no, make_confirm_gate
 
@@ -144,21 +144,17 @@ def cmd_completion(shell: str, console: Console) -> int:
         console.error(f"unsupported shell '{shell}' (only zsh)")
         return 1
     keys = " ".join(DEFAULTS)
+    subs = "\n".join(
+        f"    '{c.name}:{c.desc.replace(chr(39), '')}'"
+        for c in cli_subcommand_metas()
+    )
     # Self-contained zsh completion; skill names refreshed via `lmloop skills --names`.
     script = r"""#compdef lmloop
 
 _lmloop() {
   local -a subs
   subs=(
-    'skills:list skill prompts'
-    'skill:start with a skill prompt'
-    'memory:peek curated learnings (read-only)'
-    'decisions:peek durable project decisions (read-only)'
-    'history:list past session transcript files'
-    'retro:mine last N sessions into learnings (writes memory)'
-    'models:list models on the server'
-    'config:get/set/show settings'
-    'completion:print shell completion script'
+__SUBS__
   )
 
   local curcontext="$curcontext" state
@@ -206,9 +202,126 @@ _lmloop() {
 }
 
 compdef _lmloop lmloop
-""".replace("__CONFIG_KEYS__", keys)
+""".replace("__CONFIG_KEYS__", keys).replace("__SUBS__", subs)
     sys.stdout.write(script)
     return 0
+
+
+def cmd_config(cfg: dict, words: list, console: Console) -> int:
+    if len(words) >= 2 and words[0] == "set":
+        key, value = words[1], " ".join(words[2:])
+        if key not in DEFAULTS:
+            console.error(f"unknown key '{key}'. Keys: {', '.join(DEFAULTS)}")
+            return 1
+        default = DEFAULTS[key]
+        coerced = coerce_config_value(key, value)
+        if coerced is None:
+            console.error(f"invalid value for {key}: expected {type(default).__name__}")
+            return 1
+        cfg[key] = coerced
+        save_config(cfg)
+        console.info(f"{key} = {cfg[key]}")
+        return 0
+    if len(words) >= 2 and words[0] == "get":
+        key = words[1]
+        if key not in DEFAULTS:
+            console.error(f"unknown key '{key}'. Keys: {', '.join(DEFAULTS)}")
+            return 1
+        console.info(str(cfg.get(key, DEFAULTS[key])))
+        return 0
+    console.info(f"# {CONFIG_PATH}")
+    for k in DEFAULTS:
+        console.info(f"{k} = {cfg[k]}")
+    return 0
+
+
+def cmd_memory(cfg: dict, words: list, console: Console) -> int:
+    q = " ".join(words)
+    rows = memory.get_learnings(query=q, limit=30)
+    for r in rows:
+        console.info(
+            f"- [{r['key']}] ({r['type']}, {r['confidence']}/10, {r['ts'][:10]}) {r['insight']}"
+        )
+    if not rows:
+        console.info("(no learnings yet — run tasks, then `lmloop retro`)")
+    return 0
+
+
+def cmd_decisions(cfg: dict, words: list, console: Console) -> int:
+    rows = memory.get_decisions(limit=30)
+    for d in rows:
+        line = f"- [{d['id']}] {d['date'][:10]} {d['decision']}"
+        if d.get("rationale"):
+            line += f"  (why: {d['rationale']})"
+        console.info(line)
+    if not rows:
+        console.info("(no decisions logged yet)")
+    return 0
+
+
+def cmd_history(cfg: dict, words: list, console: Console) -> int:
+    for p in memory.list_sessions(limit=15):
+        console.info(p)
+    return 0
+
+
+def cmd_models(cfg: dict, words: list, console: Console) -> int:
+    models = agent.list_models(cfg["base_url"])
+    console.info("\n".join(models) if models else f"(no server at {cfg['base_url']} or nothing loaded)")
+    return 0
+
+
+def cmd_retro_cli(cfg: dict, words: list, console: Console) -> int:
+    count = int(words[0]) if words and words[0].isdigit() else 3
+    return cmd_retro(cfg, count, console)
+
+
+def cmd_skills_cli(cfg: dict, words: list, console: Console) -> int:
+    if words and words[0] == "new":
+        if len(words) < 2:
+            console.error("usage: lmloop skills new <name> [brief…]")
+            return 1
+        return cmd_skills_new(cfg, words[1], " ".join(words[2:]), console)
+    names_only = bool(words) and words[0] in ("names", "--names")
+    return cmd_skills(console, names_only=names_only)
+
+
+def cmd_skill_cli(cfg: dict, words: list, console: Console) -> int:
+    if not words:
+        console.error("usage: lmloop skill <name> [task]")
+        console.info(f"  skills: {', '.join(agent.list_skills()) or '(none)'}")
+        return 1
+    name = words[0]
+    try:
+        agent.load_skill(name, public_only=True)
+    except FileNotFoundError as e:
+        console.error(str(e))
+        return 1
+    task = " ".join(words[1:]) or None
+    return run_repl(cfg, console=console, skill=name, first_task=task)
+
+
+def cmd_completion_cli(cfg: dict, words: list, console: Console) -> int:
+    shell = words[0] if words else ""
+    if not shell:
+        console.error("usage: lmloop completion zsh")
+        return 1
+    return cmd_completion(shell, console)
+
+
+def cli_handlers() -> dict:
+    """Stem -> handler(cfg, remaining_words, console). Generated from CommandMeta."""
+    return {
+        "config": cmd_config,
+        "memory": cmd_memory,
+        "decisions": cmd_decisions,
+        "history": cmd_history,
+        "models": cmd_models,
+        "retro": cmd_retro_cli,
+        "skills": cmd_skills_cli,
+        "skill": cmd_skill_cli,
+        "completion": cmd_completion_cli,
+    }
 
 
 def main(argv=None) -> int:
@@ -229,113 +342,13 @@ def main(argv=None) -> int:
 
     words = list(args.words)
     sub = words[0] if words else ""
-
-    if sub == "config":
-        if len(words) >= 3 and words[1] == "set":
-            key, value = words[2], " ".join(words[3:])
-            if key not in DEFAULTS:
-                console.error(f"unknown key '{key}'. Keys: {', '.join(DEFAULTS)}")
-                return 1
-            default = DEFAULTS[key]
-            try:
-                if isinstance(default, bool):
-                    cfg[key] = value.lower() in ("1", "true", "yes", "y")
-                elif isinstance(default, int):
-                    cfg[key] = int(value)
-                elif isinstance(default, float):
-                    cfg[key] = float(value)
-                else:
-                    cfg[key] = value
-            except ValueError:
-                console.error(f"invalid value for {key}: expected {type(default).__name__}")
-                return 1
-            save_config(cfg)
-            console.info(f"{key} = {cfg[key]}")
-            return 0
-        if len(words) >= 3 and words[1] == "get":
-            key = words[2]
-            if key not in DEFAULTS:
-                console.error(f"unknown key '{key}'. Keys: {', '.join(DEFAULTS)}")
-                return 1
-            console.info(str(cfg.get(key, DEFAULTS[key])))
-            return 0
-        console.info(f"# {CONFIG_PATH}")
-        for k in DEFAULTS:
-            console.info(f"{k} = {cfg[k]}")
-        return 0
-
-    if sub == "memory":
-        q = " ".join(words[1:])
-        rows = memory.get_learnings(query=q, limit=30)
-        for r in rows:
-            console.info(
-                f"- [{r['key']}] ({r['type']}, {r['confidence']}/10, {r['ts'][:10]}) {r['insight']}"
-            )
-        if not rows:
-            console.info("(no learnings yet — run tasks, then `lmloop retro`)")
-        return 0
-
-    if sub == "decisions":
-        rows = memory.get_decisions(limit=30)
-        for d in rows:
-            line = f"- [{d['id']}] {d['date'][:10]} {d['decision']}"
-            if d.get("rationale"):
-                line += f"  (why: {d['rationale']})"
-            console.info(line)
-        if not rows:
-            console.info("(no decisions logged yet)")
-        return 0
-
-    if sub == "history":
-        for p in memory.list_sessions(limit=15):
-            console.info(p)
-        return 0
-
-    if sub == "models":
-        models = agent.list_models(cfg["base_url"])
-        console.info("\n".join(models) if models else f"(no server at {cfg['base_url']} or nothing loaded)")
-        return 0
-
-    if sub == "retro":
-        count = int(words[1]) if len(words) > 1 and words[1].isdigit() else 3
-        return cmd_retro(cfg, count, console)
-
-    if sub == "skills":
-        rest = words[1:]
-        if rest and rest[0] == "new":
-            if len(rest) < 2:
-                console.error("usage: lmloop skills new <name> [brief…]")
-                return 1
-            return cmd_skills_new(cfg, rest[1], " ".join(rest[2:]), console)
-        names_only = bool(rest) and rest[0] in ("names", "--names")
-        return cmd_skills(console, names_only=names_only)
-
-    if sub == "skill":
-        if len(words) < 2:
-            console.error("usage: lmloop skill <name> [task]")
-            console.info(f"  skills: {', '.join(agent.list_skills()) or '(none)'}")
-            return 1
-        name = words[1]
-        try:
-            agent.load_skill(name, public_only=True)
-        except FileNotFoundError as e:
-            console.error(str(e))
-            return 1
-        task = " ".join(words[2:]) or None
-        return run_repl(cfg, console=console, skill=name, first_task=task)
-
-    if sub == "completion":
-        shell = words[1] if len(words) > 1 else ""
-        if not shell:
-            console.error("usage: lmloop completion zsh")
-            return 1
-        return cmd_completion(shell, console)
-
+    handlers = cli_handlers()
+    if sub in handlers:
+        return handlers[sub](cfg, words[1:], console)
     if sub in cli_subcommand_names():
         console.error(f"internal error: no handler for '{sub}'")
         return 1
 
-    # Free-form task: first word is not a reserved subcommand
     task = " ".join(words) if words else None
     return run_repl(cfg, console=console, skill=None, first_task=task)
 

@@ -23,34 +23,13 @@ from .commands import RESERVED_SKILL_NAMES
 from .config import STATE_ROOT
 from . import status as status_mod
 from .display import (
-    THINK_LINE_PREFIX,
     _GeneratingIndicator,
-    _MarkdownLivePrinter,
-    _StreamPrinter,
-    _TailMarkdown,
     _ThinkingLive,
-    _default_echo_delta,
     _emit_assistant_content,
-    _load_rich,
     _open_live_display,
-    _rich_live_available,
 )
-from .stream import (
-    StreamError,
-    _HALT_DRAIN_CHARS,
-    _REPEAT_TIMES,
-    _REPEAT_WINDOW,
-    _dropped_piece_is_loop,
-    _ingest_text_delta,
-    _looping_text,
-    _merge_tool_call_delta,
-    _read_sse,
-    _repeated_near_trailing_lines,
-    _repeated_trailing_block,
-    _repeated_trailing_lines,
-    _tail_repeats,
-    _think_line_similar,
-)
+from .stream import StreamError, _read_sse
+from .ui import estimate_context_tokens
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 USER_SKILLS_DIR = STATE_ROOT / "skills"
@@ -59,7 +38,6 @@ SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 API_CHAT_PATH = "/chat/completions"
 API_MODELS_PATH = "/models"
 NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")
-CHARS_PER_TOKEN_ESTIMATE = 4
 CONTEXT_PRESSURE_RATIO = 0.80
 CONTINUE_NUDGE_MAX_CHARS = 400
 
@@ -133,16 +111,6 @@ def get_context_limit(model: str, cfg: dict) -> int:
     return 0
 
 
-def estimate_context_tokens(messages: list) -> int:
-    """Rough token estimate (chars / CHARS_PER_TOKEN_ESTIMATE) when usage missing."""
-    chars = 0
-    for m in messages:
-        chars += len(str(m.get("content") or ""))
-        if m.get("tool_calls"):
-            chars += len(json.dumps(m["tool_calls"]))
-    return max(0, chars // CHARS_PER_TOKEN_ESTIMATE)
-
-
 def _run_lms(args: list, echo=print, timeout: int = 60) -> bool:
     """Run an lms CLI command; echo stderr on failure. Returns True on success."""
     try:
@@ -163,7 +131,7 @@ def ensure_server(cfg: dict, echo=print) -> str:
     base = cfg["base_url"]
     models = list_models(base)
     if not models and cfg.get("auto_start_server") and shutil.which("lms"):
-        echo("LM Studio server not reachable — starting it with `lms server start`...")
+        echo(status_mod.msg_starting_server())
         _run_lms(["lms", "server", "start"], echo=echo, timeout=60)
         for _ in range(20):
             time.sleep(1)
@@ -174,22 +142,17 @@ def ensure_server(cfg: dict, echo=print) -> str:
         # server may be up with nothing loaded — try loading the configured model
         if shutil.which("lms"):
             want = cfg.get("model") or ""
-            echo(f"No model loaded — running `lms load {want or '(first available)'}`...")
+            echo(status_mod.msg_loading_model(want))
             args = ["lms", "load", "--yes"] + ([want] if want else [])
             _run_lms(args, echo=echo, timeout=300)
             models = list_models(base)
     if not models:
-        raise ServerError(
-            f"No models available at {base}. Start LM Studio (or `lms server start`) "
-            "and load a model (`lms load <model>`), or fix base_url via "
-            "`lmloop config set base_url <url>`."
-        )
+        raise ServerError(status_mod.msg_no_models(base))
     want = cfg.get("model")
     if want and want in models:
         return want
     if want:
-        # configured model isn't loaded; fall back but say so
-        echo(f"note: configured model '{want}' not loaded; using '{models[0]}'")
+        echo(status_mod.msg_model_fallback(want, models[0]))
     return models[0]
 
 
@@ -537,10 +500,6 @@ def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
     return True
 
 
-def _call_echo_tool(echo_tool, name: str, preview: str, stats: "dict | None") -> None:
-    echo_tool(name, preview, stats)
-
-
 def _named_tool_calls(tool_calls: list) -> list:
     """Drop tool_calls with an empty function name (incomplete stream)."""
     out = []
@@ -590,7 +549,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
         echo_status=None, stats: "dict | None" = None, echo_round=None,
         on_thinking=None, context_limit: int = 0,
-        context_reserve: int = 2048) -> list:
+        context_reserve: int = 2048,
+        workspace_root: "Path | None" = None) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
@@ -612,9 +572,11 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     if echo_status is None:
         echo_status = echo
     if echo_tool is None:
-        echo_tool = lambda name, preview, *_a: echo(f"  ⚙ {name}({preview})")
+        echo_tool = lambda name, preview, stats=None: echo(f"  ⚙ {name}({preview})")
     color = bool(cfg.get("color", True))
-    tool_specs, impls = tools.build_tools(cfg, confirm_gate=confirm_gate)
+    tool_specs, impls = tools.build_tools(
+        cfg, confirm_gate=confirm_gate, workspace_root=workspace_root,
+    )
     use_stream = bool(cfg.get("stream", True))
     turn_rounds = 0
     turn_tools = 0
@@ -702,22 +664,12 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                 if not content and not tool_calls and reasoning_text:
                     content = reasoning_text
 
-                if tool_calls:
-                    _retire_thinking()
-                elif (
-                    thinking is not None and thinking.active
-                    and not tool_calls
-                    and content
-                    and content == reasoning_text
-                ):
-                    # Reasoning-only final: clear compact status, echo as answer.
-                    _retire_thinking(keep=True)
-                elif content and thinking is not None and thinking.active:
-                    _retire_thinking()
-                elif thinking is not None and thinking.active and not content and not tool_calls:
-                    kept = _retire_thinking(keep=True)
-                    if kept.strip():
-                        content = kept.strip()
+                if thinking is not None:
+                    content, retired = thinking.retire_for_round(
+                        tool_calls, content, reasoning_text,
+                    )
+                    if retired.strip() and on_thinking:
+                        on_thinking(retired)
 
                 store_content = content if content else ""
                 assistant_entry = {"role": "assistant", "content": store_content}
@@ -772,7 +724,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     fn = call.get("function", {})
                     name, args = fn.get("name", ""), fn.get("arguments", "")
                     arg_preview = args if len(args) <= 160 else args[:160] + "..."
-                    _call_echo_tool(echo_tool, name, arg_preview, stats)
+                    echo_tool(name, arg_preview, stats)
                     result = tools.dispatch(impls, name, args)
                     if session_log:
                         memory.log_event(

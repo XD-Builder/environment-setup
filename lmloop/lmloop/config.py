@@ -46,6 +46,67 @@ DEFAULTS = {
 }
 
 _CONFIG_WARNED = False
+_BOOL_TRUE = frozenset({"1", "true", "yes", "y"})
+_BOOL_FALSE = frozenset({"0", "false", "no", "n"})
+
+
+def coerce_config_value(key: str, value):
+    """Coerce a config value to the DEFAULTS type for ``key``.
+
+    Returns the coerced value, or None if the value is invalid (caller falls
+    back to DEFAULTS). Unknown keys return None.
+    """
+    if key not in DEFAULTS:
+        return None
+    default = DEFAULTS[key]
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            low = value.strip().lower()
+            if low in _BOOL_TRUE:
+                return True
+            if low in _BOOL_FALSE:
+                return False
+        return None
+    if isinstance(default, int) and not isinstance(default, bool):
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except ValueError:
+                return None
+        return None
+    if isinstance(default, float):
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+        return None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def normalize_config(raw: dict) -> dict:
+    """Keep known keys, coerce types, drop unknown keys. Invalid values omitted."""
+    out = {}
+    for key in DEFAULTS:
+        if key not in raw:
+            continue
+        coerced = coerce_config_value(key, raw[key])
+        if coerced is None:
+            continue
+        out[key] = coerced
+    return out
 
 
 def load_config() -> dict:
@@ -55,7 +116,19 @@ def load_config() -> dict:
         try:
             raw = json.loads(CONFIG_PATH.read_text())
             if isinstance(raw, dict):
-                cfg.update(raw)
+                known = {k: raw[k] for k in DEFAULTS if k in raw}
+                invalid = [
+                    k for k, v in known.items()
+                    if coerce_config_value(k, v) is None
+                ]
+                cfg.update(normalize_config(raw))
+                if invalid and not _CONFIG_WARNED:
+                    print(
+                        f"[lmloop] warning: {CONFIG_PATH} has invalid values for "
+                        f"{', '.join(invalid)}; using defaults for those keys",
+                        file=sys.stderr,
+                    )
+                    _CONFIG_WARNED = True
             elif not _CONFIG_WARNED:
                 print(
                     f"[lmloop] warning: {CONFIG_PATH} is not a JSON object; using defaults",

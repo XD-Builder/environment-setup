@@ -4,13 +4,14 @@ Rich ANSI styling when stdout is a TTY and color is enabled; plain text otherwis
 Respects NO_COLOR and TERM=dumb. Never colors model-generated assistant content.
 """
 
+import json
 import os
 import re
 import shutil
 import sys
 from pathlib import Path
 
-from . import agent, tools
+from . import tools
 
 
 def _supports_color(enabled: bool = True) -> bool:
@@ -66,6 +67,19 @@ def format_tokens(n: int) -> str:
     if n >= 1000:
         return f"{n / 1000:.1f}k"
     return str(n)
+
+
+CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+def estimate_context_tokens(messages: list) -> int:
+    """Rough token estimate (chars / CHARS_PER_TOKEN_ESTIMATE) when usage missing."""
+    chars = 0
+    for m in messages:
+        chars += len(str(m.get("content") or ""))
+        if m.get("tool_calls"):
+            chars += len(json.dumps(m["tool_calls"]))
+    return max(0, chars // CHARS_PER_TOKEN_ESTIMATE)
 
 
 def strip_ansi(text: str) -> str:
@@ -136,7 +150,7 @@ def context_fill(stats: dict, messages: list, context_limit: int, reserve: int) 
     """Return (used_tokens, effective_limit, fill_ratio). effective_limit = limit - reserve."""
     used = stats.get("last_prompt_tokens", 0)
     if not used and messages:
-        used = agent.estimate_context_tokens(messages)
+        used = estimate_context_tokens(messages)
     effective = max((context_limit or 0) - max(reserve, 0), 1)
     ratio = min(used / effective, 1.0) if context_limit else 0.0
     return used, effective, ratio
@@ -181,7 +195,7 @@ class Console:
         print(
             f"{t.c('project=', t.dim)}{t.c(project, t.cyan)} · "
             f"{t.c('/help', t.green)} for commands · "
-            f"{t.c('Tab', t.green)} /cmds · "
+            f"{t.c('/', t.green)} cmds · "
             f"{t.c('@file', t.green)} · "
             f"{t.c('/transcript', t.green)}"
         )
@@ -371,9 +385,9 @@ class Console:
             arg = f" {cmd.arg_hint}" if cmd.arg_hint else ""
             pad = max(1, 22 - len(cmd.name) - len(arg))
             lines.append(f"  {name}{arg}{' ' * pad}{cmd.desc}")
-        lines.append(f"  {t.c('/quit', t.green)}{' ' * 16}exit")
+        lines.append(f"  {t.c('/quit', t.green)}{' ' * 16}exit  (/exit, /q)")
         lines.append("")
-        lines.append(f"  {t.c('Tab', t.green)} completes /commands, /skill names, and @files")
+        lines.append(f"  {t.c('/', t.green)} or Tab completes /commands, /skill names, and @files")
         lines.append(
             f"  {t.c('Ctrl-C', t.green)} dismisses / @ completion, then twice to exit"
         )
@@ -397,9 +411,9 @@ class Console:
                 f"{format_tokens(last_in)} in + {format_tokens(last_out)} out"
             )
         if context_limit and messages is not None:
-            used, _, _ratio = context_fill(stats, messages, context_limit, reserve)
+            used, effective, _ratio = context_fill(stats, messages, context_limit, reserve)
             if used:
-                parts.append(f"ctx {format_tokens(used)}/{format_tokens(context_limit)}")
+                parts.append(f"ctx {format_tokens(used)}/{format_tokens(effective)}")
         print(t.c(" · ".join(parts), t.dim))
 
     def tool_call(self, name: str, args_preview: str, stats: "dict | None" = None) -> None:

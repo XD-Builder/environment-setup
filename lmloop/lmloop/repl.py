@@ -36,6 +36,7 @@ class SessionState:
     console: Console
     context_limit: int = 0
     prompt_session: object = None
+    workspace_root: Path = field(default_factory=lambda: Path.cwd().resolve())
     # Prior-turn thinking for Ctrl+O (newest last). Live thinking is not stored
     # here until the turn retires it.
     thinking_history: list = field(default_factory=list)
@@ -131,6 +132,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
             on_thinking=state.push_thinking,
             context_limit=state.context_limit,
             context_reserve=state.context_reserve,
+            workspace_root=state.workspace_root,
         )
         footer = state.console.stats_footer(
             state.stats, state.context_limit, state.messages, state.context_reserve,
@@ -148,6 +150,11 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
         state.console.hint(
             f"\n[interrupted — conversation kept; type to steer, or {MSG_RESUME}]"
         )
+        return False
+    except Exception as e:
+        memory.log_event(state.session_log, "system", f"error: {type(e).__name__}: {e}")
+        state.console.error(f"error: {type(e).__name__}: {e}")
+        state.console.hint(f"  conversation kept — type to steer, or {MSG_RESUME}")
         return False
 
 
@@ -263,6 +270,7 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
             echo_round=console.round_usage,
             context_limit=agent.get_context_limit(model, cfg),
             context_reserve=int(cfg.get("context_reserve") or 2048),
+            workspace_root=Path.cwd().resolve(),
         )
     except agent.ServerError as e:
         memory.log_event(session_log, "system", f"error: {e}")
@@ -409,6 +417,7 @@ def _isolated_act(state: SessionState, user_text: str, confirm_gate,
             echo_round=state.console.round_usage,
             context_limit=state.context_limit,
             context_reserve=state.context_reserve,
+            workspace_root=state.workspace_root,
         )
     except agent.ServerError as e:
         memory.log_event(session_log, "system", f"error: {e}")
@@ -725,6 +734,7 @@ def run_repl(cfg: dict, console: "Console | None" = None,
         stats=fresh_stats(),
         console=console,
         context_limit=agent.get_context_limit(model, cfg),
+        workspace_root=Path.cwd().resolve(),
     )
     confirm_gate = make_confirm_gate(console)
 

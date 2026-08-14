@@ -65,16 +65,20 @@ COMMANDS: tuple = (
 _META_RESERVED = frozenset({"system", "names"})
 
 
-def reserved_skill_names() -> frozenset:
+def reserved_skill_names() -> "frozenset[str]":
     names = {c.name for c in COMMANDS if c.reserve_skill}
     return frozenset(names | _META_RESERVED)
 
 
-def slash_command_metas() -> list:
+def slash_command_metas() -> "list[CommandMeta]":
     return [c for c in COMMANDS if c.slash]
 
 
-def cli_subcommand_names() -> frozenset:
+def cli_subcommand_metas() -> "list[CommandMeta]":
+    return [c for c in COMMANDS if c.cli]
+
+
+def cli_subcommand_names() -> "frozenset[str]":
     return frozenset(c.name for c in COMMANDS if c.cli)
 
 
