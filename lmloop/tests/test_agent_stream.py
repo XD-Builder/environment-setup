@@ -7,6 +7,8 @@ import urllib.error
 from unittest import mock
 
 from lmloop import agent
+from lmloop import display
+from lmloop import stream as stream_mod
 from lmloop.status import NUDGE_CONTINUE_TEXT
 
 
@@ -40,7 +42,7 @@ class FakeResp:
 class GeneratingIndicatorTests(unittest.TestCase):
     def test_clear_stops_further_ticks(self):
         """Usage/trailing SSE chunks must not resurrect the spinner."""
-        ind = agent._GeneratingIndicator()
+        ind = display._GeneratingIndicator()
         with mock.patch("sys.stdout") as out:
             out.isatty.return_value = True
             ind.tick()
@@ -53,7 +55,7 @@ class GeneratingIndicatorTests(unittest.TestCase):
             out.write.assert_not_called()
 
     def test_clear_without_show_still_stops(self):
-        ind = agent._GeneratingIndicator()
+        ind = display._GeneratingIndicator()
         ind.clear()
         self.assertTrue(ind._stopped)
         with mock.patch("sys.stdout") as out:
@@ -65,7 +67,7 @@ class GeneratingIndicatorTests(unittest.TestCase):
 class StreamPrinterTests(unittest.TestCase):
     def _collect(self):
         out = []
-        return out, agent._StreamPrinter(out.append)
+        return out, display._StreamPrinter(out.append)
 
     def test_skips_whitespace_only_rounds(self):
         out, p = self._collect()
@@ -96,49 +98,49 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertEqual("".join(out), "Hello\n\nWorld\n")
 
     def test_open_live_display_modes(self):
-        p, mode = agent._open_live_display(False)
+        p, mode = display._open_live_display(False)
         self.assertEqual(mode, "silent")
         self.assertIsNone(p._write)
-        p, mode = agent._open_live_display(True)
+        p, mode = display._open_live_display(True)
         self.assertEqual(mode, "plain")
         with mock.patch("lmloop.display._rich_live_available", return_value=True):
-            p, mode = agent._open_live_display(None)
+            p, mode = display._open_live_display(None)
             self.assertEqual(mode, "markdown")
-            self.assertIsInstance(p, agent._MarkdownLivePrinter)
+            self.assertIsInstance(p, display._MarkdownLivePrinter)
         with mock.patch("lmloop.display._rich_live_available", return_value=False):
-            p, mode = agent._open_live_display(None)
+            p, mode = display._open_live_display(None)
             self.assertEqual(mode, "plain")
 
     def test_emit_silent_calls_echo_once(self):
         echoed = []
-        p = agent._StreamPrinter(None)
+        p = display._StreamPrinter(None)
         p.feed("**hi**")
-        agent._emit_assistant_content(echoed.append, "**hi**", p, "silent")
+        display._emit_assistant_content(echoed.append, "**hi**", p, "silent")
         self.assertEqual(echoed, ["**hi**"])
 
     def test_emit_live_plain_skips_echo(self):
         echoed = []
         out = []
-        p = agent._StreamPrinter(out.append)
+        p = display._StreamPrinter(out.append)
         p.feed("hi")
-        agent._emit_assistant_content(echoed.append, "hi", p, "plain")
+        display._emit_assistant_content(echoed.append, "hi", p, "plain")
         self.assertEqual(echoed, [])
         self.assertEqual("".join(out), "hi\n")
 
     def test_emit_markdown_live_skips_echo(self):
         echoed = []
-        p = agent._MarkdownLivePrinter()
+        p = display._MarkdownLivePrinter()
         with mock.patch.object(p, "_ensure_live"), \
              mock.patch.object(p, "_refresh"), \
              mock.patch.object(p, "finish", return_value=True):
-            agent._emit_assistant_content(echoed.append, "**hi**", p, "markdown")
+            display._emit_assistant_content(echoed.append, "**hi**", p, "markdown")
         self.assertEqual(echoed, [])
 
     def test_emit_live_echoes_when_nothing_streamed(self):
         """Reasoning→content fallback never feeds the printer; must still show."""
         echoed = []
-        p = agent._StreamPrinter(lambda *_a: None)
-        agent._emit_assistant_content(
+        p = display._StreamPrinter(lambda *_a: None)
+        display._emit_assistant_content(
             echoed.append,
             "Let me dive deeper into the source code.",
             p,
@@ -150,9 +152,9 @@ class StreamPrinterTests(unittest.TestCase):
 
     def test_markdown_live_crops_tail_not_ellipsis(self):
         """ellipsis keeps the start of a tall answer — new tokens vanish."""
-        if not agent._load_rich():
+        if not display._load_rich():
             self.skipTest("rich not installed")
-        p = agent._MarkdownLivePrinter()
+        p = display._MarkdownLivePrinter()
         fake_live = mock.MagicMock()
         fake_live.auto_refresh = False
         with mock.patch("lmloop.display._load_rich") as load_rich, \
@@ -171,11 +173,11 @@ class StreamPrinterTests(unittest.TestCase):
             self.assertTrue(make_console.call_args.kwargs.get("force_terminal"))
             self.assertIn("height", make_console.call_args.kwargs)
             updated = fake_live.update.call_args.args[0]
-            self.assertIsInstance(updated, agent._TailMarkdown)
+            self.assertIsInstance(updated, display._TailMarkdown)
 
     def test_tail_markdown_keeps_newest_lines(self):
         """Live preview must show the end of a long answer, not the opening."""
-        if not agent._load_rich():
+        if not display._load_rich():
             self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
@@ -186,14 +188,14 @@ class StreamPrinterTests(unittest.TestCase):
             soft_wrap=False, highlight=False, color_system=None,
         )
         text = "# First heading\n\n" + ("filler paragraph\n\n" * 20) + "# Last heading\n"
-        console.print(agent._TailMarkdown(text))
+        console.print(display._TailMarkdown(text))
         out = buf.getvalue()
         self.assertIn("Last heading", out)
         self.assertNotIn("First heading", out)
 
     def test_tail_markdown_keeps_opening_when_it_fits(self):
         """Short answers must grow in Live, not sit in a 16-line tail window."""
-        if not agent._load_rich():
+        if not display._load_rich():
             self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
@@ -203,7 +205,7 @@ class StreamPrinterTests(unittest.TestCase):
             file=buf, width=40, height=20, force_terminal=True,
             soft_wrap=False, highlight=False, color_system=None,
         )
-        console.print(agent._TailMarkdown("# First heading\n\nA short paragraph.\n"))
+        console.print(display._TailMarkdown("# First heading\n\nA short paragraph.\n"))
         out = buf.getvalue()
         self.assertIn("First heading", out)
         self.assertIn("short paragraph", out)
@@ -217,7 +219,7 @@ class StreamPrinterTests(unittest.TestCase):
 
     def test_markdown_live_keeps_wrapped_sentences(self):
         """Live + word-wrap must not crop the next sentence at terminal width."""
-        if not agent._load_rich():
+        if not display._load_rich():
             self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
@@ -227,7 +229,7 @@ class StreamPrinterTests(unittest.TestCase):
             file=buf, width=40, height=12, force_terminal=True,
             soft_wrap=False, highlight=False, color_system=None,
         )
-        p = agent._MarkdownLivePrinter(color=False, console=console)
+        p = display._MarkdownLivePrinter(color=False, console=console)
         text = (
             "First sentence is here. Second sentence continues the thought "
             "and should remain visible on screen even though it is long. "
@@ -240,7 +242,7 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertIn("continues the thought", out)
 
     def test_thinking_counts_wrapped_visual_rows(self):
-        t = agent._ThinkingLive(color=False)
+        t = display._ThinkingLive(color=False)
         ts = type("TS", (), {"columns": 20, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
              mock.patch("lmloop.display.terminal_size", return_value=(ts.columns, ts.lines)):
@@ -249,8 +251,18 @@ class StreamPrinterTests(unittest.TestCase):
         # "  ▎" prefix + 45 = 48 cells → 3 rows at width 20
         self.assertEqual(t._lines_shown, 3)
 
+    def test_retire_for_round_promotes_thinking_only(self):
+        t = display._ThinkingLive(color=False)
+        with mock.patch("sys.stdout") as out:
+            out.isatty.return_value = False
+            t.feed("plan the next step\n")
+            content, retired = t.retire_for_round([], "", "")
+        self.assertEqual(content.strip(), "plan the next step")
+        self.assertIn("plan the next step", retired)
+        self.assertFalse(t.active)
+
     def _thinking_writes(self, feeds):
-        t = agent._ThinkingLive(color=False)
+        t = display._ThinkingLive(color=False)
         writes = []
         ts = type("TS", (), {"columns": 80, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
@@ -305,7 +317,7 @@ class StreamPrinterTests(unittest.TestCase):
 
     def test_thinking_skips_consecutive_blank_lines(self):
         text, _t = self._thinking_writes(["idea\n", "\n", "\n", "\n", "next\n"])
-        self.assertEqual(text.count(agent.THINK_LINE_PREFIX + "\n"), 1)
+        self.assertEqual(text.count(display.THINK_LINE_PREFIX + "\n"), 1)
 
     def test_thinking_carriage_return_rewrites_line(self):
         text, t = self._thinking_writes(["draft\rfinal\n"])
@@ -313,7 +325,7 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertNotIn("\r", t.text())
 
     def test_thinking_erase_clears_rows(self):
-        t = agent._ThinkingLive(color=False)
+        t = display._ThinkingLive(color=False)
         writes = []
         ts = type("TS", (), {"columns": 80, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
@@ -330,9 +342,9 @@ class StreamPrinterTests(unittest.TestCase):
 
     def test_overlap_keeps_paragraph_break_newlines(self):
         parts = []
-        agent._ingest_text_delta(parts, "Hello\n")
-        self.assertEqual(agent._ingest_text_delta(parts, "\n"), "\n")
-        self.assertEqual(agent._ingest_text_delta(parts, "World\n"), "World\n")
+        stream_mod._ingest_text_delta(parts, "Hello\n")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, "\n"), "\n")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, "World\n"), "World\n")
         self.assertEqual("".join(parts), "Hello\n\nWorld\n")
 
 
@@ -440,17 +452,17 @@ class ContinueNudgeTests(unittest.TestCase):
 class MergeToolCallDeltaTests(unittest.TestCase):
     def test_accumulates_arguments_by_index(self):
         acc = {}
-        agent._merge_tool_call_delta(acc, [{
+        stream_mod._merge_tool_call_delta(acc, [{
             "index": 0,
             "id": "call_1",
             "type": "function",
             "function": {"name": "run_shell", "arguments": ""},
         }])
-        agent._merge_tool_call_delta(acc, [{
+        stream_mod._merge_tool_call_delta(acc, [{
             "index": 0,
             "function": {"arguments": '{"command":'},
         }])
-        agent._merge_tool_call_delta(acc, [{
+        stream_mod._merge_tool_call_delta(acc, [{
             "index": 0,
             "function": {"arguments": '"mkdir -p docs"}'},
         }])
@@ -461,63 +473,63 @@ class MergeToolCallDeltaTests(unittest.TestCase):
 class IngestTextDeltaTests(unittest.TestCase):
     def test_incremental_appends(self):
         parts = []
-        self.assertEqual(agent._ingest_text_delta(parts, "Hello"), "Hello")
-        self.assertEqual(agent._ingest_text_delta(parts, " world"), " world")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, "Hello"), "Hello")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, " world"), " world")
         self.assertEqual("".join(parts), "Hello world")
 
     def test_cumulative_keeps_suffix_only(self):
         parts = []
-        agent._ingest_text_delta(parts, "Hello")
-        self.assertEqual(agent._ingest_text_delta(parts, "Hello world"), " world")
+        stream_mod._ingest_text_delta(parts, "Hello")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, "Hello world"), " world")
         self.assertEqual("".join(parts), "Hello world")
 
     def test_stale_shorter_snapshot_ignored(self):
         parts = []
         long = "Hello world, this is a longer cumulative snapshot body!!"
-        agent._ingest_text_delta(parts, long)
+        stream_mod._ingest_text_delta(parts, long)
         # Near-complete prefix (>= 80% and >= 64 chars) is ignored as stale.
         stale = long[: max(64, len(long) * 4 // 5)]
-        self.assertEqual(agent._ingest_text_delta(parts, stale), "")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, stale), "")
         self.assertEqual("".join(parts), long)
 
     def test_medium_prefix_replay_ignored(self):
         parts = []
         body = "Let me search the web for Bay Area history now.\n"
-        agent._ingest_text_delta(parts, body)
-        agent._ingest_text_delta(parts, body + "Then I'll summarize.\n")
-        self.assertEqual(agent._ingest_text_delta(parts, body), "")
+        stream_mod._ingest_text_delta(parts, body)
+        stream_mod._ingest_text_delta(parts, body + "Then I'll summarize.\n")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, body), "")
         self.assertEqual("".join(parts).count(body.strip()), 1)
 
     def test_overlap_window_keeps_only_new_suffix(self):
         parts = []
-        agent._ingest_text_delta(parts, "AAA\nBBB\n")
-        self.assertEqual(agent._ingest_text_delta(parts, "BBB\nCCC\n"), "CCC\n")
+        stream_mod._ingest_text_delta(parts, "AAA\nBBB\n")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, "BBB\nCCC\n"), "CCC\n")
         self.assertEqual("".join(parts), "AAA\nBBB\nCCC\n")
 
     def test_overlap_multiline_sliding_window(self):
         parts = []
-        agent._ingest_text_delta(parts, "AAA\nBBB\nCCC\n")
+        stream_mod._ingest_text_delta(parts, "AAA\nBBB\nCCC\n")
         self.assertEqual(
-            agent._ingest_text_delta(parts, "BBB\nCCC\nDDD\n"), "DDD\n",
+            stream_mod._ingest_text_delta(parts, "BBB\nCCC\nDDD\n"), "DDD\n",
         )
         self.assertEqual("".join(parts), "AAA\nBBB\nCCC\nDDD\n")
 
     def test_small_prefix_chunk_still_appends(self):
         parts = []
-        agent._ingest_text_delta(parts, "xxxxxxxxxxxxxxxxxxxx")
+        stream_mod._ingest_text_delta(parts, "xxxxxxxxxxxxxxxxxxxx")
         # Short chunk that is a prefix must still append (incremental stream).
-        self.assertEqual(agent._ingest_text_delta(parts, "xxxx"), "xxxx")
+        self.assertEqual(stream_mod._ingest_text_delta(parts, "xxxx"), "xxxx")
         self.assertEqual("".join(parts), "xxxxxxxxxxxxxxxxxxxxxxxx")
 
     def test_tail_repeats(self):
-        unit = "x" * agent._REPEAT_WINDOW
-        self.assertFalse(agent._tail_repeats(unit * 2))
-        self.assertTrue(agent._tail_repeats(unit * agent._REPEAT_TIMES))
+        unit = "x" * stream_mod._REPEAT_WINDOW
+        self.assertFalse(stream_mod._tail_repeats(unit * 2))
+        self.assertTrue(stream_mod._tail_repeats(unit * stream_mod._REPEAT_TIMES))
 
     def test_repeated_trailing_lines(self):
         line = "The user asked about Bay Area history in detail."
-        self.assertFalse(agent._repeated_trailing_lines("\n".join([line] * 3)))
-        self.assertTrue(agent._repeated_trailing_lines("\n".join([line] * 6)))
+        self.assertFalse(stream_mod._repeated_trailing_lines("\n".join([line] * 3)))
+        self.assertTrue(stream_mod._repeated_trailing_lines("\n".join([line] * 6)))
 
     def test_think_line_similar_paraphrases(self):
         a = (
@@ -529,10 +541,10 @@ class IngestTextDeltaTests(unittest.TestCase):
             "Let me retry the searches with different phrasing and try "
             "fetching known authority sites."
         )
-        self.assertTrue(agent._think_line_similar(a, b))
-        self.assertTrue(agent._think_line_similar(a, c))
-        self.assertTrue(agent._think_line_similar(b, c))
-        self.assertFalse(agent._think_line_similar(
+        self.assertTrue(stream_mod._think_line_similar(a, b))
+        self.assertTrue(stream_mod._think_line_similar(a, c))
+        self.assertTrue(stream_mod._think_line_similar(b, c))
+        self.assertFalse(stream_mod._think_line_similar(
             "New York works well for first-time visitors to the East Coast.",
             "Miami is better in winter for travelers who want beach weather.",
         ))
@@ -544,21 +556,21 @@ class IngestTextDeltaTests(unittest.TestCase):
             "Let me retry the searches with different phrasing and try fetching known authority sites.",
             "I'll retry the searches with slightly different phrasing and also try fetching known authority sites directly.",
         ]
-        self.assertTrue(agent._repeated_near_trailing_lines("\n".join(paraphrases)))
+        self.assertTrue(stream_mod._repeated_near_trailing_lines("\n".join(paraphrases)))
         distinct = [
             "I'll search for East Coast destinations.",
             "New York works well for first-time visitors.",
             "Boston is compact and walkable.",
             "Miami is better in winter.",
         ]
-        self.assertFalse(agent._repeated_near_trailing_lines("\n".join(distinct)))
+        self.assertFalse(stream_mod._repeated_near_trailing_lines("\n".join(distinct)))
 
     def test_alternating_near_trailing_lines(self):
         a = "Let me try the searches once more with different phrasing and also try fetching known authority sites directly."
         b = "I'll retry the searches and try fetching known authority sites directly."
         # Alternating A/B still fails exact-line halt; near-dup should catch it.
         text = "\n".join([a, b, a, b, a, b])
-        self.assertTrue(agent._repeated_near_trailing_lines(text))
+        self.assertTrue(stream_mod._repeated_near_trailing_lines(text))
 
     def test_repeated_trailing_block_plan_loop(self):
         block = (
@@ -574,21 +586,21 @@ class IngestTextDeltaTests(unittest.TestCase):
             "9. AP News Business\n"
             "Let me fetch the first 5 now:\n"
         )
-        self.assertFalse(agent._repeated_trailing_block(block))
-        self.assertFalse(agent._looping_text(block))
-        self.assertTrue(agent._repeated_trailing_block(block + block))
-        self.assertTrue(agent._looping_text(block + block))
+        self.assertFalse(stream_mod._repeated_trailing_block(block))
+        self.assertFalse(stream_mod._looping_text(block))
+        self.assertTrue(stream_mod._repeated_trailing_block(block + block))
+        self.assertTrue(stream_mod._looping_text(block + block))
         # A single numbered plan is not a loop.
         once = "\n".join(f"{i}. item {i} description here" for i in range(1, 10))
-        self.assertFalse(agent._repeated_trailing_block(once))
+        self.assertFalse(stream_mod._repeated_trailing_block(once))
         # Whole-block chunk matching the tail is a loop, not a snapshot no-op.
-        self.assertTrue(agent._dropped_piece_is_loop(block, block))
-        self.assertFalse(agent._dropped_piece_is_loop(block, "1. Reuters Business\n"))
+        self.assertTrue(stream_mod._dropped_piece_is_loop(block, block))
+        self.assertFalse(stream_mod._dropped_piece_is_loop(block, "1. Reuters Business\n"))
 
 
 class PrinterResetTests(unittest.TestCase):
     def test_markdown_printer_reset_clears_parts(self):
-        p = agent._MarkdownLivePrinter()
+        p = display._MarkdownLivePrinter()
         p._parts = ["a", "b"]
         p._started = True
         p.reset()
@@ -597,7 +609,7 @@ class PrinterResetTests(unittest.TestCase):
 
     def test_stream_printer_finish_resets(self):
         out = []
-        p = agent._StreamPrinter(out.append)
+        p = display._StreamPrinter(out.append)
         p.feed("hi")
         self.assertTrue(p.finish())
         self.assertFalse(p.visible)
@@ -697,9 +709,9 @@ class ChatStreamTests(unittest.TestCase):
     def test_repetition_circuit_breaker(self):
         # Non-periodic unit so successive 50-char chunks differ (identical
         # chunk replays are treated as cumulative no-ops).
-        unit = "".join(f"{i:04d}" for i in range(200))[: agent._REPEAT_WINDOW]
-        self.assertEqual(len(unit), agent._REPEAT_WINDOW)
-        repeated = unit * agent._REPEAT_TIMES
+        unit = "".join(f"{i:04d}" for i in range(200))[: stream_mod._REPEAT_WINDOW]
+        self.assertEqual(len(unit), stream_mod._REPEAT_WINDOW)
+        repeated = unit * stream_mod._REPEAT_TIMES
         pieces = [repeated[i:i + 50] for i in range(0, len(repeated), 50)]
         pieces.append("SHOULD_NOT_APPEAR")
         events = [{"choices": [{"delta": {"content": p}}]} for p in pieces]
@@ -856,7 +868,7 @@ class ChatStreamTests(unittest.TestCase):
             "9. AP News Business\n"
             "Let me fetch the first 5 now:\n"
         )
-        extra = "x" * (agent._HALT_DRAIN_CHARS + 10)
+        extra = "x" * (stream_mod._HALT_DRAIN_CHARS + 10)
         body = _sse(
             {"choices": [{"delta": {"reasoning_content": block}}]},
             {"choices": [{"delta": {"reasoning_content": block}}]},
@@ -869,6 +881,38 @@ class ChatStreamTests(unittest.TestCase):
             msg, _usage = agent._chat_stream(cfg, "m", [], None)
         self.assertNotIn("TOO_LATE", msg["content"])
         self.assertNotIn("TOO_LATE", msg.get("_reasoning", ""))
+
+    def test_halt_drops_late_tool_calls_after_drain(self):
+        """Thinking-loop halt closes the SSE body; tool_calls after drain are dropped."""
+        from lmloop import stream as stream_mod
+        block = (
+            "Let me start with the first batch:\n"
+            "1. Reuters Business\n"
+            "2. TechCrunch AI section\n"
+            "3. Google 2025 Research Breakthroughs\n"
+            "4. CNN Business\n"
+            "5. Reuters AI News\n"
+            "Then the rest:\n"
+            "6. Edapt Major AI Breakthroughs\n"
+            "8. Medium AI Reality Check\n"
+            "9. AP News Business\n"
+            "Let me fetch the first 5 now:\n"
+        )
+        extra = "x" * (stream_mod._HALT_DRAIN_CHARS + 10)
+        body = _sse(
+            {"choices": [{"delta": {"reasoning_content": block}}]},
+            {"choices": [{"delta": {"reasoning_content": block}}]},
+            {"choices": [{"delta": {"reasoning_content": extra}}]},
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0, "id": "c1",
+                "function": {"name": "web_search", "arguments": "{}"},
+            }]}}]},
+            None,
+        )
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertFalse(msg.get("tool_calls"))
 
     def test_reasoning_paraphrase_loop_halts_further_chunks(self):
         body = _sse(
@@ -1065,7 +1109,7 @@ class ActIntegrationTests(unittest.TestCase):
         messages = [{"role": "user", "content": "hi"}]
         events = []
 
-        class TrackingPrinter(agent._StreamPrinter):
+        class TrackingPrinter(display._StreamPrinter):
             def finish(self):
                 events.append("finish")
                 return super().finish()
@@ -1109,7 +1153,7 @@ class ActIntegrationTests(unittest.TestCase):
         }
         events = []
 
-        class TrackingInd(agent._GeneratingIndicator):
+        class TrackingInd(display._GeneratingIndicator):
             def tick(self):
                 if self._stopped:
                     return
@@ -1122,7 +1166,7 @@ class ActIntegrationTests(unittest.TestCase):
                 self._stopped = True
                 self._shown = False
 
-        class QuietPrinter(agent._StreamPrinter):
+        class QuietPrinter(display._StreamPrinter):
             def finish(self):
                 return bool(self._started)
 
@@ -1404,9 +1448,9 @@ class ActIntegrationTests(unittest.TestCase):
 class MalformedToolDeltaTests(unittest.TestCase):
     def test_bad_index_skipped(self):
         acc = {}
-        agent._merge_tool_call_delta(acc, [{"index": "nope", "function": {"name": "x"}}])
-        agent._merge_tool_call_delta(acc, "not-a-list")
-        agent._merge_tool_call_delta(acc, [None, {"index": 0, "id": "c1",
+        stream_mod._merge_tool_call_delta(acc, [{"index": "nope", "function": {"name": "x"}}])
+        stream_mod._merge_tool_call_delta(acc, "not-a-list")
+        stream_mod._merge_tool_call_delta(acc, [None, {"index": 0, "id": "c1",
             "function": {"name": "list_dir", "arguments": "{}"}}])
         self.assertEqual(acc[0]["function"]["name"], "list_dir")
 

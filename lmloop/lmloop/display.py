@@ -290,7 +290,7 @@ class _MarkdownLivePrinter:
             return
         try:
             self._live.stop()
-        except (OSError, RuntimeError):
+        except OSError:
             pass
         self._live = None
 
@@ -421,6 +421,21 @@ class _ThinkingLive:
         self._rewind_shown_lines()
         self._active = False
         return text
+
+    def retire_for_round(self, tool_calls: list, content: str, reasoning_text: str) -> tuple:
+        """Erase or keep thinking after a round. Returns (content, retired_text)."""
+        if not self.active:
+            return content, ""
+        if tool_calls:
+            return content, self.erase()
+        if content and content == reasoning_text:
+            return content, self.finish_keep()
+        if content:
+            return content, self.erase()
+        kept = self.finish_keep()
+        if kept.strip():
+            content = kept.strip()
+        return content, kept
 
 
 def _emit_assistant_content(echo, content: str, printer, live_mode: str) -> None:

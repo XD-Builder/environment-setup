@@ -44,6 +44,7 @@ lmloop/
 │       ├── qa.md               # run tests, verify changes
 │       ├── learn.md            # curate and audit learnings
 │       └── ceo.md              # strategy / plan review
+├── tests/                      # stdlib unittest; named test_<area>.py
 ```
 
 ---
@@ -91,11 +92,11 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 
 | Tool | Purpose | Safety |
 |------|---------|--------|
-| `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. Pipe/redirection syntax also requires confirmation. |
-| `read_file` | Read file with line numbers | Scoped to current working directory. Max 400 lines per call. |
-| `write_file` | Overwrite file | Scoped to current working directory. Creates parent dirs. |
-| `list_dir` | List directory entries | Scoped to CWD. Includes dotfiles. |
-| `search_files` | Regex search (ripgrep or grep fallback) | Scoped to CWD. Max 50 matches. |
+| `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. Pipe/redirection syntax is off by default (`confirm_shell_syntax`); set that key to enable. |
+| `read_file` | Read file with line numbers | Scoped to the workspace directory captured at session start. Max 400 lines per call. |
+| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. Creates parent dirs. |
+| `list_dir` | List directory entries | Scoped to the session workspace. Includes dotfiles. |
+| `search_files` | Regex search (ripgrep or grep fallback) | Scoped to the session workspace. Max 50 matches. |
 | `web_search` | `ddgs` metasearch (no key), then DuckDuckGo HTML/Lite, Instant Answer, Wikipedia | Optional `ddgs` dep. Content fenced as untrusted. All backends failing → ERROR (do not paraphrase-retry). |
 | `fetch_url` | HTTP(S) fetch with HTML→text + on-page links | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
 | `remember` | Save a learning to project memory | Write to learnings.jsonl |
@@ -112,7 +113,7 @@ Tool output is truncated to 12,000 chars to protect the context window.
 
 **File:** `memory.py`
 
-All state is human-readable files under `~/.lmloop/projects/<slug>/`. No database, no migrations.
+All state is human-readable files under `~/.lmloop/projects/<slug>/`. No database, no migrations. JSONL files assume a **single writer** (one REPL or CLI process per project); concurrent appends are out of scope.
 
 ### State layout
 
@@ -219,7 +220,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 2. **File-only memory, computed views.** Append-only JSONL means no corruption, no migrations. You can `cat`, `grep`, or hand-edit every piece of agent memory.
 3. **Bounded context injection.** Local models have small contexts — the budget is respected. Only top-N learnings and active decisions injected at start; model pulls more on demand.
 4. **Self-learning is curated, not automatic.** The `remember` tool has a quality bar (enforced by `skills/retro.md`). Noisy memory is worse than none.
-5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Web content is fenced as untrusted data.
+5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Pipe/redirection confirms are opt-in (`confirm_shell_syntax`). Web content is fenced as untrusted data.
 6. **Skills as markdown playbooks.** Numbered steps, English conditionals, explicit report format. User skills override packaged ones with the same name.
 
 ---

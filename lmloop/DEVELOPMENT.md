@@ -91,20 +91,25 @@ find yourself updating two lists, you have already added debt.
 | Slash/CLI names, reserved skill stems | `commands.py` |
 | Status / resume / nudge copy | `status.py` |
 | JSONL memory | `memory.py` |
+| argparse routing, non-REPL subcommands | `cli.py` |
+| Paths, `DEFAULTS`, project slug | `config.py` |
+| `@path` completion + ref expansion | `files_index.py` |
 | REPL session + slash handlers | `repl.py` |
 | prompt_toolkit session, completers, key bindings | `prompt.py` |
 | ANSI chrome, status bar, `drain_tty_input` | `ui.py` |
 | rich Console / markdown / pager | `markdown_view.py` |
 
-`agent.py` may import display/stream helpers and re-export names tests already
-use. New stream or display logic belongs in those modules, not as more private
-helpers in `agent.py`.
+`agent.py` imports display/stream helpers that `act()` calls. Tests patch
+`lmloop.display` / `lmloop.stream` where those names are looked up — do not
+re-export privates through `agent` for tests. New stream or display logic
+belongs in those modules, not as more private helpers in `agent.py`.
 
 **Import graph (do not invert):**
 
 - `stream.py` must not import `agent` or `display`.
 - `display.py` may import stream helpers (they share `_think_line_similar`) but
   not `agent`.
+- `ui.py` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
 
 ### Keep components small

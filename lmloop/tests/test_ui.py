@@ -85,6 +85,14 @@ class UiTests(unittest.TestCase):
         self.assertGreater(cols, 0)
         self.assertGreater(lines, 0)
 
+    def test_estimate_context_tokens_counts_content_and_tools(self):
+        from lmloop.ui import estimate_context_tokens
+        n = estimate_context_tokens([
+            {"role": "user", "content": "abcd"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+        ])
+        self.assertGreaterEqual(n, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

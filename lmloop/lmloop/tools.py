@@ -241,6 +241,7 @@ def run_shell(
     timeout_s: int = DEFAULT_SHELL_TIMEOUT_S,
     confirm_destructive: bool = True,
     confirm_shell_syntax: bool = False,
+    workspace_root: "Path | None" = None,
 ) -> str:
     destructive = is_destructive(command)
     shell_syntax = needs_shell(command)
@@ -252,26 +253,45 @@ def run_shell(
         if not confirm_gate(command):
             reason = "destructive" if destructive else "shell-syntax"
             return f"DENIED: the user declined to run this {reason} command."
+    root = (workspace_root or Path.cwd()).resolve()
     try:
-        if shell_syntax:
-            proc = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=timeout_s,
-            )
-        else:
-            proc = subprocess.run(
-                shlex.split(command), shell=False, capture_output=True, text=True, timeout=timeout_s,
-            )
+        argv = command if shell_syntax else shlex.split(command)
+    except ValueError as e:
+        return f"ERROR: {e}"
+    try:
+        proc = subprocess.Popen(
+            argv,
+            shell=shell_syntax,
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as e:
+        return f"ERROR: {e}"
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
         return f"ERROR: command timed out after {timeout_s}s"
-    out = proc.stdout or ""
-    if proc.stderr:
-        out += ("\n[stderr]\n" + proc.stderr)
+    except KeyboardInterrupt:
+        proc.kill()
+        try:
+            proc.communicate()
+        except KeyboardInterrupt:
+            pass
+        raise
+    out = stdout or ""
+    if stderr:
+        out += ("\n[stderr]\n" + stderr)
     out += f"\n[exit code: {proc.returncode}]"
     return _truncate(out.strip())
 
 
-def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES) -> str:
-    p, err = _check_workspace(path)
+def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES,
+              workspace_root: "Path | None" = None) -> str:
+    p, err = _check_workspace(path, workspace_root)
     if err:
         return err
     if not p.exists():
@@ -290,8 +310,8 @@ def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES) -
     return _truncate(header + "\n" + "\n".join(numbered))
 
 
-def write_file(path: str, content: str) -> str:
-    root = _workspace_root()
+def write_file(path: str, content: str, workspace_root: "Path | None" = None) -> str:
+    root = workspace_root or _workspace_root()
     p, err = _check_workspace(path, root)
     if err:
         return err
@@ -303,8 +323,8 @@ def write_file(path: str, content: str) -> str:
     return f"Wrote {len(content)} chars to {path}"
 
 
-def list_dir(path: str = ".") -> str:
-    p, err = _check_workspace(path or ".")
+def list_dir(path: str = ".", workspace_root: "Path | None" = None) -> str:
+    p, err = _check_workspace(path or ".", workspace_root)
     if err:
         return err
     if not p.is_dir():
@@ -318,10 +338,11 @@ def list_dir(path: str = ".") -> str:
     return _truncate("\n".join(lines) or "(empty)")
 
 
-def search_files(pattern: str, path: str = ".") -> str:
+def search_files(pattern: str, path: str = ".",
+                 workspace_root: "Path | None" = None) -> str:
     """ripgrep if available, grep -rn fallback."""
     import shutil
-    p, err = _check_workspace(path or ".")
+    p, err = _check_workspace(path or ".", workspace_root)
     if err:
         return err
     search_path = str(p)
@@ -891,7 +912,8 @@ def _shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
     )
 
 
-def build_tools(cfg: dict, confirm_gate=None) -> "tuple[list[dict], dict]":
+def build_tools(cfg: dict, confirm_gate=None,
+                workspace_root: "Path | None" = None) -> "tuple[list[dict], dict]":
     """Returns (openai tool specs, name -> callable) derived from ToolDef list."""
     global _TOOL_DEFS, MAX_OUTPUT
 
@@ -901,6 +923,7 @@ def build_tools(cfg: dict, confirm_gate=None) -> "tuple[list[dict], dict]":
     web_timeout = int(cfg.get("web_timeout_s") or DEFAULT_WEB_TIMEOUT_S)
     confirm_destructive, confirm_shell_syntax = _shell_confirm_flags(cfg)
     gate = confirm_gate  # may be None when confirms disabled
+    root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
 
     def _remember(insight: str, type: str = "pattern", key: str = "", confidence: int = 7) -> str:
         row = memory.add_learning(insight, type=type, key=key, confidence=confidence)
@@ -927,30 +950,38 @@ def build_tools(cfg: dict, confirm_gate=None) -> "tuple[list[dict], dict]":
                 timeout_s=shell_timeout,
                 confirm_destructive=confirm_destructive,
                 confirm_shell_syntax=confirm_shell_syntax,
+                workspace_root=root,
             ),
         ),
         ToolDef(
             "read_file",
             "Read a file under the current working directory with line numbers.",
             {"path": s, "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}},
-            ["path"], read_file, int_fields=("start_line", "max_lines"),
+            ["path"],
+            lambda path, start_line=1, max_lines=MAX_READ_LINES: read_file(
+                path, start_line, max_lines, workspace_root=root,
+            ),
+            int_fields=("start_line", "max_lines"),
         ),
         ToolDef(
             "write_file",
             "Write (overwrite) a file under the current working directory.",
-            {"path": s, "content": s}, ["path", "content"], write_file,
+            {"path": s, "content": s}, ["path", "content"],
+            lambda path, content: write_file(path, content, workspace_root=root),
             allow_empty=("content",),
         ),
         ToolDef(
             "list_dir",
             "List entries in a directory under the working directory "
             "(dirs end with /; includes dotfiles).",
-            {"path": s}, [], list_dir,
+            {"path": s}, [],
+            lambda path=".": list_dir(path, workspace_root=root),
         ),
         ToolDef(
             "search_files",
             "Search file contents under the working directory with a regex (ripgrep).",
-            {"pattern": s, "path": s}, ["pattern"], search_files,
+            {"pattern": s, "path": s}, ["pattern"],
+            lambda pattern, path=".": search_files(pattern, path, workspace_root=root),
         ),
         ToolDef(
             "web_search",

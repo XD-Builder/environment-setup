@@ -46,6 +46,27 @@ def msg_context_overflow() -> str:
     )
 
 
+def msg_starting_server() -> str:
+    return status("LM Studio server not reachable — starting it with `lms server start`...")
+
+
+def msg_loading_model(want: str) -> str:
+    label = want or "(first available)"
+    return status(f"No model loaded — running `lms load {label}`...")
+
+
+def msg_model_fallback(want: str, used: str) -> str:
+    return status(f"configured model '{want}' is not loaded; using '{used}'")
+
+
+def msg_no_models(base: str) -> str:
+    return (
+        f"No models available at {base}. Start LM Studio (or `lms server start`) "
+        "and load a model (`lms load <model>`), or fix base_url via "
+        "`lmloop config set base_url <url>`."
+    )
+
+
 def nudge_message() -> dict:
     """User-role nudge with structured metadata (not string-identity for rollback)."""
     return {
