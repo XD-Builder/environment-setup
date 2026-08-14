@@ -13,6 +13,13 @@ _REPEAT_TIMES = 3
 _REPEAT_LINE_TIMES = 6
 _REPEAT_NEAR_TIMES = 4
 _REPEAT_NEAR_WINDOW = 8
+_REPEAT_BLOCK_TIMES = 2
+_REPEAT_BLOCK_MIN_LINES = 5
+_REPEAT_BLOCK_MAX_LINES = 32
+# After a halt, keep reading this many extra chars for a late tool/answer
+# before closing the SSE body. No max_tokens is set, so a thinking loop
+# can otherwise run until the context window fills.
+_HALT_DRAIN_CHARS = 2048
 _THINK_SIMILAR_MIN = 24
 _THINK_SIMILAR_RATIO = 0.72
 
@@ -105,6 +112,8 @@ def _overlap_suffix(so_far: str, piece: str) -> str:
 
     Only real text lines are merged. Bare ``\\n`` / whitespace tokens must still
     append (paragraph breaks), and tiny incremental tokens are untouched.
+    Sliding windows of several lines (not just the last one) are merged too —
+    otherwise a last-N-lines snapshot re-appends the same plan block.
     """
     if "\n" not in piece:
         return piece
@@ -118,6 +127,14 @@ def _overlap_suffix(so_far: str, piece: str) -> str:
         return rest
     if so_far.endswith(first_line):
         return "\n" + rest
+    # Longest newline-terminated prefix of piece that is a suffix of so_far.
+    # Require two complete lines so a one-line coincidence is not merged.
+    idx = piece.rfind("\n", 0, len(piece) - 1)
+    while idx >= 0:
+        prefix = piece[: idx + 1]
+        if prefix.count("\n") >= 2 and so_far.endswith(prefix):
+            return piece[idx + 1 :]
+        idx = piece.rfind("\n", 0, idx)
     return piece
 
 
@@ -131,13 +148,32 @@ def _tail_repeats(text: str, window: int = _REPEAT_WINDOW, times: int = _REPEAT_
     return unit * times == tail
 
 
+def _trailing_nonempty_lines(text: str, limit: int) -> list:
+    """Last ``limit`` non-empty stripped lines, oldest first. Scans from the end."""
+    if limit <= 0 or not text:
+        return []
+    out = []
+    i = len(text)
+    while i > 0 and len(out) < limit:
+        j = text.rfind("\n", 0, i)
+        raw = text[j + 1 : i] if j != -1 else text[:i]
+        i = j
+        s = raw.strip()
+        if s:
+            out.append(s)
+        if j == -1:
+            break
+    out.reverse()
+    return out
+
+
 def _repeated_trailing_lines(text: str, times: int = _REPEAT_LINE_TIMES) -> bool:
     """True when the last ``times`` non-empty lines are identical."""
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    lines = _trailing_nonempty_lines(text, times)
     if len(lines) < times:
         return False
     last = lines[-1]
-    return all(ln == last for ln in lines[-times:])
+    return all(ln == last for ln in lines)
 
 
 def _normalize_think_line(line: str) -> str:
@@ -180,10 +216,9 @@ def _repeated_near_trailing_lines(
     Exact-copy loops are handled by ``_repeated_trailing_lines``. This catches
     local-model retry narration that rewrites the same sentence each line.
     """
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if len(lines) < times:
+    recent = _trailing_nonempty_lines(text, window)
+    if len(recent) < times:
         return False
-    recent = lines[-window:]
     last = recent[-1]
     if sum(1 for ln in recent if _think_line_similar(ln, last)) >= times:
         return True
@@ -199,6 +234,56 @@ def _repeated_near_trailing_lines(
     )
 
 
+def _repeated_trailing_block(
+    text: str,
+    times: int = _REPEAT_BLOCK_TIMES,
+    min_lines: int = _REPEAT_BLOCK_MIN_LINES,
+    max_lines: int = _REPEAT_BLOCK_MAX_LINES,
+) -> bool:
+    """True when the same trailing block of lines repeats ``times`` times.
+
+    Catches plan loops like ``Let me fetch the first 5 now:`` plus a numbered
+    list — heterogeneous blocks that never produce 6 identical consecutive
+    lines and whose period is not ``_REPEAT_WINDOW`` chars.
+    """
+    if times < 2 or min_lines < 1:
+        return False
+    lines = _trailing_nonempty_lines(text, max_lines * times)
+    n = len(lines)
+    if n < min_lines * times:
+        return False
+    limit = min(max_lines, n // times)
+    for size in range(min_lines, limit + 1):
+        block = lines[-size:]
+        if all(lines[n - size * (t + 1) : n - size * t] == block for t in range(times)):
+            return True
+    return False
+
+
+def _looping_text(text: str) -> bool:
+    """True when assembled stream text is stuck repeating."""
+    return (
+        _tail_repeats(text)
+        or _repeated_trailing_lines(text)
+        or _repeated_near_trailing_lines(text)
+        or _repeated_trailing_block(text)
+    )
+
+
+def _dropped_piece_is_loop(assembled: str, piece: str) -> bool:
+    """True when ingest dropped ``piece`` as a snapshot, but it is a repeated block.
+
+    Cumulative servers re-send the text so far (or its tail). Incremental
+    servers may emit the same plan block as one chunk — that also looks like
+    a tail replay, so halt never sees a second copy unless we count it here.
+    """
+    if not piece or not assembled or "\n" not in piece:
+        return False
+    if piece != assembled and not assembled.endswith(piece):
+        return False
+    return _looping_text(assembled + piece)
+
+
 def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
               on_tools=None) -> "tuple[dict, dict]":
     """Parse an OpenAI-style SSE body into (assistant message, usage)."""
@@ -210,6 +295,7 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
     content_halted = False
     reasoning_halted = False
     tools_started = False
+    halt_drain = 0
     while True:
         raw = resp.readline()
         if not raw:
@@ -236,12 +322,19 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
             continue
         delta = choices[0].get("delta") or {}
         piece = delta.get("content")
-        if piece and not content_halted:
-            incr = _ingest_text_delta(content_parts, piece)
-            if incr:
-                if on_delta:
-                    on_delta(incr)
-                if _tail_repeats("".join(content_parts)):
+        if piece:
+            if content_halted:
+                halt_drain += len(piece)
+            else:
+                halt_drain = 0
+                incr = _ingest_text_delta(content_parts, piece)
+                assembled = "".join(content_parts)
+                if incr:
+                    if on_delta:
+                        on_delta(incr)
+                    if _looping_text(assembled):
+                        content_halted = True
+                elif _dropped_piece_is_loop(assembled, piece):
                     content_halted = True
         # Qwen / some LM Studio builds stream chain-of-thought separately.
         reasoning = None
@@ -249,25 +342,35 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
             if delta.get(field):
                 reasoning = delta[field]
                 break
-        if reasoning and not reasoning_halted:
-            incr_r = _ingest_text_delta(reasoning_parts, reasoning)
-            if incr_r:
-                if on_reasoning:
-                    on_reasoning(incr_r)
-                assembled = "".join(reasoning_parts)
-                if (
-                    _tail_repeats(assembled)
-                    or _repeated_trailing_lines(assembled)
-                    or _repeated_near_trailing_lines(assembled)
-                ):
+        if reasoning:
+            if reasoning_halted:
+                halt_drain += len(reasoning)
+            else:
+                incr_r = _ingest_text_delta(reasoning_parts, reasoning)
+                assembled_r = "".join(reasoning_parts)
+                if incr_r:
+                    if on_reasoning:
+                        on_reasoning(incr_r)
+                    if _looping_text(assembled_r):
+                        reasoning_halted = True
+                elif _dropped_piece_is_loop(assembled_r, reasoning):
                     reasoning_halted = True
         tc_deltas = delta.get("tool_calls")
         if tc_deltas:
+            halt_drain = 0
             if not tools_started:
                 tools_started = True
                 if on_tools:
                     on_tools()
             _merge_tool_call_delta(tool_acc, tc_deltas)
+        if (
+            (content_halted or reasoning_halted)
+            and halt_drain >= _HALT_DRAIN_CHARS
+            and not tool_acc
+        ):
+            # Close the body so a thinking/content loop cannot run until
+            # context-full. Late tool_calls after this point are dropped.
+            break
 
     if not saw_data:
         raise StreamError("Empty stream from LM Studio (no SSE data)")

@@ -155,8 +155,13 @@ def get_decisions(limit: int = 20, slug: "str | None" = None) -> "list[dict]":
 
 def new_session_log(slug: "str | None" = None) -> Path:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    path = project_dir(slug) / "sessions" / f"{ts}.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    d = project_dir(slug) / "sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{ts}.jsonl"
+    n = 1
+    while path.exists():
+        path = d / f"{ts}-{n}.jsonl"
+        n += 1
     return path
 
 
@@ -165,6 +170,8 @@ def log_event(session_path: Path, role: str, content: str) -> None:
 
 
 def list_sessions(limit: int = 10, slug: "str | None" = None) -> "list[Path]":
+    if limit <= 0:
+        return []
     return all_sessions(slug=slug)[-limit:]
 
 
@@ -175,11 +182,7 @@ def all_sessions(slug: "str | None" = None) -> "list[Path]":
     return sorted(d.glob("*.jsonl"))
 
 
-def read_session(path: Path, max_chars: int = 20000) -> str:
-    """Render a session transcript as plain text (most recent complete lines within max_chars)."""
-    lines = []
-    for row in _read_jsonl(path):
-        lines.append(f"[{row.get('role', '?')}] {row.get('content', '')}")
+def _trim_to_max_chars(lines: list, max_chars: int) -> str:
     kept: list = []
     total = 0
     for line in reversed(lines):
@@ -189,6 +192,75 @@ def read_session(path: Path, max_chars: int = 20000) -> str:
         kept.append(line)
         total += add
     return "\n".join(reversed(kept))
+
+
+def read_session(path: Path, max_chars: int = 20000) -> str:
+    """Render a session transcript as plain text (most recent complete lines within max_chars)."""
+    lines = [f"[{row.get('role', '?')}] {row.get('content', '')}" for row in _read_jsonl(path)]
+    return _trim_to_max_chars(lines, max_chars)
+
+
+def session_messages(path: Path) -> list:
+    """Rebuild in-memory chat turns from a session log.
+
+    Logs store user/assistant text plus truncated tool/system rows that are not
+    API-shaped, so only non-empty user and assistant contents are restored.
+    """
+    messages = []
+    for row in _read_jsonl(path):
+        role = row.get("role")
+        content = (row.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        messages.append({"role": role, "content": content})
+    return messages
+
+
+def session_last_assistant(path: Path) -> str:
+    """Last non-empty assistant reply in a session log (the previous result)."""
+    for row in reversed(_read_jsonl(path)):
+        content = (row.get("content") or "").strip()
+        if row.get("role") == "assistant" and content:
+            return content
+    return ""
+
+
+def session_interrupted(path: Path) -> bool:
+    rows = _read_jsonl(path)
+    if not rows:
+        return False
+    last = rows[-1]
+    text = (last.get("content") or "").lower()
+    return last.get("role") == "system" and "interrupt" in text
+
+
+def format_sessions_for_retro(paths) -> str:
+    """Plain-text transcripts for the retro skill (includes truncated tool rows)."""
+    parts = []
+    for p in paths:
+        parts.append(f"### Session {p.stem}\n{read_session(p)}")
+    return "\n\n".join(parts)
+
+
+def format_messages_transcript(messages, max_chars: int = 20000) -> str:
+    """Render a live thread for compact/retro — honors /undo.
+
+    Includes truncated tool rows (live payloads can be huge). Skips system
+    messages and empty contents.
+    """
+    lines = []
+    for m in messages or []:
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if not content or role == "system":
+            continue
+        if role == "tool":
+            lines.append(f"[tool] {content[:500]}")
+            continue
+        if role not in ("user", "assistant"):
+            continue
+        lines.append(f"[{role}] {content}")
+    return _trim_to_max_chars(lines, max_chars)
 
 
 # ---------------------------------------------------------------- checkpoints
@@ -211,6 +283,8 @@ def latest_checkpoint(slug: "str | None" = None) -> "Path | None":
 
 
 def list_checkpoints(limit: int = 15, slug: "str | None" = None) -> "list[Path]":
+    if limit <= 0:
+        return []
     return all_checkpoints(slug=slug)[-limit:]
 
 

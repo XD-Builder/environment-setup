@@ -17,7 +17,7 @@ from prompt_toolkit.styles import Style
 from . import agent
 from .config import STATE_ROOT
 from .files_index import list_project_paths
-from .ui import Console, drain_tty_input, format_input_prompt, short_model_name, short_path, strip_ansi
+from .ui import Console, drain_tty_input, format_input_prompt, short_model_name, short_path, strip_ansi, terminal_size
 
 
 class ExitREPL(Exception):
@@ -254,7 +254,11 @@ def build_prompt_session(
         n_prior = st.prior_thinking_count()
         if n_prior:
             parts.append(f"Ctrl-O · {n_prior} prior thinking")
-        return " · ".join(parts) if parts else ""
+        text = " · ".join(parts) if parts else ""
+        cols, _ = terminal_size()
+        if len(text) > cols:
+            text = text[: max(0, cols - 1)] + "…"
+        return text
 
     def message():
         """Decorative prompt only — cwd/model context; never LLM chat content."""

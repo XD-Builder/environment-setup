@@ -10,7 +10,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import agent
+from . import agent, tools
 
 
 def _supports_color(enabled: bool = True) -> bool:
@@ -47,6 +47,17 @@ class Theme:
         if not self._on or not codes:
             return text
         return "".join(codes) + text + self.reset
+
+
+def terminal_size(fallback: tuple = (80, 24)) -> tuple:
+    """Current TTY columns, lines. Never raises."""
+    try:
+        ts = shutil.get_terminal_size(fallback)
+        cols = ts.columns or fallback[0]
+        lines = ts.lines or fallback[1]
+        return max(1, cols), max(1, lines)
+    except OSError:
+        return fallback
 
 
 def format_tokens(n: int) -> str:
@@ -222,7 +233,7 @@ class Console:
         )
         if status and sys.stdin.isatty() and sys.stdout.isatty():
             try:
-                cols = shutil.get_terminal_size().columns
+                cols, _ = terminal_size()
                 min_input = 24
                 max_status = cols - len(left) - min_input
                 if max_status >= 16:
@@ -360,6 +371,7 @@ class Console:
             arg = f" {cmd.arg_hint}" if cmd.arg_hint else ""
             pad = max(1, 22 - len(cmd.name) - len(arg))
             lines.append(f"  {name}{arg}{' ' * pad}{cmd.desc}")
+        lines.append(f"  {t.c('/quit', t.green)}{' ' * 16}exit")
         lines.append("")
         lines.append(f"  {t.c('Tab', t.green)} completes /commands, /skill names, and @files")
         lines.append(
@@ -480,15 +492,13 @@ def format_input_prompt(model: str = "", cwd: "Path | None" = None) -> str:
     return " · ".join(parts) + " › "
 
 
-def ask_yes_no(message: str, prompt_session=None) -> bool:
+def ask_yes_no(message: str) -> bool:
     """Read a y/N answer via plain input().
 
     Do not nest PromptSession.prompt() here during an agent turn: after
     streaming, prompt_toolkit redraws the bottom toolbar and can hide the
     command warning, leaving a bare ``run it? [y/N]`` that looks stuck.
-    ``prompt_session`` is accepted for back-compat but ignored.
     """
-    del prompt_session  # mid-turn confirms must not nest the REPL session
     try:
         sys.stdout.flush()
         sys.stderr.flush()
@@ -497,3 +507,14 @@ def ask_yes_no(message: str, prompt_session=None) -> bool:
     except (EOFError, KeyboardInterrupt):
         print()
         return False
+
+
+def make_confirm_gate(console: "Console"):
+    """y/N gate for destructive / shell-syntax commands (plain input)."""
+    def confirm_gate(command: str) -> bool:
+        label = "potentially destructive"
+        if tools.needs_shell(command) and not tools.is_destructive(command):
+            label = "shell-syntax (pipes/redirections)"
+        console.warn(f"\n⚠ {label} command requested:\n    {command}")
+        return ask_yes_no(console.confirm_prompt(command))
+    return confirm_gate
