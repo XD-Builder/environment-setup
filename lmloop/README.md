@@ -45,7 +45,12 @@ After installing the binary, open a new shell (or re-source `~/.zshrc`).
 lmloop                                  # interactive REPL
 lmloop "why does setup.sh fail on linux?"   # one-shot task
 lmloop until --check 'pytest -q' make tests pass
+lmloop until                            # resume latest open until-run
 lmloop graph company
+lmloop graph                            # resume latest open graph-run
+lmloop retro                            # alias for memory mine
+lmloop memory graph                     # knowledge-graph stats (use_graph)
+lmloop memory reconcile                 # review contradicts clusters (use_graph)
 lmloop skills                           # list skill prompts
 lmloop skills new deploy "roll out staging safely"   # AI draft → review → save
 lmloop skill investigate "vim plug install hangs"
@@ -109,7 +114,7 @@ Inside the REPL:
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
 | `/context` | show memory injected into the system prompt |
-| `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` / `lmloop until` with no name still resume the latest open run) |
+| `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
@@ -125,7 +130,7 @@ Every file in `skills/` (except `system.md`) is also available as `/name` automa
 
 REPL UX (prompt_toolkit + rich):
 
-- **Assistant replies** are rendered as markdown. Live preview grows with the answer (tails only if it would overflow the terminal); the final print wraps at the terminal width, including list items, so line tails are never cropped.
+- **Assistant replies** are rendered as markdown. Live preview grows with the answer up to the terminal and never shrinks; it only tails if it would overflow. When the stream ends, the preview is cleared and the full answer is printed once, wrapped at the terminal width (list items included, never cropped).
 - **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL.
 - **Prompt** shows `cwd · model ›` (decorative only) with a **bottom toolbar** for context fill / session tokens / turns.
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
@@ -236,9 +241,9 @@ zsh completion for `config set` is generated from these keys.
 | `color` | `true` | ANSI chrome; also honors `NO_COLOR=1` |
 | `context_length` | `0` | `0` = auto-detect from LM Studio; else token window override |
 | `context_reserve` | `2048` | Tokens reserved for the model reply on the fill bar |
-| `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` resumes) |
+| `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` with no goal resumes) |
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
-| `graph_max_steps` | `24` | Node entries per `graph` invocation before pause (`/continue` or `lmloop graph` resumes) |
+| `graph_max_steps` | `24` | Skill/until node entries per `graph` invocation before pause (`/continue` or `lmloop graph` with no name resumes). Mine and HITL gate do not count. |
 | `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
 | `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |
 

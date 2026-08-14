@@ -928,9 +928,9 @@ def fetch_url(url: str, timeout_s: int = DEFAULT_WEB_TIMEOUT_S) -> str:
 # ------------------------------------------------------------------ registry
 
 # Module-level registry filled by the latest build_tools() call (for validation).
-# Optional tools (graph_add_edge) are omitted from the registry when disabled so
-# tool_names() matches what the model can call. readonly filtering applies only
-# to returned specs/impls — it does not shrink this registry.
+# Always the full known set, including optional tools. Returned specs/impls omit
+# graph_add_edge when use_graph is off, and omit write tools when readonly.
+# Prompt names use tool_names(cfg=...) so they match what the model can call.
 _TOOL_DEFS: "dict[str, ToolDef]" = {}
 READONLY_OMIT = frozenset({"write_file", "remember", "log_decision", "graph_add_edge"})
 
@@ -952,8 +952,9 @@ def build_tools(cfg: dict, confirm_gate=None,
 
     ``readonly=True`` omits write_file / remember / log_decision /
     graph_add_edge from the returned specs and impls. The module registry
-    keeps those names when they are enabled so ``tool_names()`` and
-    ``dispatch()`` are not poisoned by the last readonly build.
+    always keeps the full set so ``dispatch()`` validation is not poisoned
+    by the last readonly or use_graph=false build. Prompt injection uses
+    ``tool_names(cfg=...)``.
     """
     global _TOOL_DEFS, MAX_OUTPUT
 
@@ -966,11 +967,15 @@ def build_tools(cfg: dict, confirm_gate=None,
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
 
     def _remember(insight: str, type: str = "pattern", key: str = "", confidence: int = 7) -> str:
-        row = memory.add_learning(insight, type=type, key=key, confidence=confidence)
+        row = memory.add_learning(
+            insight, type=type, key=key, confidence=confidence, cfg=cfg,
+        )
         return f"Saved learning [{row['key']}] to {memory.learnings_file()}"
 
     def _decide(decision: str, rationale: str = "", supersedes: str = "") -> str:
-        row = memory.add_decision(decision, rationale=rationale, supersedes=supersedes)
+        row = memory.add_decision(
+            decision, rationale=rationale, supersedes=supersedes, cfg=cfg,
+        )
         return f"Logged decision [{row['id']}] to {memory.decisions_file()}"
 
     def _recall(query: str) -> str:
@@ -1114,7 +1119,6 @@ def build_tools(cfg: dict, confirm_gate=None,
     _TOOL_DEFS = {d.name: d for d in defs}
     if not cfg.get("use_graph"):
         defs = [d for d in defs if d.name != "graph_add_edge"]
-        _TOOL_DEFS = {d.name: d for d in defs}
     if readonly:
         defs = [d for d in defs if d.name not in READONLY_OMIT]
     specs = [d.openai_spec() for d in defs]

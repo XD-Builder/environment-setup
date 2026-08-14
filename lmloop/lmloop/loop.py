@@ -345,7 +345,8 @@ def superseded_until_hint(slug: "str | None" = None) -> "str | None":
     )
 
 
-def _run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> str:
+def run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> str:
+    """Run an until/graph ``--check`` command and return the tool output."""
     destructive, syntax = shell_confirm_flags(cfg)
     return run_shell(
         command,
@@ -404,7 +405,7 @@ def run_until(
             if role == "maker":
                 if makers_this_call >= max_steps:
                     run.append(PAUSE_ROLE, "paused")
-                    echo_status(status_mod.msg_until_paused())
+                    echo_status(status_mod.msg_until_max_steps())
                     return run
                 makers_this_call += 1
                 echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
@@ -420,7 +421,7 @@ def run_until(
                     workspace_root=root, log_label="/until maker",
                 )
                 if result is None:
-                    return run
+                    return _pause_interrupted(run, echo_status)
                 messages, session_log = result
                 run.append(
                     "maker", "next",
@@ -430,7 +431,7 @@ def run_until(
                 continue
             if role == "check":
                 echo_status(status_mod.msg_until_step("check", makers_this_call, max_steps))
-                check_output = _run_check(cfg, run.check_cmd or "", confirm_gate, root)
+                check_output = run_check(cfg, run.check_cmd or "", confirm_gate, root)
                 displayed = clip_check_output(check_output)
                 echo_status(displayed)
                 status = check_status_from_output(check_output)
@@ -452,7 +453,7 @@ def run_until(
                     readonly=True,
                 )
                 if result is None:
-                    return run
+                    return _pause_interrupted(run, echo_status)
                 messages, session_log = result
                 text = last_assistant(messages)
                 status = parse_eval_status(text)

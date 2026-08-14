@@ -1,4 +1,4 @@
-# Design: Graph engineering for lmloop (next implementation)
+# Design: Graph engineering for lmloop
 
 **Status:** shipped (control-flow graphs). Knowledge-graph memory is shipped opt-in in [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md)
 **Date:** 2026-08-14
@@ -6,20 +6,21 @@
 
 This is the **control-flow** spec: how several loops hand off. Knowledge-graph JSONL is [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md). Do not add LangGraph.
 
-An implementing agent should treat the **Ship** / **Do not ship** / **Tests** sections as the spec. Critique notes below are constraints, not optional flavor.
+Phases 1–2 below are **history** (until hardening, then authored graphs). Treat remaining “Do not ship” items as still off-limits for this module.
+
 
 ---
 
 ## Current stack (already shipped)
 
 ```
-prompt / context → harness → loop (until) → graph (this proposal)
+prompt / context → harness → loop (until) → graph (shipped)
 ```
 
 | Layer | Today |
 |-------|--------|
 | Loop | `until`: isolated maker `act()` until `--check` exit 0 or isolated eval `STATUS: pass\|fail\|blocked` |
-| Graph | Skills are one-shot playbooks in one thread. No authored topology. |
+| Graph | Authored sparse topology in `graph.py` (`company` ships) |
 
 Until is a one-node graph with an edge back to itself. A graph is worth it when **one loop is the wrong shape**: specialized roles that must hand off (the “run a company” case). Daily standup is still **OS cron + `lmloop skill …`**, not a graph.
 
@@ -27,7 +28,7 @@ Until is a one-node graph with an edge back to itself. A graph is worth it when 
 
 These were correctness holes in the maker/checker split. **Shipped:**
 
-1. **Eval is read-only.** Isolation is a fresh thread **and** a tool subset: eval omits `write_file` / `remember` / `log_decision`. It may still `run_shell` to verify.
+1. **Eval is read-only.** Isolation is a fresh thread **and** a tool subset: eval omits `write_file` / `remember` / `log_decision` / `graph_add_edge`. It may still `run_shell` to verify.
 2. **Check fail goes to maker.** `--check` nonzero exit skips eval. Eval runs only when there is no check command. Check `DENIED:` is `blocked` → gate (not eval).
 3. **Overlapping runs.** Starting `/until` while another run is open already prints a hint (`superseded_until_hint`). `/continue` in the REPL still resumes `state.until_run` (the run this session started). CLI `lmloop until` with no goal still resumes **latest** open run. Do not auto-resume a week-old paused run from `/continue` after `/new`.
 4. **Checker is prompt-only about STATUS.** Missing token → `blocked` is correct. Do not let the maker’s last line count as `STATUS:`.
@@ -61,7 +62,7 @@ Ship **one new stem**: `graph` / `/graph`. Resume stays `/continue` (and `lmloop
 - LangGraph / ADK / AutoGen GraphFlow
 - `graphs new`, `_graph_author.md`, or a skill-drafting flow for graphs
 - Packaged `daily` (cron + `lmloop skill ceo` is enough)
-- Knowledge-graph JSONL
+- Knowledge-graph JSONL **in this module** (that lives in `memory.py` / DESIGN_LOOP_AND_GRAPH.md)
 - An LLM that can jump to any node
 - In-process scheduler / daemon
 - Parallel workers
@@ -69,7 +70,7 @@ Ship **one new stem**: `graph` / `/graph`. Resume stays `/continue` (and `lmloop
 
 ### Import graph (do not invert)
 
-- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`, `tools`
+- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`
 - `loop.py` must **not** import `graph`
 - `agent.py` / `stream.py` / `display.py` must **not** import `graph`
 - Handlers in `cli.py` / `repl.py`; names in `commands.py`
@@ -109,7 +110,7 @@ edge qa -> ceo    on blocked
 - At least one node; exactly one start node = first `node` line
 - No fully-connected default; unknown `on` token is an error
 - Cycles are allowed (qa → build) but **must be authored**
-- `until_max_steps`-style `graph_max_steps` (default 24 **node** entries this invocation) pauses; `/continue` resumes
+- `until_max_steps`-style `graph_max_steps` (default 24 **skill/until node** entries this invocation; mine and HITL gate do not count) pauses; `/continue` resumes
 
 ### GraphRun
 
@@ -142,19 +143,20 @@ Config keys (README rows): `graph_max_steps` (24), `graph_mine` (true). Reuse co
 
 ---
 
-## Phase 3 (later, not this change)
+## Later (not control-flow graphs)
 
 - User-authored graphs beyond `company` once the parser and runner are boring
 - Hook / heartbeat / cron loop types (OS launches `lmloop skill` or `lmloop graph`; lmloop stays a process that exits)
-- Knowledge-graph JSONL from DESIGN_LOOP_AND_GRAPH.md
 - Parallel workers
 - `graphs new` authoring
 
+Knowledge-graph JSONL is shipped in [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
+
 ---
 
-## Implementation sequence
+## Implementation sequence (historical)
 
-One focused change set per phase. Do not mix phase 1 and 2 unless phase 1 is tiny (read-only eval + check-fail→maker). Prefer **two PRs**: until-hardening, then graph.
+Until-hardening then authored graphs landed together. This section is the original split, kept as history.
 
 ### Phase 1 (until hardening)
 
@@ -170,7 +172,7 @@ One focused change set per phase. Do not mix phase 1 and 2 unless phase 1 is tin
 2. `GraphRun` JSONL; `run_graph` with fakes (`isolated_act` / `run_until` patched where `graph.py` looks them up)
 3. `commands.py` + CLI/REPL: `graph`; extend `/continue`
 4. Packaged `graphs/company.md`
-5. Docs: README table, ARCHITECTURE component map + “Workflow graph” section, DEVELOPMENT module row. Leave this file labeled **proposal** until the code exists; then move behavior into ARCHITECTURE and keep this file as history or delete the “not implemented” banner.
+5. Docs: README table, ARCHITECTURE component map + “Workflow graph” section, DEVELOPMENT module row. Behavior lives in ARCHITECTURE; this file is history.
 
 ---
 

@@ -3,12 +3,17 @@
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
     lmloop until [--check cmd] goal work until a check or evaluator passes; REPL on a TTY
+    lmloop until                    resume latest open until-run
     lmloop graph <name>             run an authored workflow graph; REPL on a TTY
+    lmloop graph                    resume latest open graph-run
     lmloop skills [names]           list skill prompts (names = one per line)
     lmloop skills new <name> [brief]  draft a skill with AI, review, then save
     lmloop skill <name> [task]      start with a skill
+    lmloop retro [N]                alias for memory mine
     lmloop memory [query]           peek curated learnings (read-only)
     lmloop memory mine [N]          mine last N sessions into learnings (writes)
+    lmloop memory graph             knowledge-graph stats (use_graph)
+    lmloop memory reconcile         review contradicts clusters (use_graph)
     lmloop decisions                peek durable project decisions (read-only)
     lmloop history                  list past session transcript files
     lmloop models                   list models on the server
@@ -19,6 +24,9 @@ Project memory commands:
 
     memory            peek curated learnings (read-only)
     memory mine [N]   mine last N sessions into learnings (writes memory)
+    memory graph      knowledge-graph stats (requires use_graph)
+    memory reconcile  review contradicts clusters (requires use_graph)
+    retro [N]         alias for memory mine
     decisions         peek durable project decisions (read-only)
     history           list past session transcript files
 """
@@ -36,21 +44,28 @@ from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
 
 EPILOG = """
 project memory commands:
-  memory [query]   peek curated learnings (read-only)
-  memory mine [N]  mine last N sessions into learnings (writes memory)
-  decisions        peek durable project decisions (read-only)
-  history          list past session transcript files
+  memory [query]     peek curated learnings (read-only)
+  memory mine [N]    mine last N sessions into learnings (writes memory)
+  memory graph       knowledge-graph stats (requires use_graph)
+  memory reconcile   review contradicts clusters (requires use_graph)
+  retro [N]          alias for memory mine
+  decisions          peek durable project decisions (read-only)
+  history            list past session transcript files
 
 examples:
   lmloop
   lmloop "why does setup.sh fail?"
   lmloop until --check 'pytest -q' make tests pass
+  lmloop until
   lmloop graph company
+  lmloop graph
   lmloop skills
   lmloop skills new deploy "roll out staging safely"
   lmloop skill investigate "vim plug install hangs"
   lmloop skill review
+  lmloop retro
   lmloop memory mine 3
+  lmloop memory graph
 """
 
 
@@ -340,7 +355,7 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
         run = loop_mod.latest_open_until_run()
         if run is None:
             console.error("usage: lmloop until [--check <cmd>] <goal>")
-            console.info("  no paused until-run to resume")
+            console.info("  no open until-run to resume")
             return 1
         return _cli_run_until(cfg, console, run)
     goal, check_cmd, err = loop_mod.parse_until_args(words)
@@ -402,7 +417,7 @@ def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
         run = graph_mod.latest_open_graph_run()
         if run is None:
             console.error("usage: lmloop graph <name>")
-            console.info("  no paused graph-run to resume")
+            console.info("  no open graph-run to resume")
             known = ", ".join(graph_mod.list_graphs()) or "(none)"
             console.info(f"  graphs: {known}")
             return 1

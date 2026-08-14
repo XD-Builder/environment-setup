@@ -374,8 +374,8 @@ def _run_named_skill(state: SessionState, name: str, task: str, confirm_gate) ->
     except FileNotFoundError as e:
         state.console.error(str(e))
         return True
-    memory.record_skill_use(name, session=state.session_log)
     _run_turn(state, prompt + ("\n\nTask: " + task if task else ""), confirm_gate)
+    memory.record_skill_use(name, session=state.session_log, cfg=state.cfg)
     return True
 
 
