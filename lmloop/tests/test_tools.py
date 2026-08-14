@@ -397,6 +397,26 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("web_search", impls)
 
+    def test_current_time_registered_and_returns_iso_fields(self):
+        snap = {
+            "utc": "2026-08-14T17:06:00Z",
+            "local": "2026-08-14T13:06:00-04:00",
+            "today": "2026-08-14",
+            "7_days_ago": "2026-08-07",
+            "28_days_ago": "2026-07-17",
+            "90_days_ago": "2026-05-16",
+        }
+        specs, impls = build_tools({"confirm_shell": False})
+        names = {s["function"]["name"] for s in specs}
+        self.assertIn("current_time", names)
+        self.assertIn("current_time", impls)
+        with mock.patch("lmloop.steer.clock_snapshot", return_value=snap):
+            result = dispatch(impls, "current_time", "{}")
+        self.assertNotIn("ERROR", result)
+        self.assertIn("utc: 2026-08-14T17:06:00Z", result)
+        self.assertIn("28_days_ago: 2026-07-17", result)
+        self.assertIn("90_days_ago: 2026-05-16", result)
+
     def test_tool_registry_is_single_source(self):
         specs, impls = build_tools({"confirm_shell": False})
         names = [s["function"]["name"] for s in specs]
@@ -418,6 +438,7 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("run_shell", names)
         self.assertIn("read_file", names)
         self.assertIn("recall_memory", names)
+        self.assertIn("current_time", names)
         self.assertEqual(set(tool_names()), full_names)
         self.assertGreaterEqual(len(full_names), 10)
         self.assertNotIn("graph_add_edge", full_names)

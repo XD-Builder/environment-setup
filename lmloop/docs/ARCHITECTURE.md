@@ -37,6 +37,7 @@ lmloop/
 │   ├── status.py               # status/resume copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
 │   ├── graph.py                # authored workflow graphs: parser + runner
+│   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
 │   │   ├── system.md           # system prompt: how to work, memory, safety
 │   │   ├── _author.md          # meta-prompt for skill drafting (not user-facing)
@@ -49,6 +50,11 @@ lmloop/
 │   │   ├── qa.md               # run tests, verify changes
 │   │   ├── learn.md            # curate and audit learnings
 │   │   └── ceo.md              # strategy / plan review
+│   ├── steer/                  # packaged always-on rules (injected, not /name)
+│   │   ├── time.md             # relative windows; Clock is source of truth
+│   │   ├── memory.md           # current question wins over context recovery
+│   │   ├── skills.md           # when to follow a playbook
+│   │   └── development.md      # model-facing coding bar
 │   └── graphs/                 # packaged workflow graphs
 │       └── company.md          # ceo → build → qa → mine
 ├── tests/                      # stdlib unittest; named test_<area>.py
@@ -161,6 +167,7 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | `remember` | Save a learning to project memory | Writes `~/.lmloop/projects/<slug>/learnings.jsonl`; tool result cites that path |
 | `log_decision` | Record a durable decision | Writes `~/.lmloop/projects/<slug>/decisions.jsonl`; tool result cites that path |
 | `recall_memory` | Keyword-search learnings + decisions | Read-only view. When `use_graph` is on, includes 1-hop graph neighbors. |
+| `current_time` | UTC/local now plus 7/28/90-day lookback dates | No network. OS clock. For relative windows when Clock is stale. |
 | `graph_add_edge` | Record a relationship between existing memory-graph nodes | Only registered when `use_graph` is true. Requires a `note`. |
 
 Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
@@ -182,6 +189,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ├── config.json                     # user settings (base_url, model, max_rounds, …)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
+├── steer/<name>.md                 # user always-on steering (concatenated)
 ├── graphs/<name>.md                # user-authored graphs (override packaged)
 └── projects/<slug>/
     ├── learnings.jsonl             # append-only; dedup at read time
@@ -239,12 +247,15 @@ Opt-in (`use_graph`, default false). When off, no graph files are created and `r
 
 **File:** `agent.py::system_prompt()`
 
-At session start, the system prompt is assembled from:
+At session start (and each isolated `/until` or graph `act()`), the system prompt is assembled from:
 
 1. `skills/system.md` — core instructions (how to work, memory discipline, safety, style)
-2. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old)
+2. Live tool name list
+3. `steer.clock_block()` — current UTC timestamp and calendar date (OS clock, rebuilt every call)
+4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
+5. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old)
 
-This keeps the system prompt small for local models with limited context windows.
+This keeps the system prompt small for local models with limited context windows. The clock is injected so relative windows ("last 4 weeks") do not resolve to a training-cutoff year.
 
 ---
 

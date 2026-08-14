@@ -156,7 +156,7 @@ def isolated_act(
         echo_status = echo
     if echo_error is None:
         echo_error = echo_status
-    messages = [{"role": "system", "content": agent.system_prompt(cfg)}]
+    messages = [{"role": "system", "content": agent.system_prompt(cfg, workspace_root)}]
     session_log = memory.new_session_log()
     if log_label:
         memory.log_event(session_log, "user", log_label)

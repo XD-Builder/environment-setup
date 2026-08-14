@@ -93,6 +93,7 @@ find yourself updating two lists, you have already added debt.
 | JSONL memory | `memory.py` |
 | Goal loop (`until` maker/check/eval) | `loop.py` |
 | Authored workflow graphs | `graph.py` |
+| Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
 | Paths, `DEFAULTS`, project slug | `config.py` |
 | `@path` completion + ref expansion | `files_index.py` |
@@ -115,6 +116,8 @@ belongs in those modules, not as more private helpers in `agent.py`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
 - `loop.py` may import `agent.act`, `memory`, `status`, and `tools.run_shell` for the check command.
 - `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, check helpers), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`.
+- `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
+- `agent.py` and `tools.py` may import `steer`.
 - `loop.py` must not import `graph`.
 - `agent.py` / `stream.py` / `display.py` must not import `loop` or `graph`.
 
@@ -214,8 +217,8 @@ the behavior on the type.
   `SlashCommand`, `SessionState`). Frozen when the row is a constant
   (`CommandMeta`).
 - **Plain functions** for stateless transforms (`format_tokens`,
-  `context_block`, `expand_at_refs`). A class with one method and no state
-  should be a function.
+  `context_block`, `expand_at_refs`, `load_steering`, `clock_block`). A class
+  with one method and no state should be a function.
 - **Factories** only at boundaries (`build_tools`, `make_console`,
   `make_confirm_gate`, `_open_live_display`). They assemble; they do not
   become god objects.
@@ -382,7 +385,8 @@ Docs are part of the diff, not a follow-up.
 | Internals | `docs/ARCHITECTURE.md` | Component map, loop, memory layout, design choices |
 | Next-step proposals | `docs/DESIGN_*.md` | Stay labeled proposal until the code exists |
 | Contributors | `DEVELOPMENT.md` | Module ownership, contracts, conventions |
-| Skills | `lmloop/skills/*.md` | Playbook behavior the model must follow |
+| Skills | `lmloop/skills/*.md` | Opt-in playbooks the model follows when that job is named |
+| Steering | `lmloop/steer/*.md` | Always-on iron laws injected into the system prompt |
 
 Rules:
 
@@ -399,6 +403,9 @@ Rules:
 - Proposal docs (`docs/DESIGN_*.md`) stay labeled as proposals until the
   code exists. Do not describe unimplemented graph/memory features as current
   behavior in `README.md` or `ARCHITECTURE.md`.
+- Skills are opt-in playbooks (`/skill`, `/name`). Steering is always
+  injected and has no slash command. Do not turn a steer file into a skill
+  or the reverse.
 
 If you are unsure whether a sentence is still true, check the code. Stale docs
 are bugs.

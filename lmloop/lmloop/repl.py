@@ -99,7 +99,7 @@ def _refresh_context_limit(state: SessionState) -> None:
 
 
 def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
-    state.messages = _fresh_messages(state.cfg)
+    state.messages = _fresh_messages(state.cfg, state.workspace_root)
     state.session_log = memory.new_session_log()
     state.thinking_history = []
     state.until_run = None
@@ -108,8 +108,8 @@ def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
         state.stats = fresh_stats()
 
 
-def _fresh_messages(cfg: dict) -> list:
-    return [{"role": "system", "content": agent.system_prompt(cfg)}]
+def _fresh_messages(cfg: dict, workspace_root: "Path | None" = None) -> list:
+    return [{"role": "system", "content": agent.system_prompt(cfg, workspace_root)}]
 
 
 def _echo_assistant(console: Console):
@@ -431,7 +431,7 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
         return True
     state.console.hint("Replace the in-memory thread with this summary?")
     if ask_yes_no("Replace thread with summary? [y/N] "):
-        system = _fresh_messages(state.cfg)[0]
+        system = _fresh_messages(state.cfg, state.workspace_root)[0]
         handoff = (
             "Context was compacted. Continue from this handoff summary:\n\n" + summary
         )
@@ -599,7 +599,7 @@ def _cmd_restore(state: SessionState, arg: str) -> bool:
             state.console.error("checkpoint not found — try /checkpoints")
             return True
         body = memory.read_checkpoint_body(path)
-        system = _fresh_messages(state.cfg)[0]
+        system = _fresh_messages(state.cfg, state.workspace_root)[0]
         messages = [
             system,
             {"role": "user", "content": f"Resume from checkpoint ({path.stem}):\n\n{body}"},
@@ -622,7 +622,7 @@ def _cmd_restore(state: SessionState, arg: str) -> bool:
     if not turns:
         state.console.error("session is empty — nothing to restore")
         return True
-    system = _fresh_messages(state.cfg)[0]
+    system = _fresh_messages(state.cfg, state.workspace_root)[0]
     messages = [system] + turns
     if fresh:
         _adopt_thread(state, messages, log=memory.new_session_log(), replay=True)
@@ -947,15 +947,16 @@ def run_repl(cfg: dict, console: "Console | None" = None,
         return 1
 
     slug = project_slug()
+    workspace_root = Path.cwd().resolve()
     state = SessionState(
         cfg=cfg,
         model=model,
-        messages=_fresh_messages(cfg),
+        messages=_fresh_messages(cfg, workspace_root),
         session_log=memory.new_session_log(),
         stats=fresh_stats(),
         console=console,
         context_limit=agent.get_context_limit(model, cfg),
-        workspace_root=Path.cwd().resolve(),
+        workspace_root=workspace_root,
     )
     confirm_gate = make_confirm_gate(console)
 
