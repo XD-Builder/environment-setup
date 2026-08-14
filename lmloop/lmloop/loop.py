@@ -19,6 +19,8 @@ VALID_EVAL_STATUS = frozenset({"pass", "fail", "blocked"})
 META_ROLE = "meta"
 PAUSE_ROLE = "pause"
 DONE_ROLES = frozenset({"mine", "done"})
+CHECK_OUTPUT_LIMIT = 2000
+_CHECK_TRUNCATED = "\n... [truncated, {total} chars total]"
 
 MAKER_PROMPT = """You are working toward this goal until an external checker says it is done.
 You do not get to declare the overall goal complete.
@@ -60,6 +62,14 @@ blocked — you cannot tell, or a human must decide.
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def clip_check_output(output: str, limit: int = CHECK_OUTPUT_LIMIT) -> str:
+    """Bound check-command text for display/handoff. Never silent: mark the cut."""
+    body = output or ""
+    if len(body) <= limit:
+        return body
+    return body[:limit] + _CHECK_TRUNCATED.format(total=len(body))
 
 
 def last_assistant(messages: list) -> str:
@@ -137,7 +147,10 @@ def isolated_act(
     context_reserve: int = 2048, workspace_root: "Path | None" = None,
     log_label: str = "",
 ) -> "tuple[list, Path] | None":
-    """Run act() on a fresh thread. Returns (messages, session_log), or None."""
+    """Run act() on a fresh thread. Returns (messages, session_log), or None.
+
+    KeyboardInterrupt is logged, then re-raised so ``run_until`` can pause.
+    """
     if echo_status is None:
         echo_status = echo
     if echo_error is None:
@@ -168,7 +181,7 @@ def isolated_act(
         echo_status(
             f"\n[interrupted — live conversation unchanged; {status_mod.MSG_RESUME}]"
         )
-        return None
+        raise
     return messages, session_log
 
 
@@ -342,6 +355,13 @@ def _run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> s
     )
 
 
+def _pause_interrupted(run: UntilRun, echo_status) -> UntilRun:
+    if not run.is_paused() and not run.is_done():
+        run.append(PAUSE_ROLE, "paused")
+        echo_status(status_mod.msg_until_paused())
+    return run
+
+
 def run_until(
     cfg: dict, model: str, *,
     run: UntilRun,
@@ -369,85 +389,89 @@ def run_until(
     if last and last.get("role") == "check":
         check_output = last.get("handoff") or ""
 
-    while True:
-        if run.is_done():
-            return run
-        role = run.next_role(do_mine=do_mine)
-        if role is None:
-            run.append("done", "pass")
-            echo_status(status_mod.msg_until_done())
-            return run
-        if role == "maker":
-            if makers_this_call >= max_steps:
-                run.append(PAUSE_ROLE, "paused")
-                echo_status(status_mod.msg_until_paused())
+    try:
+        while True:
+            if run.is_done():
                 return run
-            makers_this_call += 1
-            echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
-            prompt = MAKER_PROMPT.format(
-                goal=run.goal,
-                handoff=run.last_handoff() or "(none)",
-            )
-            result = isolated_act(
-                cfg, model, prompt,
-                confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
-                echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
-                context_limit=context_limit, context_reserve=context_reserve,
-                workspace_root=root, log_label="/until maker",
-            )
-            if result is None:
+            role = run.next_role(do_mine=do_mine)
+            if role is None:
+                run.append("done", "pass")
+                echo_status(status_mod.msg_until_done())
                 return run
-            messages, session_log = result
-            run.append(
-                "maker", "next",
-                handoff=last_assistant(messages),
-                session=str(session_log),
-            )
-            continue
-        if role == "check":
-            echo_status(status_mod.msg_until_step("check", makers_this_call, max_steps))
-            check_output = _run_check(cfg, run.check_cmd or "", confirm_gate, root)
-            echo_status(check_output[:2000] if check_output else "")
-            status = check_status_from_output(check_output)
-            run.append("check", status, handoff=check_output[:2000])
-            continue
-        if role == "eval":
-            echo_status(status_mod.msg_until_step("eval", makers_this_call, max_steps))
-            prompt = EVAL_PROMPT.format(
-                goal=run.goal,
-                handoff=run.last_maker_handoff() or "(none)",
-                check_output=check_output or "(none)",
-            )
-            result = isolated_act(
-                cfg, model, prompt,
-                confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
-                echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
-                context_limit=context_limit, context_reserve=context_reserve,
-                workspace_root=root, log_label="/until eval",
-            )
-            if result is None:
+            if role == "maker":
+                if makers_this_call >= max_steps:
+                    run.append(PAUSE_ROLE, "paused")
+                    echo_status(status_mod.msg_until_paused())
+                    return run
+                makers_this_call += 1
+                echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
+                prompt = MAKER_PROMPT.format(
+                    goal=run.goal,
+                    handoff=run.last_handoff() or "(none)",
+                )
+                result = isolated_act(
+                    cfg, model, prompt,
+                    confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
+                    echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
+                    context_limit=context_limit, context_reserve=context_reserve,
+                    workspace_root=root, log_label="/until maker",
+                )
+                if result is None:
+                    return run
+                messages, session_log = result
+                run.append(
+                    "maker", "next",
+                    handoff=last_assistant(messages),
+                    session=str(session_log),
+                )
+                continue
+            if role == "check":
+                echo_status(status_mod.msg_until_step("check", makers_this_call, max_steps))
+                check_output = _run_check(cfg, run.check_cmd or "", confirm_gate, root)
+                displayed = clip_check_output(check_output)
+                echo_status(displayed)
+                status = check_status_from_output(check_output)
+                run.append("check", status, handoff=displayed)
+                continue
+            if role == "eval":
+                echo_status(status_mod.msg_until_step("eval", makers_this_call, max_steps))
+                prompt = EVAL_PROMPT.format(
+                    goal=run.goal,
+                    handoff=run.last_maker_handoff() or "(none)",
+                    check_output=check_output or "(none)",
+                )
+                result = isolated_act(
+                    cfg, model, prompt,
+                    confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
+                    echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
+                    context_limit=context_limit, context_reserve=context_reserve,
+                    workspace_root=root, log_label="/until eval",
+                )
+                if result is None:
+                    return run
+                messages, session_log = result
+                text = last_assistant(messages)
+                status = parse_eval_status(text)
+                run.append(
+                    "eval", status,
+                    handoff=text,
+                    session=str(session_log),
+                )
+                continue
+            if role == "gate":
+                echo_status(status_mod.msg_until_blocked())
+                ok = False
+                if ask_gate is not None:
+                    ok = bool(ask_gate("Blocked. Continue working toward the goal? [y/N] "))
+                run.append("gate", "yes" if ok else "no")
+                continue
+            if role == "mine":
+                echo_status(status_mod.msg_until_mining())
+                paths = [p for p in run.session_paths() if p.exists()]
+                mine(paths)
+                run.append("mine", "next")
+                echo_status(status_mod.msg_until_done())
                 return run
-            messages, session_log = result
-            text = last_assistant(messages)
-            status = parse_eval_status(text)
-            run.append(
-                "eval", status,
-                handoff=text,
-                session=str(session_log),
-            )
-            continue
-        if role == "gate":
-            echo_status(status_mod.msg_until_blocked())
-            ok = False
-            if ask_gate is not None:
-                ok = bool(ask_gate("Blocked. Continue working toward the goal? [y/N] "))
-            run.append("gate", "yes" if ok else "no")
-            continue
-        if role == "mine":
-            echo_status(status_mod.msg_until_mining())
-            paths = [p for p in run.session_paths() if p.exists()]
-            mine(paths)
-            run.append("mine", "next")
-            echo_status(status_mod.msg_until_done())
-            return run
-        raise RuntimeError(f"unknown until role {role!r}")
+            raise RuntimeError(f"unknown until role {role!r}")
+    except KeyboardInterrupt:
+        return _pause_interrupted(run, echo_status)

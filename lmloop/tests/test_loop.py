@@ -8,6 +8,7 @@ from unittest.mock import patch
 from lmloop.loop import (
     UntilRun,
     check_status_from_output,
+    clip_check_output,
     parse_eval_status,
     parse_until_arg_line,
     parse_until_args,
@@ -86,6 +87,14 @@ class CheckStatusTests(unittest.TestCase):
 
     def test_error_is_fail(self):
         self.assertEqual(check_status_from_output("ERROR: boom"), "fail")
+
+    def test_clip_marks_truncation(self):
+        body = "x" * 2500 + "\n[exit code: 1]"
+        out = clip_check_output(body, limit=2000)
+        self.assertIn("[truncated", out)
+        self.assertIn(str(len(body)), out)
+        self.assertLess(len(out), len(body) + 80)
+        self.assertEqual(check_status_from_output(body), "fail")
 
 
 class UntilRunGraphTests(unittest.TestCase):
@@ -338,6 +347,49 @@ class UntilRunnerTests(unittest.TestCase):
             self.assertEqual(mined["n"], 1)
             self.assertTrue(run.is_done())
             self.assertTrue(any(e.get("role") == "mine" for e in run.events))
+
+    def test_keyboard_interrupt_pauses(self):
+        def boom(cfg, model, messages, **kwargs):
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(Path(d), _cfg(), boom)
+            self.assertTrue(run.is_paused())
+            self.assertFalse(run.is_done())
+
+    def test_gate_interrupt_pauses_not_done(self):
+        def blocked(cfg, model, messages, **kwargs):
+            if "independent checker" in messages[-1]["content"]:
+                messages.append({"role": "assistant", "content": "STATUS: blocked"})
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        def raise_ki(_p):
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(), blocked, ask_gate=raise_ki,
+            )
+            self.assertTrue(run.is_paused())
+            self.assertFalse(run.is_done())
+            self.assertFalse(any(e.get("role") == "gate" for e in run.events))
+
+    def test_check_handoff_truncation_is_marked(self):
+        def fake_act(cfg, model, messages, **kwargs):
+            messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        big = ("x" * 2500) + "\n[exit code: 0]"
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.loop.run_shell", return_value=big):
+                run = self._run(root, _cfg(), fake_act, check_cmd="true")
+            checks = [e for e in run.events if e.get("role") == "check"]
+            self.assertTrue(checks)
+            self.assertIn("[truncated", checks[0]["handoff"])
+            self.assertTrue(run.is_done())
 
 
 if __name__ == "__main__":

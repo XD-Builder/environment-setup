@@ -188,13 +188,10 @@ class _TailMarkdown:
         self.text = text
 
     def __rich_console__(self, console, options):
-        from rich.markdown import Markdown
         from rich.segment import Segment
+        from .markdown_view import render_markdown_lines
         cap = options.height or options.max_height or options.size.height
-        render_options = options.update(height=None)
-        lines = console.render_lines(
-            Markdown(self.text), render_options, pad=False,
-        )
+        lines = render_markdown_lines(console, self.text, options)
         if cap and len(lines) > cap:
             lines = lines[-cap:]
         new_line = Segment.line()
@@ -309,8 +306,8 @@ class _MarkdownLivePrinter:
         if self._live is not None:
             self._refresh()
             self._stop_live()
-        # Real TTY: Live was transient, so reprint with terminal wrap so a
-        # later resize reflows. Tests that inject a console keep the Live frame.
+        # Real TTY: Live was transient, so reprint folded at the current
+        # width (lists included). Tests that inject a console keep the Live frame.
         if body and self._console_override is None:
             from .markdown_view import print_markdown
             print_markdown(body, color=self._color)

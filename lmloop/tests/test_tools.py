@@ -15,6 +15,7 @@ from lmloop.tools import (
     build_tools,
     dispatch,
     fetch_url,
+    format_tool_preview,
     is_destructive,
     list_dir,
     needs_shell,
@@ -166,7 +167,29 @@ class ToolSafetyTests(unittest.TestCase):
                 f.write("line1\nline2\n")
             result = read_file("hello.txt")
             self.assertIn("line1", result)
+            self.assertIn(str(Path(d).resolve() / "hello.txt"), result)
             self.assertNotIn("ERROR", result)
+
+    def test_format_tool_preview_resolves_relative_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            preview = format_tool_preview(
+                "read_file",
+                '{"path": "cybertruck_59k_top_10_findings.md"}',
+                workspace_root=root,
+            )
+            self.assertIn(str(root / "cybertruck_59k_top_10_findings.md"), preview)
+            self.assertNotIn("ERROR", preview)
+
+    def test_remember_cites_learnings_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch("lmloop.memory.project_dir", return_value=root):
+                _, impls = build_tools({"confirm_shell": False}, workspace_root=root)
+                out = impls["remember"]("disambiguate 59K as a price", type="pitfall",
+                                        key="pitfall_ambiguous_numeric_abbreviation")
+            self.assertIn("pitfall_ambiguous_numeric_abbreviation", out)
+            self.assertIn(str(root / "learnings.jsonl"), out)
 
     def test_file_tools_stay_pinned_after_chdir(self):
         with tempfile.TemporaryDirectory() as d:

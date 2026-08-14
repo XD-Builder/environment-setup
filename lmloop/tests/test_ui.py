@@ -78,6 +78,12 @@ class UiTests(unittest.TestCase):
             self.assertTrue(ask_yes_no("  run it? [y/N] "))
             mocked.assert_called_once_with("  run it? [y/N] ")
 
+    def test_ask_until_gate_interrupt_propagates(self):
+        from lmloop.ui import ask_until_gate
+        with patch("builtins.input", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                ask_until_gate("Blocked. Continue? [y/N] ")
+
     def test_terminal_size_never_raises(self):
         from lmloop.ui import terminal_size
         with patch("lmloop.ui.shutil.get_terminal_size", side_effect=OSError):

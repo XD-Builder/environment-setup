@@ -723,7 +723,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     turn_tools += 1
                     fn = call.get("function", {})
                     name, args = fn.get("name", ""), fn.get("arguments", "")
-                    arg_preview = args if len(args) <= 160 else args[:160] + "..."
+                    arg_preview = tools.format_tool_preview(
+                        name, args, workspace_root=workspace_root,
+                    )
                     echo_tool(name, arg_preview, stats)
                     result = tools.dispatch(impls, name, args)
                     if session_log:

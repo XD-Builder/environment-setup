@@ -54,6 +54,10 @@ def msg_until_done() -> str:
     return status("until: goal met")
 
 
+def msg_until_continue() -> str:
+    return status("until done — type to continue")
+
+
 def msg_context_pressure(pct: int) -> str:
     return status(
         f"context ~{pct}% full — /compact or /save recommended before continuing"
