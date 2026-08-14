@@ -34,6 +34,26 @@ def msg_hit_max_rounds() -> str:
     return status(f"hit max_rounds — stopping. {MSG_RESUME}")
 
 
+def msg_until_step(role: str, step: int, max_steps: int) -> str:
+    return status(f"until {role} · cycle {step}/{max_steps}")
+
+
+def msg_until_paused() -> str:
+    return status(f"until hit until_max_steps — stopping. {MSG_RESUME}")
+
+
+def msg_until_blocked() -> str:
+    return status("until checker is blocked — need a yes/no")
+
+
+def msg_until_mining() -> str:
+    return status("until passed — mining learnings")
+
+
+def msg_until_done() -> str:
+    return status("until: goal met")
+
+
 def msg_context_pressure(pct: int) -> str:
     return status(
         f"context ~{pct}% full — /compact or /save recommended before continuing"

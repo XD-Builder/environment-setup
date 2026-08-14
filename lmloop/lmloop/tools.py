@@ -902,8 +902,8 @@ def fetch_url(url: str, timeout_s: int = DEFAULT_WEB_TIMEOUT_S) -> str:
 _TOOL_DEFS: "dict[str, ToolDef]" = {}
 
 
-def _shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
-    """Return (confirm_destructive, confirm_shell_syntax)."""
+def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
+    """Return (confirm_destructive, confirm_shell_syntax). confirm_shell is master."""
     if cfg.get("confirm_shell") is False:
         return False, False
     return (
@@ -921,7 +921,7 @@ def build_tools(cfg: dict, confirm_gate=None,
     MAX_OUTPUT = max(1000, max_out)
     shell_timeout = int(cfg.get("shell_timeout_s") or DEFAULT_SHELL_TIMEOUT_S)
     web_timeout = int(cfg.get("web_timeout_s") or DEFAULT_WEB_TIMEOUT_S)
-    confirm_destructive, confirm_shell_syntax = _shell_confirm_flags(cfg)
+    confirm_destructive, confirm_shell_syntax = shell_confirm_flags(cfg)
     gate = confirm_gate  # may be None when confirms disabled
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
 

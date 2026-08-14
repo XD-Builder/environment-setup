@@ -5,11 +5,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from lmloop import agent
 from lmloop.cli import main
 from lmloop.repl import _build_slash_commands
+from lmloop.ui import Console
 
 
 class SkillsDiscoveryTests(unittest.TestCase):
@@ -37,6 +38,8 @@ class SkillsDiscoveryTests(unittest.TestCase):
     def test_validate_skill_name(self):
         self.assertIsNone(agent.validate_skill_name("deploy"))
         self.assertIsNone(agent.validate_skill_name("compact"))  # skill override ok
+        self.assertIsNone(agent.validate_skill_name("retro"))
+        self.assertIsNotNone(agent.validate_skill_name("until"))
         self.assertIsNotNone(agent.validate_skill_name("New"))
         self.assertIsNotNone(agent.validate_skill_name("new"))
         self.assertIsNotNone(agent.validate_skill_name("_hidden"))
@@ -203,10 +206,17 @@ class AutoSlashTests(unittest.TestCase):
         self.assertIn("/review", names)
         self.assertIn("/skills", names)
         self.assertIn("/compact", names)
+        self.assertIn("/until", names)
         self.assertIn("/retro", names)
-        # compact/retro stay fixed (special handlers), not duplicated
         self.assertEqual(sum(1 for c in cmds if c.name == "/compact"), 1)
         self.assertEqual(sum(1 for c in cmds if c.name == "/retro"), 1)
+        retro = next(c for c in cmds if c.name == "/retro")
+        self.assertTrue(retro.hidden)
+        help_text = Console(color=False).help_text(cmds)
+        self.assertIn("/until", help_text)
+        self.assertIn("/memory", help_text)
+        self.assertIn("mine", help_text)
+        self.assertNotIn("/retro", help_text)
 
 
 class AtRefTurnTests(unittest.TestCase):
@@ -460,14 +470,15 @@ class RetroIsolationTests(unittest.TestCase):
                 captured["log"] = kwargs.get("session_log")
                 return messages
 
-            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+            with patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
                  patch("lmloop.repl.agent.get_context_limit", return_value=0), \
                  patch("lmloop.repl.agent.load_skill", return_value="# Skill: retro"), \
                  patch("lmloop.memory.project_dir", return_value=root), \
-                 redirect_stdout(io.StringIO()):
+                 redirect_stdout(io.StringIO()) as buf:
                 _cmd_retro(state, "", lambda _: False)
 
+            self.assertIn("memory mine", buf.getvalue())
             self.assertEqual(state.messages, original)
             self.assertEqual(state.session_log, log)
             self.assertIn("retro", captured["messages"][-1]["content"].lower())
@@ -504,8 +515,8 @@ class CompactSaveUndoTests(unittest.TestCase):
             def boom(*_a, **_k):
                 raise KeyboardInterrupt()
 
-            with patch("lmloop.repl.agent.act", side_effect=boom), \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+            with patch("lmloop.loop.agent.act", side_effect=boom), \
+                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.memory.save_checkpoint") as save, \
                  redirect_stdout(io.StringIO()):
@@ -534,8 +545,8 @@ class CompactSaveUndoTests(unittest.TestCase):
                 messages.append({"role": "assistant", "content": "checkpoint body"})
                 return messages
 
-            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+            with patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  redirect_stdout(io.StringIO()):
                 _cmd_save(state, "title", lambda _: False)
@@ -563,8 +574,8 @@ class CompactSaveUndoTests(unittest.TestCase):
                 messages.append({"role": "assistant", "content": "## Goal\nDone."})
                 return messages
 
-            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+            with patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
                  patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.repl.ask_yes_no", return_value=False), \
@@ -590,8 +601,8 @@ class CompactSaveUndoTests(unittest.TestCase):
                 messages.append({"role": "assistant", "content": "## Goal\nDone."})
                 return messages
 
-            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+            with patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
                  patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.repl.ask_yes_no", return_value=True), \
@@ -630,8 +641,8 @@ class CompactSaveUndoTests(unittest.TestCase):
                 messages.append({"role": "assistant", "content": "summary"})
                 return messages
 
-            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+            with patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
                  patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.repl.ask_yes_no", return_value=False), \
@@ -655,6 +666,129 @@ class CompactSaveUndoTests(unittest.TestCase):
                  redirect_stdout(io.StringIO()):
                 _cmd_new(state, "")
             self.assertEqual(state.thinking_history, [])
+
+
+class MemoryMineAndUntilTests(unittest.TestCase):
+    def _state(self, root: Path, log: Path, messages=None):
+        from lmloop.repl import SessionState
+        from lmloop.ui import Console, fresh_stats
+        return SessionState(
+            cfg={},
+            model="m",
+            messages=messages or [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "do work"},
+                {"role": "assistant", "content": "done"},
+            ],
+            session_log=log,
+            stats=fresh_stats(),
+            console=Console(color=False),
+        )
+
+    def test_memory_mine_cli_uses_count(self):
+        with patch("lmloop.cli.cmd_memory_mine", return_value=0) as mine:
+            code = main(["memory", "mine", "5"])
+        self.assertEqual(code, 0)
+        self.assertEqual(mine.call_args[0][1], 5)
+
+    def test_retro_cli_alias_hints_and_mines(self):
+        with patch("lmloop.cli.cmd_memory_mine", return_value=0) as mine:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = main(["retro"])
+        self.assertEqual(code, 0)
+        self.assertEqual(mine.call_args[0][1], 3)
+        self.assertIn("memory mine", buf.getvalue())
+
+    def test_memory_mine_n_uses_prior_files(self):
+        from lmloop.repl import _cmd_memory_mine
+        import json
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sessions = root / "sessions"
+            sessions.mkdir()
+            prior1 = sessions / "20250814-010000.jsonl"
+            prior2 = sessions / "20250814-020000.jsonl"
+            current = sessions / "20250814-030000.jsonl"
+            for p, text in ((prior1, "one"), (prior2, "two")):
+                p.write_text(json.dumps({"role": "user", "content": text}) + "\n")
+            current.write_text("")
+            state = self._state(root, current)
+            with patch("lmloop.repl.mine_sessions") as mine, \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_memory_mine(state, "2", lambda _: False)
+            mine.assert_called_once()
+            paths = mine.call_args[0][2]
+            self.assertEqual([p.resolve() for p in paths], [prior1.resolve(), prior2.resolve()])
+
+    def test_until_cli_runs_goal(self):
+        fake = Mock()
+        fake.path = Path("/tmp/until.jsonl")
+        fake.is_paused.return_value = False
+        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+             patch("lmloop.cli.loop_mod.UntilRun.create", return_value=fake) as create, \
+             patch("lmloop.cli.loop_mod.run_until") as run, \
+             patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
+             redirect_stdout(io.StringIO()):
+            code = main(["until", "--check", "true", "green"])
+        self.assertEqual(code, 0)
+        create.assert_called_once_with("green", check_cmd="true")
+        run.assert_called_once()
+
+    def test_until_empty_resumes_open_run(self):
+        fake = Mock()
+        fake.path = Path("/tmp/until.jsonl")
+        fake.is_paused.return_value = True
+        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+             patch("lmloop.cli.loop_mod.latest_open_until_run", return_value=fake), \
+             patch("lmloop.cli.loop_mod.run_until") as run, \
+             patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
+             redirect_stdout(io.StringIO()):
+            code = main(["until"])
+        self.assertEqual(code, 0)
+        run.assert_called_once()
+
+    def test_until_empty_errors_without_open_run(self):
+        err = io.StringIO()
+        with patch("lmloop.cli.loop_mod.latest_open_until_run", return_value=None), \
+             redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["until"])
+        self.assertEqual(code, 1)
+        self.assertIn("usage", err.getvalue())
+
+    def test_continue_resumes_paused_until(self):
+        from lmloop.loop import UntilRun
+        from lmloop.repl import _cmd_continue
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root):
+                run = UntilRun.create("ship it")
+                run.append("pause", "paused")
+            log = root / "s.jsonl"
+            log.write_text("")
+            state = self._state(root, log)
+            state.until_run = run.path
+            with patch("lmloop.repl._advance_until") as adv, \
+                 redirect_stdout(io.StringIO()):
+                _cmd_continue(state, "", lambda _: False)
+            adv.assert_called_once()
+            self.assertEqual(adv.call_args[0][1].path, run.path)
+
+    def test_continue_without_until_runs_turn(self):
+        from lmloop.repl import _cmd_continue
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            log.write_text("")
+            state = self._state(Path(d), log)
+            with patch("lmloop.repl._run_turn") as turn, \
+                 redirect_stdout(io.StringIO()):
+                _cmd_continue(state, "", lambda _: False)
+            turn.assert_called_once()
 
 
 class RegistryTests(unittest.TestCase):

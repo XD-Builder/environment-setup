@@ -390,6 +390,8 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("continue", RESERVED_SKILL_NAMES)
         # Packaged skills may still be overridden by users.
         self.assertNotIn("compact", RESERVED_SKILL_NAMES)
+        self.assertNotIn("retro", RESERVED_SKILL_NAMES)
+        self.assertIn("until", RESERVED_SKILL_NAMES)
 
     def test_fetch_url_http_error(self):
         err = urllib.error.HTTPError(

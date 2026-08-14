@@ -44,6 +44,7 @@ After installing the binary, open a new shell (or re-source `~/.zshrc`).
 ```bash
 lmloop                                  # interactive REPL
 lmloop "why does setup.sh fail on linux?"   # one-shot task
+lmloop until --check 'pytest -q' make tests pass
 lmloop skills                           # list skill prompts
 lmloop skills new deploy "roll out staging safely"   # AI draft → review → save
 lmloop skill investigate "vim plug install hangs"
@@ -73,15 +74,15 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 
 | Command | What it does | Read / write |
 |---------|--------------|--------------|
-| `lmloop memory [query]` | Peek **learnings** — curated tips (patterns, pitfalls, prefs) in `learnings.jsonl`. Deduped by key; confidence decays over time. | Read |
-| `lmloop decisions` | Peek **decisions** — durable choices with rationale in `decisions.jsonl` (can be superseded). | Read |
-| `lmloop history` | List **session transcript** files under `sessions/*.jsonl` (raw logs, not summarized). | Read |
-| `lmloop retro [N]` | Mine the last N **session files** (default 3) and **write new learnings**. CLI never mines “this conversation.” | Write |
+| `lmloop memory [query]` | Peek **learnings** — curated tips (patterns, pitfalls, prefs) in `learnings.jsonl`. Deduped by key; confidence decays over time. | Peek |
+| `lmloop decisions` | Peek **decisions** — durable choices with rationale in `decisions.jsonl` (can be superseded). | Peek |
+| `lmloop history` | List **session transcript** files under `sessions/*.jsonl` (raw logs, not summarized). | Peek |
+| `lmloop memory mine [N]` | Mine the last N **session files** (default 3) and **write new learnings**. CLI never mines “this conversation.” `/retro` and `lmloop retro` are aliases that print `[memory mine]` then do the same work. | Write |
 
 In the REPL:
 
 - **Peek:** `/memory`, `/decisions`, `/history`, `/context` (what is injected into the system prompt). Checkpoints newer than 14 days are auto-injected.
-- **Write:** `/retro` with no arg mines **this session**; `/retro n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
+- **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
 
@@ -105,10 +106,10 @@ Inside the REPL:
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
 | `/context` | show memory injected into the system prompt |
-| `/continue [message]` | resume after max_rounds or an interruption |
+| `/continue [message]` | resume after max_rounds, an interruption, or a paused `/until` |
+| `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes |
 | `/save [title]` | checkpoint session for later restore |
-| `/retro [n]` | extract learnings from this session (or last n prior files) |
-| `/memory [query]` | show project learnings |
+| `/memory [query \| mine [n]]` | peek learnings, or mine this session (or last n prior files) |
 | `/model <name>` | switch model, or list models with no argument |
 | `/stats` | show token usage and session activity |
 | `/new` | reset conversation (memory context re-injected) |
@@ -116,7 +117,7 @@ Inside the REPL:
 | `/help` | show available commands |
 | `/quit` | exit (`/exit` and `/q` also work) |
 
-Every file in `skills/` (except `system.md`) is also available as `/name` automatically. Packaged skill names `compact` and `retro` can be overridden by a user skill with the same name.
+Every file in `skills/` (except `system.md`) is also available as `/name` automatically. Packaged skill names `compact` and `retro` can be overridden by a user skill with the same name. `/retro` is a hidden alias for `/memory mine` (the `retro.md` playbook is what mining loads).
 
 REPL UX (prompt_toolkit + rich):
 
@@ -151,7 +152,8 @@ REPL UX (prompt_toolkit + rich):
  ├── learnings.jsonl     append-only; latest-wins dedup; confidence decay
  ├── decisions.jsonl     event-sourced; supersede retires old decisions
  ├── sessions/*.jsonl    full transcript history
- └── checkpoints/*.md    resumable session handoffs
+ ├── checkpoints/*.md    resumable session handoffs
+ └── until/<ts>.jsonl    goal-loop run log (maker / check / eval)
 ```
 
 Design choices, and why:
@@ -168,7 +170,7 @@ Design choices, and why:
   `recall_memory`. Local models have small contexts — the budget is respected.
 - **Self-learning is curated, not automatic.** The model saves learnings through
   an explicit `remember` tool with a quality bar (see `skills/retro.md`), and
-  `lmloop retro` mines past transcripts. Noisy memory is worse than none.
+  `lmloop memory mine` mines past transcripts. Noisy memory is worse than none.
 - **Safety gates in code, not just prompt.** Destructive shell patterns
   (rm -rf, sudo, force-push, DROP TABLE…) require a y/n from you regardless of
   what the model wants. Pipe/redirection confirms are off by default (set
@@ -217,6 +219,8 @@ zsh completion for `config set` is generated from these keys.
 | `color` | `true` | ANSI chrome; also honors `NO_COLOR=1` |
 | `context_length` | `0` | `0` = auto-detect from LM Studio; else token window override |
 | `context_reserve` | `2048` | Tokens reserved for the model reply on the fill bar |
+| `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` resumes) |
+| `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
 
 ## Troubleshooting
 
