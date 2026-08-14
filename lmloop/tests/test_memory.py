@@ -7,11 +7,18 @@ from pathlib import Path
 
 from lmloop.memory import (
     all_sessions,
+    format_messages_transcript,
+    format_sessions_for_retro,
     list_checkpoints,
+    list_sessions,
+    new_session_log,
     read_session,
     resolve_checkpoint,
     resolve_session,
     save_checkpoint,
+    session_interrupted,
+    session_last_assistant,
+    session_messages,
     session_preview,
 )
 
@@ -68,6 +75,97 @@ class MemoryTests(unittest.TestCase):
                 for row in rows:
                     f.write(json.dumps(row) + "\n")
             self.assertIn("fix the bug", session_preview(path))
+
+
+class SessionRestoreTests(unittest.TestCase):
+    def _write(self, path: Path, rows: list) -> None:
+        with path.open("w") as f:
+            for row in rows:
+                f.write(json.dumps(row) + "\n")
+
+    def test_session_messages_skips_tool_and_system(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "s.jsonl"
+            self._write(path, [
+                {"role": "user", "content": "find lmloop"},
+                {"role": "assistant", "content": "searching"},
+                {"role": "tool", "content": "run_shell(find /) -> /opt/lmloop"},
+                {"role": "system", "content": "interrupted"},
+                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "  last result  "},
+            ])
+            msgs = session_messages(path)
+            self.assertEqual(
+                [(m["role"], m["content"]) for m in msgs],
+                [
+                    ("user", "find lmloop"),
+                    ("assistant", "searching"),
+                    ("assistant", "last result"),
+                ],
+            )
+            self.assertEqual(session_last_assistant(path), "last result")
+            self.assertFalse(session_interrupted(path))
+
+    def test_session_interrupted_reads_last_system_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "s.jsonl"
+            self._write(path, [
+                {"role": "user", "content": "go"},
+                {"role": "assistant", "content": "working"},
+                {"role": "system", "content": "interrupted"},
+            ])
+            self.assertTrue(session_interrupted(path))
+
+    def test_format_sessions_for_retro(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = Path(d) / "a.jsonl"
+            b = Path(d) / "b.jsonl"
+            self._write(a, [{"role": "user", "content": "one"}])
+            self._write(b, [{"role": "user", "content": "two"}])
+            text = format_sessions_for_retro([a, b])
+            self.assertIn("### Session a", text)
+            self.assertIn("[user] one", text)
+            self.assertIn("[user] two", text)
+
+
+    def test_format_messages_transcript_skips_system_and_empty(self):
+        text = format_messages_transcript([
+            {"role": "system", "content": "secret"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": ""},
+            {"role": "tool", "content": "run_shell(ls) -> " + ("x" * 800)},
+            {"role": "assistant", "content": "world"},
+        ])
+        self.assertIn("[user] hello", text)
+        self.assertIn("[assistant] world", text)
+        self.assertNotIn("secret", text)
+        self.assertIn("[tool] run_shell(ls)", text)
+        self.assertLess(len([ln for ln in text.splitlines() if ln.startswith("[tool]")][0]), 520)
+
+    def test_new_session_log_avoids_same_second_collision(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.memory.project_dir", return_value=root):
+                a = new_session_log()
+                a.write_text("{}\n")
+                b = new_session_log()
+            self.assertNotEqual(a, b)
+            self.assertEqual(a.parent, b.parent)
+
+    def test_list_sessions_zero_limit_is_empty(self):
+        from unittest.mock import patch
+        from lmloop.memory import list_sessions
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sessions = root / "sessions"
+            sessions.mkdir()
+            (sessions / "a.jsonl").write_text("{}\n")
+            with patch("lmloop.memory.project_dir", return_value=root):
+                self.assertEqual(list_sessions(limit=0), [])
+                self.assertEqual(len(list_sessions(limit=1)), 1)
 
 
 if __name__ == "__main__":

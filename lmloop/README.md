@@ -78,7 +78,7 @@ These four are easy to mix up:
 | `lmloop history` | List **session transcript** files under `sessions/*.jsonl` (raw logs, not summarized). | Read |
 | `lmloop retro [N]` | Run the `retro` skill over the last N sessions and **write new learnings** into project memory. | Write |
 
-In the REPL, `/memory` and `/decisions` are the same peeks; `/retro` mines *this* session; `/history` + `/restore` resume a prior transcript.
+In the REPL, `/memory` and `/decisions` are the same peeks; `/retro [n]` mines this session (or the last n) in a side thread so the live conversation is unchanged; `/history` + `/restore` reload a prior session and show its last result.
 
 Inside the REPL:
 
@@ -90,17 +90,17 @@ Inside the REPL:
 | `/investigate [symptom]` | root-cause debugging |
 | `/learn [query]` | curate and audit project learnings |
 | `/qa [scope]` | run tests and verify changes end-to-end |
-| `/compact [focus]` | compress long thread into a handoff summary |
+| `/compact [focus]` | compress the live thread (side session); optional replace with a handoff |
 | `/undo` | drop last user turn from in-memory thread |
 | `/skill <name> [task]` | run any prompt in `skills/` |
 | `/history [n]` | list recent session logs (global `#` matches `/restore`) |
 | `/checkpoints [n]` | list saved checkpoints (global `#` matches `/restore`) |
-| `/restore checkpoint\|session <query> [fresh]` | inject checkpoint or prior transcript; `fresh` starts a new chat first |
+| `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (show last result, no new model turn) or a checkpoint handoff; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
 | `/context` | show learnings/decisions/checkpoint injected into the system prompt |
 | `/continue [message]` | resume after max_rounds or an interruption |
 | `/save [title]` | checkpoint the session for a future session to resume |
-| `/retro` | extract learnings from this session immediately |
+| `/retro [n]` | extract learnings from this session (or last n) without changing the live thread |
 | `/memory [query]` | peek at project learnings |
 | `/model <name>` | switch model mid-session (no arg lists models) |
 | `/stats` | token usage, turns, rounds, context breakdown |
@@ -113,7 +113,7 @@ Every file in `skills/` (except `system.md`) is also available as `/name` automa
 
 REPL UX (prompt_toolkit + rich):
 
-- **Assistant replies** are rendered as markdown in the terminal (headings, lists, code fences).
+- **Assistant replies** are rendered as markdown. Live preview grows with the answer (tails only if it would overflow the terminal); the final TTY print uses terminal wrap so lines reflow when you resize the window.
 - **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL.
 - **Prompt** shows `cwd · model ›` (decorative only) with a **bottom toolbar** for context fill / session tokens / turns.
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
@@ -121,7 +121,7 @@ REPL UX (prompt_toolkit + rich):
 - **Ctrl-C** dismisses an open `/` or `@` completion menu first; with no menu, once shows “Ctrl-C again to exit”, twice exits. Ctrl-D exits immediately.
 - **Post-turn footer** shows a context bar, token breakdown, rounds, and tools.
 - **Colors** for banners/tools when stdout is a TTY; disable with `NO_COLOR=1` or `lmloop config set color false`.
-- **Streaming** is on by default (SSE). Tokens appear live as rich markdown (`rich.Live`); a spinner shows until the first token. Disable with `lmloop config set stream false`.
+- **Streaming** is on by default (SSE). Tokens appear live as markdown (`rich.Live`); a spinner shows until the first token. Disable with `lmloop config set stream false`.
 - **Context window** is auto-detected from LM Studio (`/api/v0/models`); override with `lmloop config set context_length 8192`.
 - **Completion while typing** for `/` and `@` (no Tab required). Tab / Ctrl-Space still work.
 - Prompt history is in `~/.lmloop/history` (↑/↓; Ctrl-R incremental search).

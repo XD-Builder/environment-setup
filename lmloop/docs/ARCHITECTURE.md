@@ -71,7 +71,7 @@ Key properties:
 - **No SDK dependency.** Plain `urllib` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible.
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
-- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
+- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer and only tails if it would overflow the terminal; `finish()` reprints the full answer with terminal wrap. A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
 
 ### Server management (`ensure_server`)
 
@@ -146,8 +146,11 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ### Sessions (`sessions/*.jsonl`)
 
 - Full transcript of role/content pairs. Created per REPL session.
-- Used by `/retro` to mine learnings and by `/restore` to resume prior conversations.
-- `read_session()` renders the most recent lines up to `max_chars` (default 20,000).
+- Used by `/retro` to mine learnings and by `/restore` to reload a prior conversation.
+- `read_session()` renders log files (including truncated tool rows) up to `max_chars`.
+- `format_messages_transcript()` renders the live thread (honors `/undo`) for `/compact` and this-session `/retro`. Tool rows are included truncated (live payloads can be huge); system messages are omitted.
+- `session_messages()` rebuilds user/assistant turns for `/restore`. Tool/system rows are transcript-only (truncated, not API-shaped) and are omitted. Restore loads those turns into the in-memory thread and prints the last assistant reply — it does not start a new model turn.
+- `/compact`, `/retro`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log).
 
 ### Checkpoints (`checkpoints/*.md`)
 

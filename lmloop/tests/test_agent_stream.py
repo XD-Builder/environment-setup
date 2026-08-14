@@ -148,8 +148,8 @@ class StreamPrinterTests(unittest.TestCase):
             echoed, ["Let me dive deeper into the source code."],
         )
 
-    def test_markdown_live_uses_ellipsis_overflow(self):
-        """visible overflow stacks frames on tall answers — must use ellipsis."""
+    def test_markdown_live_crops_tail_not_ellipsis(self):
+        """ellipsis keeps the start of a tall answer — new tokens vanish."""
         if not agent._load_rich():
             self.skipTest("rich not installed")
         p = agent._MarkdownLivePrinter()
@@ -166,8 +166,54 @@ class StreamPrinterTests(unittest.TestCase):
             p.feed("hello")
             self.assertTrue(Live.called)
             kwargs = Live.call_args.kwargs
-            self.assertEqual(kwargs.get("vertical_overflow"), "ellipsis")
+            self.assertEqual(kwargs.get("vertical_overflow"), "crop")
+            self.assertTrue(kwargs.get("transient"))
             self.assertTrue(make_console.call_args.kwargs.get("force_terminal"))
+            self.assertIn("height", make_console.call_args.kwargs)
+            updated = fake_live.update.call_args.args[0]
+            self.assertIsInstance(updated, agent._TailMarkdown)
+
+    def test_tail_markdown_keeps_newest_lines(self):
+        """Live preview must show the end of a long answer, not the opening."""
+        if not agent._load_rich():
+            self.skipTest("rich not installed")
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(
+            file=buf, width=40, height=5, force_terminal=True,
+            soft_wrap=False, highlight=False, color_system=None,
+        )
+        text = "# First heading\n\n" + ("filler paragraph\n\n" * 20) + "# Last heading\n"
+        console.print(agent._TailMarkdown(text))
+        out = buf.getvalue()
+        self.assertIn("Last heading", out)
+        self.assertNotIn("First heading", out)
+
+    def test_tail_markdown_keeps_opening_when_it_fits(self):
+        """Short answers must grow in Live, not sit in a 16-line tail window."""
+        if not agent._load_rich():
+            self.skipTest("rich not installed")
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(
+            file=buf, width=40, height=20, force_terminal=True,
+            soft_wrap=False, highlight=False, color_system=None,
+        )
+        console.print(agent._TailMarkdown("# First heading\n\nA short paragraph.\n"))
+        out = buf.getvalue()
+        self.assertIn("First heading", out)
+        self.assertIn("short paragraph", out)
+
+    def test_live_preview_height_tracks_terminal(self):
+        from lmloop.display import _live_preview_height
+        with mock.patch("lmloop.display.terminal_size", return_value=(80, 40)):
+            self.assertEqual(_live_preview_height(), 38)
+        with mock.patch("lmloop.display.terminal_size", return_value=(80, 5)):
+            self.assertEqual(_live_preview_height(), 4)
 
     def test_markdown_live_keeps_wrapped_sentences(self):
         """Live + word-wrap must not crop the next sentence at terminal width."""
@@ -197,7 +243,7 @@ class StreamPrinterTests(unittest.TestCase):
         t = agent._ThinkingLive(color=False)
         ts = type("TS", (), {"columns": 20, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
-             mock.patch("lmloop.display.shutil.get_terminal_size", return_value=ts):
+             mock.patch("lmloop.display.terminal_size", return_value=(ts.columns, ts.lines)):
             out.isatty.return_value = True
             t._write_line("x" * 45)
         # "  ▎" prefix + 45 = 48 cells → 3 rows at width 20
@@ -208,7 +254,7 @@ class StreamPrinterTests(unittest.TestCase):
         writes = []
         ts = type("TS", (), {"columns": 80, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
-             mock.patch("lmloop.display.shutil.get_terminal_size", return_value=ts):
+             mock.patch("lmloop.display.terminal_size", return_value=(ts.columns, ts.lines)):
             out.write.side_effect = lambda s: writes.append(s)
             out.isatty.return_value = True
             for piece in feeds:
@@ -239,6 +285,28 @@ class StreamPrinterTests(unittest.TestCase):
         ])
         self.assertEqual(text.count("authority sites"), 1)
 
+    def test_thinking_skips_repeated_plan_block(self):
+        block = (
+            "Let me start with the first batch:\n"
+            "1. Reuters Business\n"
+            "2. TechCrunch AI section\n"
+            "3. Google 2025 Research Breakthroughs\n"
+            "4. CNN Business\n"
+            "5. Reuters AI News\n"
+            "Then the rest:\n"
+            "6. Edapt Major AI Breakthroughs\n"
+            "8. Medium AI Reality Check\n"
+            "9. AP News Business\n"
+            "Let me fetch the first 5 now:\n"
+        )
+        text, t = self._thinking_writes([block, block, block])
+        self.assertEqual(text.count("Let me fetch the first 5 now:"), 1)
+        self.assertEqual(t.text().count("Let me fetch the first 5 now:"), 3)
+
+    def test_thinking_skips_consecutive_blank_lines(self):
+        text, _t = self._thinking_writes(["idea\n", "\n", "\n", "\n", "next\n"])
+        self.assertEqual(text.count(agent.THINK_LINE_PREFIX + "\n"), 1)
+
     def test_thinking_carriage_return_rewrites_line(self):
         text, t = self._thinking_writes(["draft\rfinal\n"])
         self.assertIn("final", text)
@@ -249,7 +317,7 @@ class StreamPrinterTests(unittest.TestCase):
         writes = []
         ts = type("TS", (), {"columns": 80, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
-             mock.patch("lmloop.display.shutil.get_terminal_size", return_value=ts):
+             mock.patch("lmloop.display.terminal_size", return_value=(ts.columns, ts.lines)):
             out.write.side_effect = lambda s: writes.append(s)
             out.isatty.return_value = True
             t.feed("line one\nline two\n")
@@ -426,6 +494,14 @@ class IngestTextDeltaTests(unittest.TestCase):
         self.assertEqual(agent._ingest_text_delta(parts, "BBB\nCCC\n"), "CCC\n")
         self.assertEqual("".join(parts), "AAA\nBBB\nCCC\n")
 
+    def test_overlap_multiline_sliding_window(self):
+        parts = []
+        agent._ingest_text_delta(parts, "AAA\nBBB\nCCC\n")
+        self.assertEqual(
+            agent._ingest_text_delta(parts, "BBB\nCCC\nDDD\n"), "DDD\n",
+        )
+        self.assertEqual("".join(parts), "AAA\nBBB\nCCC\nDDD\n")
+
     def test_small_prefix_chunk_still_appends(self):
         parts = []
         agent._ingest_text_delta(parts, "xxxxxxxxxxxxxxxxxxxx")
@@ -483,6 +559,31 @@ class IngestTextDeltaTests(unittest.TestCase):
         # Alternating A/B still fails exact-line halt; near-dup should catch it.
         text = "\n".join([a, b, a, b, a, b])
         self.assertTrue(agent._repeated_near_trailing_lines(text))
+
+    def test_repeated_trailing_block_plan_loop(self):
+        block = (
+            "Let me start with the first batch:\n"
+            "1. Reuters Business\n"
+            "2. TechCrunch AI section\n"
+            "3. Google 2025 Research Breakthroughs\n"
+            "4. CNN Business\n"
+            "5. Reuters AI News\n"
+            "Then the rest:\n"
+            "6. Edapt Major AI Breakthroughs\n"
+            "8. Medium AI Reality Check\n"
+            "9. AP News Business\n"
+            "Let me fetch the first 5 now:\n"
+        )
+        self.assertFalse(agent._repeated_trailing_block(block))
+        self.assertFalse(agent._looping_text(block))
+        self.assertTrue(agent._repeated_trailing_block(block + block))
+        self.assertTrue(agent._looping_text(block + block))
+        # A single numbered plan is not a loop.
+        once = "\n".join(f"{i}. item {i} description here" for i in range(1, 10))
+        self.assertFalse(agent._repeated_trailing_block(once))
+        # Whole-block chunk matching the tail is a loop, not a snapshot no-op.
+        self.assertTrue(agent._dropped_piece_is_loop(block, block))
+        self.assertFalse(agent._dropped_piece_is_loop(block, "1. Reuters Business\n"))
 
 
 class PrinterResetTests(unittest.TestCase):
@@ -648,6 +749,126 @@ class ChatStreamTests(unittest.TestCase):
         self.assertNotIn("SHOULD_NOT_APPEAR", "".join(reasoning))
         self.assertNotIn("SHOULD_NOT_APPEAR", msg.get("_reasoning", ""))
         self.assertEqual(msg["content"], "answer")
+
+    def test_reasoning_plan_block_loop_halts_further_chunks(self):
+        block = (
+            "Let me start with the first batch:\n"
+            "1. Reuters Business\n"
+            "2. TechCrunch AI section\n"
+            "3. Google 2025 Research Breakthroughs\n"
+            "4. CNN Business\n"
+            "5. Reuters AI News\n"
+            "Then the rest:\n"
+            "6. Edapt Major AI Breakthroughs\n"
+            "8. Medium AI Reality Check\n"
+            "9. AP News Business\n"
+            "Let me fetch the first 5 now:\n"
+        )
+        body = _sse(
+            {"choices": [{"delta": {"reasoning_content": block}}]},
+            {"choices": [{"delta": {"reasoning_content": block}}]},
+            {"choices": [{"delta": {"reasoning_content": "SHOULD_NOT_APPEAR\n"}}]},
+            {"choices": [{"delta": {"content": "answer"}}]},
+            None,
+        )
+        reasoning = []
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(
+                cfg, "m", [], None, on_reasoning=reasoning.append,
+            )
+        self.assertNotIn("SHOULD_NOT_APPEAR", "".join(reasoning))
+        self.assertNotIn("SHOULD_NOT_APPEAR", msg.get("_reasoning", ""))
+        self.assertEqual(msg["content"], "answer")
+
+    def test_reasoning_incremental_plan_block_loop_halts(self):
+        """User-facing loop: tokens stream in small pieces, not one whole block."""
+        preamble = "Good initial results. Let me fetch detailed sources.\n"
+        block = (
+            "Let me start with the first batch:\n"
+            "1. Reuters Business\n"
+            "2. TechCrunch AI section\n"
+            "3. Google 2025 Research Breakthroughs\n"
+            "4. CNN Business\n"
+            "5. Reuters AI News\n"
+            "Then the rest:\n"
+            "6. Edapt Major AI Breakthroughs\n"
+            "8. Medium AI Reality Check\n"
+            "9. AP News Business\n"
+            "Let me fetch the first 5 now:\n"
+        )
+        events = [{"choices": [{"delta": {"reasoning_content": preamble}}]}]
+        for copy in (block, block):
+            for i in range(0, len(copy), 24):
+                events.append({"choices": [{"delta": {"reasoning_content": copy[i:i + 24]}}]})
+        events.append({"choices": [{"delta": {"reasoning_content": "SHOULD_NOT_APPEAR\n"}}]})
+        events.append({"choices": [{"delta": {"content": "answer"}}]})
+        body = _sse(*events, None)
+        reasoning = []
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(
+                cfg, "m", [], None, on_reasoning=reasoning.append,
+            )
+        self.assertNotIn("SHOULD_NOT_APPEAR", "".join(reasoning))
+        self.assertEqual(msg["content"], "answer")
+
+    def test_content_plan_block_loop_halts_further_chunks(self):
+        block = (
+            "Let me start with the first batch:\n"
+            "1. Reuters Business\n"
+            "2. TechCrunch AI section\n"
+            "3. Google 2025 Research Breakthroughs\n"
+            "4. CNN Business\n"
+            "5. Reuters AI News\n"
+            "Then the rest:\n"
+            "6. Edapt Major AI Breakthroughs\n"
+            "8. Medium AI Reality Check\n"
+            "9. AP News Business\n"
+            "Let me fetch the first 5 now:\n"
+        )
+        body = _sse(
+            {"choices": [{"delta": {"content": block}}]},
+            {"choices": [{"delta": {"content": block}}]},
+            {"choices": [{"delta": {"content": "SHOULD_NOT_APPEAR\n"}}]},
+            None,
+        )
+        deltas = []
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(
+                cfg, "m", [], None, on_delta=deltas.append,
+            )
+        self.assertNotIn("SHOULD_NOT_APPEAR", "".join(deltas))
+        self.assertNotIn("SHOULD_NOT_APPEAR", msg["content"])
+
+    def test_halt_aborts_sse_after_drain_without_tools(self):
+        block = (
+            "Let me start with the first batch:\n"
+            "1. Reuters Business\n"
+            "2. TechCrunch AI section\n"
+            "3. Google 2025 Research Breakthroughs\n"
+            "4. CNN Business\n"
+            "5. Reuters AI News\n"
+            "Then the rest:\n"
+            "6. Edapt Major AI Breakthroughs\n"
+            "8. Medium AI Reality Check\n"
+            "9. AP News Business\n"
+            "Let me fetch the first 5 now:\n"
+        )
+        extra = "x" * (agent._HALT_DRAIN_CHARS + 10)
+        body = _sse(
+            {"choices": [{"delta": {"reasoning_content": block}}]},
+            {"choices": [{"delta": {"reasoning_content": block}}]},
+            {"choices": [{"delta": {"reasoning_content": extra}}]},
+            {"choices": [{"delta": {"content": "TOO_LATE"}}]},
+            None,
+        )
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertNotIn("TOO_LATE", msg["content"])
+        self.assertNotIn("TOO_LATE", msg.get("_reasoning", ""))
 
     def test_reasoning_paraphrase_loop_halts_further_chunks(self):
         body = _sse(

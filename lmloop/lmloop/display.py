@@ -4,14 +4,22 @@ Close methods (clear / finish / erase / reset) must not raise — act() calls
 them from ``finally`` during interrupt. Catch OSError at the write site.
 """
 
-import shutil
 import sys
 
 from .stream import _think_line_similar
+from .ui import terminal_size
+
+# Live markdown grows with the answer up to the terminal. Rich Live's
+# ellipsis/crop keep the *start* of the document, so new tokens vanish behind
+# a red "..." and leftover opening paragraphs stack in scrollback — we crop
+# to the newest lines only once the render would overflow the screen.
 
 # Live thinking prints as it streams; erased when tools/answer start.
 # Ctrl+O opens prior-turn thinking (chronological), not a newest-first cycle.
 THINK_LINE_PREFIX = "  ▎"
+# Must cover a repeating plan block (often 8–16 lines), not just consecutive
+# paraphrases. Stream halt is the real stop; this only skips painting.
+_THINK_RECENT_LINES = 24
 
 # Cached optional rich imports: (Console, Live, Markdown) or False if unavailable.
 _RICH = None
@@ -166,6 +174,42 @@ class _StreamPrinter:
         return started
 
 
+class _TailMarkdown:
+    """Markdown that grows with the answer; tails only if it exceeds the viewport.
+
+    Short replies occupy as many Live rows as they need. Once the render is
+    taller than the terminal, keep the newest lines — Rich Live
+    ``vertical_overflow="ellipsis"`` would keep the *start* and hide new
+    tokens behind a red ``...``. ``visible`` overflow stacks frames in
+    scrollback as markdown reflows.
+    """
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def __rich_console__(self, console, options):
+        from rich.markdown import Markdown
+        from rich.segment import Segment
+        cap = options.height or options.max_height or options.size.height
+        render_options = options.update(height=None)
+        lines = console.render_lines(
+            Markdown(self.text), render_options, pad=False,
+        )
+        if cap and len(lines) > cap:
+            lines = lines[-cap:]
+        new_line = Segment.line()
+        for i, line in enumerate(lines):
+            yield from line
+            if i < len(lines) - 1:
+                yield new_line
+
+
+def _live_preview_height() -> int:
+    """Max Live rows: grow with content up to the terminal, not a 16-line box."""
+    _, lines = terminal_size()
+    return max(4, lines - 2)
+
+
 class _MarkdownLivePrinter:
     """Stream tokens into a rich.Live Markdown view (live + prettied)."""
 
@@ -203,23 +247,30 @@ class _MarkdownLivePrinter:
         rich = _load_rich()
         if not rich:
             return
-        _Console, Live, Markdown = rich
+        _Console, Live, _Markdown = rich
         from .markdown_view import make_console
-        console = self._console_override or make_console(
-            self._color, force_terminal=True,
-        )
-        # ellipsis (not visible): Live can only reliably redraw within the
-        # viewport. vertical_overflow="visible" leaves prior frames in
-        # scrollback as the markdown grows, which looks like repeated lines.
-        # Live.stop() switches to visible for a single final full render.
+        if self._console_override is not None:
+            console = self._console_override
+        else:
+            console = make_console(
+                self._color, force_terminal=True,
+                height=_live_preview_height(),
+            )
+        # crop (not ellipsis/visible): _TailMarkdown already fits the
+        # terminal. ellipsis kept the *start* of a tall answer and painted a
+        # red "..." while new tokens arrived off-screen. visible overflow
+        # stacks frames in scrollback as markdown reflows.
+        # transient on a real TTY: clear the preview so finish() can reprint
+        # the full answer with terminal wrap (reflows on resize).
         self._live = Live(
-            Markdown(""),
+            _TailMarkdown(""),
             console=console,
             refresh_per_second=12,
-            vertical_overflow="ellipsis",
+            vertical_overflow="crop",
             auto_refresh=self._console_override is None,
             redirect_stdout=False,
             redirect_stderr=False,
+            transient=self._console_override is None,
         )
         self._live.start()
 
@@ -229,9 +280,8 @@ class _MarkdownLivePrinter:
         rich = _load_rich()
         if not rich:
             return
-        _Console, _Live, Markdown = rich
         self._live.update(
-            Markdown("".join(self._parts)),
+            _TailMarkdown("".join(self._parts)),
             refresh=not self._live.auto_refresh,
         )
 
@@ -252,12 +302,18 @@ class _MarkdownLivePrinter:
 
     def finish(self) -> bool:
         self._leading = ""
+        body = "".join(self._parts)
         if not self._started:
             self.reset()
             return False
         if self._live is not None:
             self._refresh()
             self._stop_live()
+        # Real TTY: Live was transient, so reprint with terminal wrap so a
+        # later resize reflows. Tests that inject a console keep the Live frame.
+        if body and self._console_override is None:
+            from .markdown_view import print_markdown
+            print_markdown(body, color=self._color)
         started = self._started
         self._parts = []
         self._started = False
@@ -282,6 +338,7 @@ class _ThinkingLive:
         self._active = False
         self._erased = False
         self._recent_printed: list = []
+        self._last_shown_blank = False
 
     @property
     def active(self) -> bool:
@@ -317,15 +374,20 @@ class _ThinkingLive:
             _think_line_similar(stripped, prev) for prev in self._recent_printed
         ):
             return
-        if stripped:
+        if not stripped:
+            if self._last_shown_blank:
+                return
+            self._last_shown_blank = True
+        else:
+            self._last_shown_blank = False
             self._recent_printed.append(stripped)
-            if len(self._recent_printed) > 4:
+            if len(self._recent_printed) > _THINK_RECENT_LINES:
                 del self._recent_printed[0]
         dim = "\033[2m" if self._color and self._use_tty() else ""
         reset = "\033[0m" if dim else ""
         prefixed = f"{THINK_LINE_PREFIX}{line}"
         _tty_write(f"{dim}{prefixed}{reset}\n")
-        cols = shutil.get_terminal_size((80, 24)).columns or 80
+        cols, _ = terminal_size()
         self._lines_shown += _visual_rows(prefixed, cols)
 
     def _flush_partial(self) -> None:
@@ -335,7 +397,7 @@ class _ThinkingLive:
 
     def _rewind_shown_lines(self) -> None:
         if self._lines_shown and self._use_tty():
-            height = shutil.get_terminal_size((80, 24)).lines or 24
+            _, height = terminal_size()
             n = min(self._lines_shown, max(height - 1, 1))
             for _ in range(n):
                 _tty_write("\033[1A\033[2K")

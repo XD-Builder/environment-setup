@@ -75,8 +75,15 @@ class UiTests(unittest.TestCase):
     def test_ask_yes_no_uses_plain_input(self):
         from lmloop.ui import ask_yes_no
         with patch("builtins.input", return_value="y") as mocked:
-            self.assertTrue(ask_yes_no("  run it? [y/N] ", prompt_session=object()))
+            self.assertTrue(ask_yes_no("  run it? [y/N] "))
             mocked.assert_called_once_with("  run it? [y/N] ")
+
+    def test_terminal_size_never_raises(self):
+        from lmloop.ui import terminal_size
+        with patch("lmloop.ui.shutil.get_terminal_size", side_effect=OSError):
+            cols, lines = terminal_size()
+        self.assertGreater(cols, 0)
+        self.assertGreater(lines, 0)
 
 
 if __name__ == "__main__":

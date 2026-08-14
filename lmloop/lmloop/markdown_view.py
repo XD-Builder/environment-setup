@@ -20,17 +20,21 @@ def make_console(
     *,
     file=None,
     width: "int | None" = None,
+    height: "int | None" = None,
     force_terminal: "bool | None" = None,
     truecolor: bool = False,
+    soft_wrap: bool = False,
 ):
-    """Rich Console with word-wrap. ``soft_wrap=False`` so long lines wrap
-    instead of being cropped by Live."""
+    """Rich Console. Live uses ``soft_wrap=False`` so long lines wrap in the
+    viewport instead of cropping. Final TTY prints use ``soft_wrap=True`` so
+    the terminal (not inserted newlines) wraps — those lines reflow on resize.
+    """
     from rich.console import Console
     if force_terminal is None:
         force_terminal = bool(color and sys.stdout.isatty())
     kwargs = {
         "highlight": False,
-        "soft_wrap": False,
+        "soft_wrap": soft_wrap,
         "color_system": (
             ("truecolor" if color else None) if truecolor
             else ("auto" if color else None)
@@ -41,18 +45,24 @@ def make_console(
         kwargs["file"] = file
     if width is not None:
         kwargs["width"] = width
+    if height is not None:
+        kwargs["height"] = height
     return Console(**kwargs)
 
 
 def print_markdown(text: str, color: bool = True) -> None:
-    """Print markdown rendered for the terminal. Falls back to plain text."""
+    """Print markdown rendered for the terminal. Falls back to plain text.
+
+    On a TTY, rich does not hard-wrap: the terminal wraps long lines and
+    reflows them when the window is resized.
+    """
     if not text:
         return
     if not _rich_available() or not sys.stdout.isatty():
         print(text)
         return
     from rich.markdown import Markdown
-    make_console(color).print(Markdown(text))
+    make_console(color, soft_wrap=True).print(Markdown(text))
 
 
 def render_markdown_ansi(text: str, width: "int | None" = None, color: bool = True) -> str:
@@ -62,8 +72,9 @@ def render_markdown_ansi(text: str, width: "int | None" = None, color: bool = Tr
     if not _rich_available():
         return text if text.endswith("\n") else text + "\n"
     from rich.markdown import Markdown
+    from .ui import terminal_size
 
-    cols = width or shutil.get_terminal_size((100, 24)).columns
+    cols = width or terminal_size((100, 24))[0]
     buf = StringIO()
     console = make_console(
         color, file=buf, width=max(40, cols),

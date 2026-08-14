@@ -24,10 +24,11 @@ Project memory commands:
 import argparse
 import sys
 
-from . import agent, memory, tools
+from . import agent, memory
+from .commands import cli_subcommand_names
 from .config import CONFIG_PATH, DEFAULTS, load_config, save_config
-from .repl import run_repl
-from .ui import Console, ask_yes_no
+from .repl import mine_sessions, run_repl
+from .ui import Console, ask_yes_no, make_confirm_gate
 
 EPILOG = """
 project memory commands:
@@ -47,30 +48,6 @@ examples:
 """
 
 
-def _fresh_messages(cfg: dict) -> list:
-    return [{"role": "system", "content": agent.system_prompt(cfg)}]
-
-
-def _session_transcript_for_retro(paths) -> str:
-    parts = []
-    for p in paths:
-        parts.append(f"### Session {p.stem}\n{memory.read_session(p)}")
-    return "\n\n".join(parts)
-
-
-def _make_confirm_gate(console: Console, prompt_session=None):
-    # prompt_session ignored — mid-turn confirms must use plain input().
-    del prompt_session
-
-    def confirm_gate(command: str) -> bool:
-        label = "potentially destructive"
-        if tools.needs_shell(command) and not tools.is_destructive(command):
-            label = "shell-syntax (pipes/redirections)"
-        console.warn(f"\n⚠ {label} command requested:\n    {command}")
-        return ask_yes_no(console.confirm_prompt(command))
-    return confirm_gate
-
-
 def cmd_retro(cfg: dict, count: int, console: Console) -> int:
     sessions = memory.list_sessions(limit=count)
     if not sessions:
@@ -81,28 +58,10 @@ def cmd_retro(cfg: dict, count: int, console: Console) -> int:
     except agent.ServerError as e:
         console.error(f"error: {e}")
         return 1
-    messages = _fresh_messages(cfg)
-    session_log = memory.new_session_log()
-    task = agent.load_skill("retro") + "\n\n" + _session_transcript_for_retro(sessions)
-    memory.log_event(session_log, "user", f"/retro over {len(sessions)} sessions")
-    messages.append({"role": "user", "content": task})
-    try:
-        agent.act(
-            cfg, model, messages, session_log=session_log,
-            confirm_gate=_make_confirm_gate(console),
-            echo_tool=console.tool_call,
-            echo_round=console.round_usage,
-            context_limit=agent.get_context_limit(model, cfg),
-            context_reserve=int(cfg.get("context_reserve") or 2048),
-        )
-    except agent.ServerError as e:
-        memory.log_event(session_log, "system", f"error: {e}")
-        console.error(f"error: {e}")
-        return 1
-    return 0
+    return mine_sessions(cfg, model, sessions, console, make_confirm_gate(console))
 
 
-def cmd_skills(console: Console, names_only: bool = False) -> int:
+def cmd_skills(console: Console, names_only: bool = False, *, repl: bool = False) -> int:
     names = agent.list_skills()
     if names_only:
         for name in names:
@@ -120,13 +79,15 @@ def cmd_skills(console: Console, names_only: bool = False) -> int:
         if path and path.parent == agent.USER_SKILLS_DIR:
             line += "  (user)"
         console.info(line)
-    console.hint("  run: lmloop skill <name> [task]   or in REPL: /name")
-    console.hint("  create: lmloop skills new <name> [brief]")
+    if repl:
+        console.hint("  create: /skills new <name> [brief]")
+    else:
+        console.hint("  run: lmloop skill <name> [task]   or in REPL: /name")
+        console.hint("  create: lmloop skills new <name> [brief]")
     return 0
 
 
-def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console,
-                   prompt_session=None) -> int:
+def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console) -> int:
     """Generate a skill draft, show it, and save to ~/.lmloop/skills/ on confirm."""
     err = agent.validate_skill_name(name)
     if err:
@@ -135,7 +96,7 @@ def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console,
     existing = agent.skill_path(name)
     if existing is not None:
         console.warn(f"skill '{name}' already exists at {existing}")
-        if not ask_yes_no("  overwrite? [y/N] ", prompt_session=prompt_session):
+        if not ask_yes_no("  overwrite? [y/N] "):
             console.info("cancelled")
             return 0
 
@@ -151,6 +112,9 @@ def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console,
     except agent.ServerError as e:
         console.error(f"error: {e}")
         return 1
+    except KeyboardInterrupt:
+        console.hint("\n[interrupted — draft not saved]")
+        return 1
 
     if not draft.strip():
         console.error("model returned an empty draft")
@@ -161,7 +125,7 @@ def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console,
     console.print_markdown(draft)
     console.info("──────────────────────────────────────────────────────")
     console.warn(f"Save to {agent.USER_SKILLS_DIR / (name + '.md')}?")
-    if not ask_yes_no("  save skill? [y/N] ", prompt_session=prompt_session):
+    if not ask_yes_no("  save skill? [y/N] "):
         console.info("cancelled — draft not saved")
         return 0
 
@@ -366,6 +330,10 @@ def main(argv=None) -> int:
             console.error("usage: lmloop completion zsh")
             return 1
         return cmd_completion(shell, console)
+
+    if sub in cli_subcommand_names():
+        console.error(f"internal error: no handler for '{sub}'")
+        return 1
 
     # Free-form task: first word is not a reserved subcommand
     task = " ".join(words) if words else None

@@ -249,5 +249,407 @@ class AtRefTurnTests(unittest.TestCase):
         self.assertIn("No skill", err.getvalue())
 
 
+class RestoreArgTests(unittest.TestCase):
+    def test_bare_index_is_session(self):
+        from lmloop.repl import parse_restore_arg
+        self.assertEqual(parse_restore_arg("2"), ("session", "2", False))
+        self.assertEqual(parse_restore_arg("2 fresh"), ("session", "2", True))
+        self.assertEqual(parse_restore_arg("session 1"), ("session", "1", False))
+        self.assertEqual(parse_restore_arg("session 2 fresh"), ("session", "2", True))
+        self.assertEqual(parse_restore_arg("checkpoint latest"), ("checkpoint", "latest", False))
+        self.assertEqual(parse_restore_arg("latest"), ("session", "latest", False))
+        self.assertIsNone(parse_restore_arg(""))
+        self.assertIsNone(parse_restore_arg("session 1 extra"))
+
+
+class RestoreCommandTests(unittest.TestCase):
+    def _state(self, root: Path, current: Path):
+        from lmloop.repl import SessionState
+        from lmloop.ui import Console, fresh_stats
+        return SessionState(
+            cfg={},
+            model="m",
+            messages=[{"role": "system", "content": "sys"},
+                      {"role": "user", "content": "current work"}],
+            session_log=current,
+            stats=fresh_stats(),
+            console=Console(color=False),
+        )
+
+    def _write_session(self, path: Path, rows: list) -> None:
+        import json
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w") as f:
+            for row in rows:
+                f.write(json.dumps(row) + "\n")
+
+    def test_restore_session_reloads_last_result_without_act(self):
+        from lmloop.repl import _cmd_restore
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sessions = root / "sessions"
+            prior = sessions / "20250814-090000.jsonl"
+            current = sessions / "20250814-110000.jsonl"
+            self._write_session(prior, [
+                {"role": "user", "content": "when can I get an epidural"},
+                {"role": "assistant", "content": "ACOG: request is sufficient."},
+                {"role": "system", "content": "interrupted"},
+            ])
+            current.write_text("")
+            state = self._state(root, current)
+
+            with patch("lmloop.repl.agent.act") as act, \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()) as buf:
+                ok = _cmd_restore(state, "1")
+
+            self.assertTrue(ok)
+            act.assert_not_called()
+            self.assertEqual(state.session_log, prior)
+            self.assertEqual(
+                [(m["role"], m["content"]) for m in state.messages],
+                [
+                    ("system", "sys"),
+                    ("user", "when can I get an epidural"),
+                    ("assistant", "ACOG: request is sufficient."),
+                ],
+            )
+            out = buf.getvalue()
+            self.assertIn("ACOG: request is sufficient.", out)
+            self.assertIn("restored session", out)
+            self.assertIn("interrupted", out)
+
+    def test_restore_bare_two_matches_history_index(self):
+        from lmloop.repl import _cmd_restore, parse_restore_arg
+        self.assertEqual(parse_restore_arg("2"), ("session", "2", False))
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sessions = root / "sessions"
+            s1 = sessions / "20250814-010000.jsonl"
+            s2 = sessions / "20250814-020000.jsonl"
+            current = sessions / "20250814-030000.jsonl"
+            self._write_session(s1, [
+                {"role": "user", "content": "session one"},
+                {"role": "assistant", "content": "result one"},
+            ])
+            self._write_session(s2, [
+                {"role": "user", "content": "find lmloop"},
+                {"role": "assistant", "content": "Found the codebase."},
+                {"role": "tool", "content": "run_shell(ls) -> lmloop"},
+            ])
+            current.write_text("")
+            state = self._state(root, current)
+
+            with patch("lmloop.repl.agent.act") as act, \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()) as buf:
+                _cmd_restore(state, "2")
+
+            act.assert_not_called()
+            self.assertEqual(state.session_log, s2)
+            self.assertEqual(state.messages[-1]["content"], "Found the codebase.")
+            self.assertNotIn("run_shell", buf.getvalue())
+            self.assertIn("Found the codebase.", buf.getvalue())
+
+    def test_restore_fresh_copies_into_new_log(self):
+        from lmloop.repl import _cmd_restore
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sessions = root / "sessions"
+            prior = sessions / "20250814-090000.jsonl"
+            current = sessions / "20250814-110000.jsonl"
+            self._write_session(prior, [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi there"},
+            ])
+            current.write_text("")
+            state = self._state(root, current)
+
+            with patch("lmloop.repl.agent.act") as act, \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_restore(state, "session 1 fresh")
+
+            act.assert_not_called()
+            self.assertNotEqual(state.session_log, prior)
+            self.assertNotEqual(state.session_log, current)
+            self.assertTrue(state.session_log.exists())
+            self.assertEqual(state.messages[-1]["content"], "hi there")
+
+    def test_restore_checkpoint_does_not_call_act(self):
+        from lmloop.repl import _cmd_restore
+        from lmloop.memory import save_checkpoint
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            current = root / "sessions" / "now.jsonl"
+            current.parent.mkdir(parents=True)
+            current.write_text("")
+            state = self._state(root, current)
+            with patch("lmloop.memory.project_dir", return_value=root):
+                save_checkpoint("handoff", "We were fixing restore.")
+            with patch("lmloop.repl.agent.act") as act, \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()) as buf:
+                _cmd_restore(state, "checkpoint latest")
+            act.assert_not_called()
+            self.assertIn("We were fixing restore.", buf.getvalue())
+            self.assertEqual(state.messages[-1]["role"], "assistant")
+
+
+class RetroIsolationTests(unittest.TestCase):
+    def test_retro_does_not_mutate_live_thread(self):
+        from lmloop.repl import SessionState, _cmd_retro
+        from lmloop.ui import Console, fresh_stats
+        import json
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "sessions" / "live.jsonl"
+            log.parent.mkdir(parents=True)
+            with log.open("w") as f:
+                f.write(json.dumps({"role": "user", "content": "do work"}) + "\n")
+                f.write(json.dumps({"role": "assistant", "content": "done"}) + "\n")
+            original = [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "do work"},
+                {"role": "assistant", "content": "done"},
+            ]
+            state = SessionState(
+                cfg={},
+                model="m",
+                messages=list(original),
+                session_log=log,
+                stats=fresh_stats(),
+                console=Console(color=False),
+            )
+            captured = {}
+
+            def fake_act(cfg, model, messages, **kwargs):
+                captured["messages"] = list(messages)
+                captured["log"] = kwargs.get("session_log")
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.agent.get_context_limit", return_value=0), \
+                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: retro"), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_retro(state, "", lambda _: False)
+
+            self.assertEqual(state.messages, original)
+            self.assertEqual(state.session_log, log)
+            self.assertIn("retro", captured["messages"][-1]["content"].lower())
+            self.assertIn("[user] do work", captured["messages"][-1]["content"])
+            self.assertNotEqual(captured["log"], log)
+
+
+class CompactSaveUndoTests(unittest.TestCase):
+    def _state(self, messages, log):
+        from lmloop.repl import SessionState
+        from lmloop.ui import Console, fresh_stats
+        return SessionState(
+            cfg={},
+            model="m",
+            messages=list(messages),
+            session_log=log,
+            stats=fresh_stats(),
+            console=Console(color=False),
+        )
+
+    def test_save_skips_checkpoint_on_interrupt(self):
+        from lmloop.repl import _cmd_save
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            log.write_text("")
+            state = self._state(
+                [{"role": "system", "content": "sys"},
+                 {"role": "user", "content": "hi"},
+                 {"role": "assistant", "content": "old reply"}],
+                log,
+            )
+
+            def boom(*_a, **_k):
+                raise KeyboardInterrupt()
+
+            with patch("lmloop.repl.agent.act", side_effect=boom), \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.memory.project_dir", return_value=Path(d)), \
+                 patch("lmloop.memory.save_checkpoint") as save, \
+                 redirect_stdout(io.StringIO()):
+                _cmd_save(state, "title", lambda _: False)
+            save.assert_not_called()
+            self.assertEqual(
+                [(m["role"], m["content"]) for m in state.messages],
+                [("system", "sys"), ("user", "hi"), ("assistant", "old reply")],
+            )
+            self.assertEqual(state.session_log, log)
+
+    def test_save_does_not_mutate_live_thread(self):
+        from lmloop.repl import _cmd_save
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            log.write_text("")
+            original = [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "old reply"},
+            ]
+            state = self._state(original, log)
+
+            def fake_act(cfg, model, messages, **kwargs):
+                messages.append({"role": "assistant", "content": "checkpoint body"})
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.memory.project_dir", return_value=Path(d)), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_save(state, "title", lambda _: False)
+
+            self.assertEqual(state.messages, original)
+            self.assertEqual(state.session_log, log)
+            cps = list((Path(d) / "checkpoints").glob("*.md"))
+            self.assertEqual(len(cps), 1)
+            self.assertIn("checkpoint body", cps[0].read_text())
+
+    def test_compact_does_not_mutate_until_confirm(self):
+        from lmloop.repl import _cmd_compact
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            log.write_text("")
+            original = [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "keep me"},
+                {"role": "assistant", "content": "ok"},
+            ]
+            state = self._state(original, log)
+
+            def fake_act(cfg, model, messages, **kwargs):
+                messages.append({"role": "assistant", "content": "## Goal\nDone."})
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.memory.project_dir", return_value=Path(d)), \
+                 patch("lmloop.repl.ask_yes_no", return_value=False), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_compact(state, "", lambda _: False)
+
+            self.assertEqual(state.messages, original)
+
+    def test_compact_replace_starts_new_log(self):
+        from lmloop.repl import _cmd_compact
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            log.write_text("")
+            original = [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "keep me"},
+                {"role": "assistant", "content": "ok"},
+            ]
+            state = self._state(original, log)
+
+            def fake_act(cfg, model, messages, **kwargs):
+                messages.append({"role": "assistant", "content": "## Goal\nDone."})
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.memory.project_dir", return_value=Path(d)), \
+                 patch("lmloop.repl.ask_yes_no", return_value=True), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_compact(state, "", lambda _: False)
+
+            self.assertNotEqual(state.session_log, log)
+            self.assertIn("compacted", state.messages[1]["content"])
+            self.assertIn("Done.", state.messages[1]["content"])
+            logged = state.session_log.read_text()
+            self.assertIn("compacted", logged)
+            self.assertNotIn("keep me", logged)
+
+    def test_compact_uses_live_messages_not_undone_log(self):
+        from lmloop.repl import _cmd_compact, _cmd_undo
+        import json
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            rows = [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "one"},
+                {"role": "user", "content": "undo me"},
+                {"role": "assistant", "content": "two"},
+            ]
+            with log.open("w") as f:
+                for r in rows:
+                    f.write(json.dumps(r) + "\n")
+            state = self._state(
+                [{"role": "system", "content": "sys"}] + rows, log,
+            )
+            captured = {}
+
+            def fake_act(cfg, model, messages, **kwargs):
+                captured["task"] = messages[-1]["content"]
+                messages.append({"role": "assistant", "content": "summary"})
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.memory.project_dir", return_value=Path(d)), \
+                 patch("lmloop.repl.ask_yes_no", return_value=False), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_undo(state, "")
+                _cmd_compact(state, "", lambda _: False)
+
+            self.assertNotIn("undo me", captured["task"])
+            self.assertIn("first", captured["task"])
+
+    def test_new_clears_thinking_history(self):
+        from lmloop.repl import _cmd_new
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            log.write_text("")
+            state = self._state([{"role": "system", "content": "sys"}], log)
+            state.push_thinking("old thoughts")
+            with patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.memory.project_dir", return_value=Path(d)), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_new(state, "")
+            self.assertEqual(state.thinking_history, [])
+
+
+class RegistryTests(unittest.TestCase):
+    def test_every_slash_meta_has_a_handler(self):
+        from lmloop.commands import slash_command_metas
+        cmds = _build_slash_commands(lambda _: False)
+        names = {c.name.lstrip("/") for c in cmds}
+        for meta in slash_command_metas():
+            self.assertIn(meta.name, names, f"missing handler for /{meta.name}")
+
+    def test_cli_subcommands_match_registry(self):
+        from lmloop.commands import cli_subcommand_names
+        handled = {
+            "config", "memory", "decisions", "history", "models",
+            "retro", "skills", "skill", "completion",
+        }
+        self.assertEqual(set(cli_subcommand_names()), handled)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,13 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import agent, memory, tools
+from . import agent, memory
 from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
 from .files_index import expand_at_refs
 from .status import MSG_RESUME
-from .ui import Console, ask_yes_no, fresh_stats
+from .ui import Console, ask_yes_no, fresh_stats, make_confirm_gate
 
 _THINKING_HISTORY_MAX = 30
 
@@ -94,26 +94,13 @@ def _refresh_context_limit(state: SessionState) -> None:
 def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
     state.messages = _fresh_messages(state.cfg)
     state.session_log = memory.new_session_log()
+    state.thinking_history = []
     if not keep_stats:
         state.stats = fresh_stats()
 
 
 def _fresh_messages(cfg: dict) -> list:
     return [{"role": "system", "content": agent.system_prompt(cfg)}]
-
-
-def _make_confirm_gate(console: Console, session_getter=None):
-    # session_getter kept for call-site compat; confirms use plain input()
-    # so prompt_toolkit does not redraw over the warning mid-turn.
-    del session_getter
-
-    def confirm_gate(command: str) -> bool:
-        label = "potentially destructive"
-        if tools.needs_shell(command) and not tools.is_destructive(command):
-            label = "shell-syntax (pipes/redirections)"
-        console.warn(f"\n⚠ {label} command requested:\n    {command}")
-        return ask_yes_no(console.confirm_prompt(command))
-    return confirm_gate
 
 
 def _echo_assistant(console: Console):
@@ -125,7 +112,8 @@ def _echo_assistant(console: Console):
     return echo
 
 
-def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
+def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
+    """Run one user turn. Returns True if act() completed."""
     # Expand @path refs for every turn (freeform, /skill, /continue, …).
     user_text = expand_at_refs(user_text)
     memory.log_event(state.session_log, "user", user_text)
@@ -149,15 +137,18 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
         )
         if footer:
             print(footer)
+        return True
     except agent.ServerError as e:
         memory.log_event(state.session_log, "system", f"error: {e}")
         state.console.error(f"error: {e}")
         state.console.hint(f"  conversation kept — type to steer, or {MSG_RESUME}")
+        return False
     except KeyboardInterrupt:
         memory.log_event(state.session_log, "system", "interrupted")
         state.console.hint(
             f"\n[interrupted — conversation kept; type to steer, or {MSG_RESUME}]"
         )
+        return False
 
 
 def _cmd_help(state: SessionState, _arg: str) -> bool:
@@ -196,7 +187,7 @@ def _cmd_model(state: SessionState, arg: str) -> bool:
 
 
 def _cmd_memory(state: SessionState, arg: str) -> bool:
-    rows = memory.get_learnings(query=arg, limit=20)
+    rows = memory.get_learnings(query=arg, limit=30)
     for r in rows:
         state.console.info(
             f"- [{r['key']}] ({r['type']}, {r['confidence']}/10) {r['insight']}"
@@ -206,28 +197,114 @@ def _cmd_memory(state: SessionState, arg: str) -> bool:
     return True
 
 
+def _last_assistant(messages: list) -> str:
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and (m.get("content") or "").strip():
+            return (m.get("content") or "").strip()
+    return ""
+
+
 def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
     title = arg or "session-checkpoint"
-    _run_turn(state,
-              "Write a checkpoint of this session for a future session to resume from: "
-              "what we're working on, key findings and decisions, and remaining work. "
-              "Reply with the checkpoint text only — do not call any tools.",
-              confirm_gate)
-    body = next(
-        (m["content"] for m in reversed(state.messages)
-         if m["role"] == "assistant" and m.get("content")),
-        "",
+    transcript = memory.format_messages_transcript(state.messages)
+    if not transcript:
+        state.console.info("(nothing to checkpoint)")
+        return True
+    prompt = (
+        "Write a checkpoint of this session for a future session to resume from: "
+        "what we're working on, key findings and decisions, and remaining work. "
+        "Reply with the checkpoint text only — do not call any tools.\n\n"
+        "Transcript:\n" + transcript
     )
+    state.console.hint("[save · current conversation unchanged]")
+    result = _isolated_act(state, prompt, confirm_gate, log_label="/save")
+    if result is None:
+        state.console.hint("[checkpoint not saved]")
+        return True
+    body = _last_assistant(result)
+    if not body:
+        state.console.hint("[checkpoint not saved — empty reply]")
+        return True
     path = memory.save_checkpoint(title, body)
     state.console.info(f"[checkpoint saved: {path}]")
     return True
 
 
-def _cmd_retro(state: SessionState, _arg: str, confirm_gate) -> bool:
-    _run_turn(state,
-              agent.load_skill("retro") + "\n\nTranscript of THIS session so far:\n"
-              + memory.read_session(state.session_log),
-              confirm_gate)
+def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
+                  transcript: "str | None" = None) -> int:
+    """Run the retro skill without touching a live REPL thread."""
+    if transcript is None:
+        if not paths:
+            console.info("no sessions recorded yet")
+            return 0
+        transcript = memory.format_sessions_for_retro(paths)
+        label = f"/retro over {len(paths)} session(s)"
+    else:
+        if not transcript.strip():
+            console.info("no sessions recorded yet")
+            return 0
+        label = "/retro this session"
+    try:
+        task = agent.load_skill("retro") + "\n\n" + transcript
+    except FileNotFoundError as e:
+        console.error(str(e))
+        return 1
+    messages = _fresh_messages(cfg)
+    session_log = memory.new_session_log()
+    memory.log_event(session_log, "user", label)
+    messages.append({"role": "user", "content": task})
+    try:
+        agent.act(
+            cfg, model, messages, session_log=session_log,
+            confirm_gate=confirm_gate,
+            echo=_echo_assistant(console),
+            echo_status=console.hint,
+            echo_tool=console.tool_call,
+            echo_round=console.round_usage,
+            context_limit=agent.get_context_limit(model, cfg),
+            context_reserve=int(cfg.get("context_reserve") or 2048),
+        )
+    except agent.ServerError as e:
+        memory.log_event(session_log, "system", f"error: {e}")
+        console.error(f"error: {e}")
+        return 1
+    except KeyboardInterrupt:
+        memory.log_event(session_log, "system", "interrupted")
+        console.hint("\n[interrupted — retro stopped; current conversation kept]")
+        return 1
+    return 0
+
+
+def _cmd_retro(state: SessionState, arg: str, confirm_gate) -> bool:
+    arg = (arg or "").strip()
+    if arg.isdigit() and int(arg) > 0:
+        n = int(arg)
+        current = state.session_log.resolve()
+        paths = [
+            p for p in memory.all_sessions()
+            if p.resolve() != current
+        ][-n:]
+        if not paths:
+            state.console.info("no prior sessions to mine — try /retro for this session")
+            return True
+        label = f"last {len(paths)} session(s)"
+        state.console.hint(f"[retro · {label} · current conversation unchanged]")
+        mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
+        return True
+    if arg:
+        state.console.info("usage: /retro [n]")
+        state.console.info("  /retro       mine this session")
+        state.console.info("  /retro 3     mine last 3 sessions")
+        return True
+    transcript = memory.format_messages_transcript(state.messages)
+    if not transcript:
+        state.console.info("(no session transcript to mine)")
+        return True
+    state.console.hint("[retro · this session · current conversation unchanged]")
+    mine_sessions(
+        state.cfg, state.model, None, state.console, confirm_gate,
+        transcript=transcript,
+    )
     return True
 
 
@@ -272,35 +349,78 @@ def _cmd_undo(state: SessionState, _arg: str) -> bool:
 
 
 def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
-    transcript = memory.read_session(state.session_log, max_chars=12000)
-    prompt = agent.load_skill("compact") + "\n\nTranscript:\n" + transcript
+    transcript = memory.format_messages_transcript(state.messages, max_chars=12000)
+    if not transcript:
+        state.console.info("(nothing to compact)")
+        return True
+    try:
+        prompt = agent.load_skill("compact") + "\n\nTranscript:\n" + transcript
+    except FileNotFoundError as e:
+        state.console.error(str(e))
+        return True
     if arg:
         prompt += "\n\nFocus: " + arg
-    before = len(state.messages)
-    _run_turn(state, prompt, confirm_gate)
-    summary = ""
-    for m in reversed(state.messages[before:]):
-        if m.get("role") == "assistant" and (m.get("content") or "").strip():
-            summary = (m.get("content") or "").strip()
-            break
+    prompt = expand_at_refs(prompt)
+    state.console.hint("[compact · current conversation unchanged until you replace it]")
+    result = _isolated_act(state, prompt, confirm_gate, log_label="/compact")
+    if result is None:
+        return True
+    summary = _last_assistant(result)
     if not summary:
         return True
     state.console.hint("Replace the in-memory thread with this summary?")
     if ask_yes_no("Replace thread with summary? [y/N] "):
-        system = state.messages[0] if state.messages and state.messages[0].get("role") == "system" else None
+        system = _fresh_messages(state.cfg)[0]
         handoff = (
             "Context was compacted. Continue from this handoff summary:\n\n" + summary
         )
-        state.messages = []
-        if system:
-            state.messages.append(system)
-        state.messages.append({"role": "user", "content": handoff})
-        state.messages.append({
-            "role": "assistant",
-            "content": "Understood — continuing from the compacted handoff.",
-        })
+        _adopt_thread(
+            state,
+            [
+                system,
+                {"role": "user", "content": handoff},
+                {
+                    "role": "assistant",
+                    "content": "Understood — continuing from the compacted handoff.",
+                },
+            ],
+            log=memory.new_session_log(),
+            replay=True,
+            reset_stats=False,
+        )
         state.console.info("[thread replaced with compact summary]")
     return True
+
+
+def _isolated_act(state: SessionState, user_text: str, confirm_gate,
+                  *, log_label: str) -> "list | None":
+    """Run act() on a fresh thread. Returns messages, or None on failure."""
+    messages = _fresh_messages(state.cfg)
+    session_log = memory.new_session_log()
+    memory.log_event(session_log, "user", log_label)
+    messages.append({"role": "user", "content": user_text})
+    try:
+        agent.act(
+            state.cfg, state.model, messages, session_log=session_log,
+            confirm_gate=confirm_gate,
+            echo=_echo_assistant(state.console),
+            echo_status=state.console.hint,
+            echo_tool=state.console.tool_call,
+            echo_round=state.console.round_usage,
+            context_limit=state.context_limit,
+            context_reserve=state.context_reserve,
+        )
+    except agent.ServerError as e:
+        memory.log_event(session_log, "system", f"error: {e}")
+        state.console.error(f"error: {e}")
+        return None
+    except KeyboardInterrupt:
+        memory.log_event(session_log, "system", "interrupted")
+        state.console.hint(
+            f"\n[interrupted — current conversation kept; {MSG_RESUME}]"
+        )
+        return None
+    return messages
 
 
 def _cmd_skills(state: SessionState, arg: str, confirm_gate) -> bool:
@@ -312,31 +432,19 @@ def _cmd_skills(state: SessionState, arg: str, confirm_gate) -> bool:
         from .cli import cmd_skills_new
         cmd_skills_new(
             state.cfg, parts[1], parts[2] if len(parts) > 2 else "", state.console,
-            prompt_session=state.prompt_session,
         )
         # Rebuild slash commands so a newly saved skill gets /name immediately
         global SLASH_COMMANDS
         SLASH_COMMANDS = _build_slash_commands(confirm_gate)
         return True
 
-    names = agent.list_skills()
-    for name in names:
-        blurb = agent.skill_blurb(name)
-        line = f"  /{name}"
-        if blurb:
-            line += f"  — {blurb}"
-        path = agent.skill_path(name)
-        if path and path.parent == agent.USER_SKILLS_DIR:
-            line += "  (user)"
-        state.console.info(line)
-    if not names:
-        state.console.info("(no skills yet)")
-    state.console.hint("  create: /skills new <name> [brief]")
+    from .cli import cmd_skills
+    cmd_skills(state.console, repl=True)
     return True
 
 
 def _cmd_history(state: SessionState, arg: str) -> bool:
-    limit = int(arg) if arg.isdigit() else 10
+    limit = int(arg) if arg.isdigit() and int(arg) > 0 else 10
     all_rows = memory.all_sessions()
     sessions = all_rows[-limit:]
     if not sessions:
@@ -348,12 +456,12 @@ def _cmd_history(state: SessionState, arg: str) -> bool:
         tag = " (current)" if path.resolve() == current else ""
         preview = memory.session_preview(path)
         state.console.info(f"  {i:2}. {path.stem}{tag}  — {preview}")
-    state.console.hint("  restore with: /restore session <#|stem|latest>")
+    state.console.hint("  restore with: /restore <#|stem|latest>")
     return True
 
 
 def _cmd_checkpoints(state: SessionState, arg: str) -> bool:
-    limit = int(arg) if arg.isdigit() else 10
+    limit = int(arg) if arg.isdigit() and int(arg) > 0 else 10
     all_rows = memory.all_checkpoints()
     cps = all_rows[-limit:]
     if not cps:
@@ -379,43 +487,102 @@ def _cmd_decisions(state: SessionState, _arg: str) -> bool:
     return True
 
 
-def _cmd_restore(state: SessionState, arg: str, confirm_gate) -> bool:
-    parts = arg.split()
-    if len(parts) < 2:
-        state.console.info("usage: /restore checkpoint|session <latest|#|stem> [fresh]")
-        state.console.info("  /restore checkpoint latest   inject latest checkpoint")
-        state.console.info("  /restore session 2 fresh     new chat + prior transcript")
+def _restore_usage(console: Console) -> None:
+    console.info("usage: /restore [session|checkpoint] <latest|#|stem> [fresh]")
+    console.info("  /restore 2                 reload session 2, show last result")
+    console.info("  /restore session 2 fresh   copy into a new session log")
+    console.info("  /restore checkpoint latest load checkpoint as a handoff")
+
+
+def parse_restore_arg(arg: str):
+    """Return (kind, query, fresh) or None when usage should be shown."""
+    parts = [p for p in (arg or "").split() if p]
+    if not parts:
+        return None
+    fresh = False
+    if parts[-1].lower() in ("fresh", "new"):
+        fresh = True
+        parts = parts[:-1]
+        if not parts:
+            return None
+    head = parts[0].lower()
+    if head in ("checkpoint", "session"):
+        if len(parts) > 2:
+            return None
+        query = parts[1] if len(parts) > 1 else "latest"
+        return head, query, fresh
+    if len(parts) != 1:
+        return None
+    return "session", parts[0], fresh
+
+
+def _adopt_thread(state: SessionState, messages: list, *, log: "Path | None",
+                  replay: bool, reset_stats: bool = True) -> None:
+    """Replace the in-memory thread. ``replay`` copies turns into a new log."""
+    state.messages = messages
+    state.thinking_history = []
+    if reset_stats:
+        state.stats = fresh_stats()
+    if log is not None:
+        state.session_log = log
+    if replay:
+        for m in messages:
+            if m.get("role") == "system":
+                continue
+            memory.log_event(state.session_log, m["role"], m.get("content") or "")
+
+
+def _cmd_restore(state: SessionState, arg: str) -> bool:
+    parsed = parse_restore_arg(arg)
+    if parsed is None:
+        _restore_usage(state.console)
         return True
-    kind, query = parts[0].lower(), parts[1]
-    fresh = len(parts) > 2 and parts[2].lower() in ("fresh", "new")
+    kind, query, fresh = parsed
     if kind == "checkpoint":
         path = memory.resolve_checkpoint(query)
         if not path:
             state.console.error("checkpoint not found — try /checkpoints")
             return True
         body = memory.read_checkpoint_body(path)
-        msg = f"Resume from checkpoint ({path.stem}):\n\n{body}"
-        if fresh:
-            _reset_session(state)
-            state.console.info(f"[fresh conversation + checkpoint {path.stem}]")
-        _run_turn(state, msg, confirm_gate)
+        system = _fresh_messages(state.cfg)[0]
+        messages = [
+            system,
+            {"role": "user", "content": f"Resume from checkpoint ({path.stem}):\n\n{body}"},
+            {"role": "assistant", "content": "Ready to continue from this checkpoint."},
+        ]
+        # Checkpoints are summaries, not session files — always a new log.
+        _adopt_thread(state, messages, log=memory.new_session_log(), replay=True)
+        if body:
+            state.console.print_markdown(body)
+        state.console.info(f"[restored checkpoint {path.stem} — type to continue]")
         return True
-    if kind == "session":
-        path = memory.resolve_session(query)
-        if not path:
-            state.console.error("session not found — try /history")
-            return True
-        if path.resolve() == state.session_log.resolve() and not fresh:
-            state.console.info("[already in this session]")
-            return True
-        transcript = memory.read_session(path)
-        msg = f"Continue from prior session ({path.stem}):\n\n{transcript}"
-        if fresh:
-            _reset_session(state)
-            state.console.info(f"[fresh conversation + session {path.stem}]")
-        _run_turn(state, msg, confirm_gate)
+    path = memory.resolve_session(query)
+    if not path:
+        state.console.error("session not found — try /history")
         return True
-    state.console.error("usage: /restore checkpoint|session <latest|#|stem> [fresh]")
+    if path.resolve() == state.session_log.resolve() and not fresh:
+        state.console.info("[already in this session]")
+        return True
+    turns = memory.session_messages(path)
+    if not turns:
+        state.console.error("session is empty — nothing to restore")
+        return True
+    system = _fresh_messages(state.cfg)[0]
+    messages = [system] + turns
+    if fresh:
+        _adopt_thread(state, messages, log=memory.new_session_log(), replay=True)
+        tag = f"fresh copy of session {path.stem}"
+    else:
+        _adopt_thread(state, messages, log=path, replay=False)
+        tag = f"session {path.stem}"
+    result = memory.session_last_assistant(path)
+    if result:
+        state.console.print_markdown(result)
+    extra = ""
+    if memory.session_interrupted(path):
+        extra = f"; interrupted — {MSG_RESUME}"
+    n = len(turns)
+    state.console.info(f"[restored {tag} — {n} turn(s){extra}]")
     return True
 
 
@@ -450,7 +617,7 @@ def _build_slash_commands(confirm_gate) -> list:
         "skills": lambda s, a: _cmd_skills(s, a, confirm_gate),
         "history": _cmd_history,
         "checkpoints": _cmd_checkpoints,
-        "restore": lambda s, a: _cmd_restore(s, a, confirm_gate),
+        "restore": _cmd_restore,
         "decisions": _cmd_decisions,
         "context": _cmd_context,
         "continue": lambda s, a: _cmd_continue(s, a, confirm_gate),
@@ -470,7 +637,7 @@ def _build_slash_commands(confirm_gate) -> list:
     for meta in slash_command_metas():
         handler = handlers.get(meta.name)
         if handler is None:
-            continue
+            raise RuntimeError(f"no handler for /{meta.name}")
         commands.append(SlashCommand(
             f"/{meta.name}", meta.desc, handler,
             arg_hint=meta.arg_hint, accepts_arg=meta.accepts_arg, exits=meta.exits,
@@ -495,10 +662,6 @@ SLASH_COMMANDS: list = []
 
 def _command_names() -> list[str]:
     return [c.name for c in SLASH_COMMANDS]
-
-
-def _command_descriptions() -> dict:
-    return {c.name: c.desc for c in SLASH_COMMANDS}
 
 
 def _is_known_slash(line: str) -> bool:
@@ -563,7 +726,7 @@ def run_repl(cfg: dict, console: "Console | None" = None,
         console=console,
         context_limit=agent.get_context_limit(model, cfg),
     )
-    confirm_gate = _make_confirm_gate(console, lambda: state.prompt_session)
+    confirm_gate = make_confirm_gate(console)
 
     global SLASH_COMMANDS
     SLASH_COMMANDS = _build_slash_commands(confirm_gate)
@@ -626,8 +789,6 @@ def run_repl(cfg: dict, console: "Console | None" = None,
                 else:
                     console.unknown_command()
                 continue
-            if line in ("/quit", "/exit", "/q"):
-                return 0
             if not _dispatch_slash(state, line):
                 return 0
             continue
