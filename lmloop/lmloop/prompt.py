@@ -17,7 +17,7 @@ from prompt_toolkit.styles import Style
 from . import agent
 from .config import STATE_ROOT
 from .files_index import list_project_paths
-from .ui import Console, format_input_prompt, short_model_name, short_path, strip_ansi
+from .ui import Console, drain_tty_input, format_input_prompt, short_model_name, short_path, strip_ansi
 
 
 class ExitREPL(Exception):
@@ -214,21 +214,27 @@ def build_prompt_session(
         else:
             b.start_completion(select_first=False)
 
-    # Ctrl-O expands the latest collapsed thinking or tool response once
-    # per collapse payload (new content resets via on_collapse).
+    # Ctrl-O opens prior-turn thinking (oldest first, one pager). No cycle.
+    # Mid-stream keys are drained before the prompt so they cannot steal the TTY.
     @kb.add("c-o")
     def _expand_collapse(event):
         clear_exit_hint()
         st = state_getter()
-        if st is None or not getattr(st, "last_collapse_text", ""):
+        if st is None:
             return
-        if getattr(st, "collapse_expanded", False):
-            return
-        console = getattr(st, "console", None) or Console(color=color)
-        # Leave the prompt UI, print the block, then redraw.
+        body = st.prior_thinking_transcript()
+        console = st.console or Console(color=color)
         event.app.renderer.erase()
-        console.expand_collapse(st.last_collapse_kind, st.last_collapse_text)
-        st.collapse_expanded = True
+        if not body:
+            if st.thinking_count() <= 0:
+                console.hint("[no prior thinking yet — live thinking shows as it streams]")
+            else:
+                console.hint(
+                    "[only this turn's thinking is stored — it already streamed live]"
+                )
+        else:
+            from .markdown_view import page_ansi
+            page_ansi(body)
         event.app.invalidate()
 
     def bottom_toolbar():
@@ -242,7 +248,13 @@ def build_prompt_session(
             st.stats, st.user_turns, st.context_limit,
             st.messages, st.context_reserve, inline=True,
         )
-        return strip_ansi(line) if line else ""
+        parts = []
+        if line:
+            parts.append(strip_ansi(line))
+        n_prior = st.prior_thinking_count()
+        if n_prior:
+            parts.append(f"Ctrl-O · {n_prior} prior thinking")
+        return " · ".join(parts) if parts else ""
 
     def message():
         """Decorative prompt only — cwd/model context; never LLM chat content."""
@@ -294,6 +306,7 @@ def read_line(session: PromptSession) -> str:
     clear = getattr(session, "lmloop_clear_exit", None)
     if clear:
         clear()
+    drain_tty_input()
     line = session.prompt()
     if clear:
         clear()

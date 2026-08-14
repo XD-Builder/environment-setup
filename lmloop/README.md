@@ -6,11 +6,12 @@ code search, web search, web fetch), and wraps it in persistent per-project memo
 gets smarter about your projects over time. Everything — model, loop, memory —
 stays on your machine.
 
-The agent loop is Python 3.9+ **stdlib only**. The interactive REPL requires
-[`prompt_toolkit`](https://github.com/prompt-toolkit/python-prompt-toolkit)
-and [`rich`](https://github.com/Textualize/rich) (markdown rendering), installed
-into `lmloop/.venv` by setup. State is human-readable JSONL/markdown under
-`~/.lmloop/`.
+The agent loop is Python 3.10+ **stdlib** for HTTP and tools. The interactive REPL
+requires [`prompt_toolkit`](https://github.com/prompt-toolkit/python-prompt-toolkit)
+and [`rich`](https://github.com/Textualize/rich). Web search uses
+[`ddgs`](https://github.com/deedy5/ddgs) (no API key), then urllib fallbacks.
+Setup installs these into `lmloop/.venv`. State is human-readable JSONL/markdown
+under `~/.lmloop/`.
 
 ## Setup
 
@@ -20,7 +21,7 @@ into `lmloop/.venv` by setup. State is human-readable JSONL/markdown under
 bash lmloop/setup-lmloop.sh
 ```
 
-Setup creates `lmloop/.venv`, installs `requirements.txt` (prompt_toolkit), and
+Setup creates `lmloop/.venv`, installs `requirements.txt` (prompt_toolkit, rich, ddgs), and
 symlinks `lmloop` into `~/.local/bin`.
 
 Run tests:
@@ -28,6 +29,8 @@ Run tests:
 ```bash
 cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 ```
+
+Contribution practices (module layout, exceptions, where to patch tests) are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 LM Studio's `lms` CLI is optional but recommended: with it installed, lmloop
 auto-starts the server (`lms server start`) and auto-loads a model (`lms load`)

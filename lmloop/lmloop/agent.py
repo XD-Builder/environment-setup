@@ -5,13 +5,14 @@ The loop mirrors LM Studio's .act() semantics: model responds, requested tools
 run locally, results feed back, repeat until the model stops calling tools or
 max_rounds is hit. Tool errors are reported back to the model as text so it
 can self-correct instead of crashing the session.
+
+Stream assembly lives in ``stream.py``. Live printers live in ``display.py``.
 """
 
 import json
 import re
 import shutil
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -21,28 +22,41 @@ from . import memory, tools
 from .commands import RESERVED_SKILL_NAMES
 from .config import STATE_ROOT
 from . import status as status_mod
+from .display import (
+    THINK_LINE_PREFIX,
+    _GeneratingIndicator,
+    _MarkdownLivePrinter,
+    _StreamPrinter,
+    _ThinkingLive,
+    _default_echo_delta,
+    _emit_assistant_content,
+    _load_rich,
+    _open_live_display,
+    _rich_live_available,
+)
+from .stream import (
+    StreamError,
+    _REPEAT_TIMES,
+    _REPEAT_WINDOW,
+    _ingest_text_delta,
+    _merge_tool_call_delta,
+    _read_sse,
+    _repeated_near_trailing_lines,
+    _repeated_trailing_lines,
+    _tail_repeats,
+    _think_line_similar,
+)
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 USER_SKILLS_DIR = STATE_ROOT / "skills"
 SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
-# Stream assembly: some servers send cumulative snapshots instead of true deltas.
-_REPEAT_WINDOW = 400
-_REPEAT_TIMES = 3
-
-# OpenAI-compatible SSE / API protocol constants (external wire format).
-SSE_DATA_PREFIX = "data:"
-SSE_DONE = "[DONE]"
 API_CHAT_PATH = "/chat/completions"
 API_MODELS_PATH = "/models"
 NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")
-REASONING_FIELDS = ("reasoning_content", "reasoning")
 CHARS_PER_TOKEN_ESTIMATE = 4
 CONTEXT_PRESSURE_RATIO = 0.80
 CONTINUE_NUDGE_MAX_CHARS = 400
-
-# Cached optional rich imports: (Console, Live, Markdown) or False if unavailable.
-_RICH = None
 
 
 class ServerError(RuntimeError):
@@ -51,9 +65,13 @@ class ServerError(RuntimeError):
 
 # ---------------------------------------------------------------- server
 
-def _get(base_url: str, path: str, timeout: int = 5):
-    with urllib.request.urlopen(base_url.rstrip("/") + path, timeout=timeout) as resp:
+def _get_json(url: str, timeout: int = 5) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
+
+
+def _get(base_url: str, path: str, timeout: int = 5):
+    return _get_json(base_url.rstrip("/") + path, timeout)
 
 
 def list_models(base_url: str) -> "list[str]":
@@ -69,11 +87,6 @@ def _native_base(base_url: str) -> str:
     if url.endswith("/v1"):
         return url[:-3]
     return url
-
-
-def _get_json(url: str, timeout: int = 5) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read().decode())
 
 
 def _model_matches(entry: dict, model: str) -> bool:
@@ -259,9 +272,6 @@ def extract_skill_markdown(text: str) -> str:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         body = "\n".join(lines).strip()
-    if not body.startswith("#"):
-        # keep as-is; caller may still save after user review
-        pass
     if body and not body.endswith("\n"):
         body += "\n"
     return body
@@ -296,11 +306,6 @@ def generate_skill_draft(cfg: dict, model: str, name: str, brief: str) -> str:
     return extract_skill_markdown(msg.get("content") or "")
 
 
-def load_prompt(name: str) -> str:
-    """Alias for load_skill (older call sites)."""
-    return load_skill(name)
-
-
 def system_prompt(cfg: dict) -> str:
     base = load_skill("system")
     names = tools.tool_names()
@@ -323,40 +328,6 @@ def system_prompt(cfg: dict) -> str:
 
 # ---------------------------------------------------------------- chat call
 
-def _merge_tool_call_delta(acc: dict, deltas) -> None:
-    """Accumulate streamed tool_call deltas keyed by index (OpenAI SSE shape).
-
-    Skips malformed entries so one bad SSE chunk cannot kill the turn.
-    """
-    if not isinstance(deltas, list):
-        return
-    for tc in deltas:
-        if not isinstance(tc, dict):
-            continue
-        try:
-            idx = int(tc.get("index") or 0)
-        except (TypeError, ValueError):
-            continue
-        if idx not in acc:
-            acc[idx] = {
-                "id": "",
-                "type": "function",
-                "function": {"name": "", "arguments": ""},
-            }
-        entry = acc[idx]
-        if tc.get("id"):
-            entry["id"] = tc["id"]
-        if tc.get("type"):
-            entry["type"] = tc["type"]
-        fn = tc.get("function") or {}
-        if not isinstance(fn, dict):
-            continue
-        if fn.get("name"):
-            entry["function"]["name"] += str(fn["name"])
-        if "arguments" in fn and fn["arguments"] is not None:
-            entry["function"]["arguments"] += str(fn["arguments"])
-
-
 def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | None",
                   stream: bool) -> urllib.request.Request:
     payload = {
@@ -377,18 +348,18 @@ def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | Non
     )
 
 
-def _raise_http_error(e: urllib.error.HTTPError, cfg: dict) -> None:
-    body = ""
-    try:
-        body = e.read().decode("utf-8", errors="replace")[:800]
-    except Exception:
-        body = ""
-    lower = body.lower()
+def _raise_http_error(e: urllib.error.HTTPError, cfg: dict, body: "str | None" = None) -> None:
+    if body is None:
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:800]
+        except OSError:
+            body = ""
+    lower = (body or "").lower()
     if e.code in (400, 413) and any(
         t in lower for t in ("context", "token", "length", "too long", "maximum")
     ):
         raise ServerError(status_mod.msg_context_overflow()) from e
-    raise ServerError(f"LM Studio returned HTTP {e.code}: {body[:500]}") from e
+    raise ServerError(f"LM Studio returned HTTP {e.code}: {(body or '')[:500]}") from e
 
 
 def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
@@ -408,132 +379,6 @@ def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None")
         raise ServerError(f"Unexpected response shape: {json.dumps(data)[:500]}")
 
 
-def _ingest_text_delta(parts: list, piece: str) -> str:
-    """Append a stream text piece; normalize cumulative snapshots to a true suffix.
-
-    Returns the incremental text that was newly added (may be empty).
-    Cumulative servers re-send the full text so far; only the new suffix is kept.
-    An exact replay (piece == so_far) is ignored as no-new-tokens.
-    A near-complete shorter prefix is treated as a stale cumulative snapshot;
-    small chunks that merely happen to be prefixes (common with incremental
-    streams) are appended normally.
-    """
-    if not piece:
-        return ""
-    so_far = "".join(parts)
-    if so_far and piece.startswith(so_far):
-        suffix = piece[len(so_far):]
-        if suffix:
-            parts.append(suffix)
-        return suffix
-    # Stale cumulative snapshot: long prefix of so_far, not a small delta.
-    if (
-        so_far
-        and len(piece) < len(so_far)
-        and so_far.startswith(piece)
-        and len(piece) >= max(64, len(so_far) * 4 // 5)
-    ):
-        return ""
-    parts.append(piece)
-    return piece
-
-
-def _tail_repeats(text: str, window: int = _REPEAT_WINDOW, times: int = _REPEAT_TIMES) -> bool:
-    """True when the last `window` chars repeat `times` times consecutively."""
-    need = window * times
-    if len(text) < need:
-        return False
-    tail = text[-need:]
-    unit = tail[:window]
-    return unit * times == tail
-
-
-def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
-              on_tools=None) -> "tuple[dict, dict]":
-    """Parse an OpenAI-style SSE body into (assistant message, usage)."""
-    content_parts: list = []
-    reasoning_parts: list = []
-    tool_acc: dict = {}
-    usage: dict = {}
-    saw_data = False
-    content_halted = False
-    tools_started = False
-    while True:
-        raw = resp.readline()
-        if not raw:
-            break
-        line = raw.decode("utf-8", errors="replace").strip()
-        if not line or line.startswith(":"):
-            continue
-        if not line.startswith(SSE_DATA_PREFIX):
-            continue
-        data = line[len(SSE_DATA_PREFIX):].strip()
-        if data == SSE_DONE:
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        saw_data = True
-        if on_activity:
-            on_activity()
-        if chunk.get("usage"):
-            usage = chunk["usage"]
-        choices = chunk.get("choices") or []
-        if not choices:
-            continue
-        delta = choices[0].get("delta") or {}
-        piece = delta.get("content")
-        if piece and not content_halted:
-            incr = _ingest_text_delta(content_parts, piece)
-            if incr:
-                if on_delta:
-                    on_delta(incr)
-                if _tail_repeats("".join(content_parts)):
-                    content_halted = True
-        # Qwen / some LM Studio builds stream chain-of-thought separately.
-        reasoning = None
-        for field in REASONING_FIELDS:
-            if delta.get(field):
-                reasoning = delta[field]
-                break
-        if reasoning:
-            incr_r = _ingest_text_delta(reasoning_parts, reasoning)
-            if incr_r and on_reasoning:
-                on_reasoning(incr_r)
-        tc_deltas = delta.get("tool_calls")
-        if tc_deltas:
-            try:
-                if not tools_started:
-                    tools_started = True
-                    if on_tools:
-                        on_tools()
-                _merge_tool_call_delta(tool_acc, tc_deltas)
-            except Exception:
-                # Never let a hostile/malformed tool chunk abort the stream.
-                continue
-
-    if not saw_data:
-        raise ServerError("Empty stream from LM Studio (no SSE data)")
-
-    content = "".join(content_parts)
-    reasoning_text = "".join(reasoning_parts)
-    has_named_tools = any(
-        ((tool_acc[i].get("function") or {}).get("name") or "").strip()
-        for i in tool_acc
-    )
-    if not content.strip() and not has_named_tools and reasoning_text:
-        # Fallback when the server only streamed reasoning (or empty-name
-        # tool stubs) and no final content.
-        content = reasoning_text
-    msg: dict = {"role": "assistant", "content": content}
-    if tool_acc:
-        msg["tool_calls"] = [tool_acc[i] for i in sorted(tool_acc)]
-    if reasoning_text:
-        msg["_reasoning"] = reasoning_text
-    return msg, usage
-
-
 def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None",
                  on_delta=None, on_activity=None, on_reasoning=None,
                  on_tools=None) -> "tuple[dict, dict]":
@@ -549,8 +394,13 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
 
     try:
         return _open_and_read(req)
+    except StreamError as e:
+        raise ServerError(str(e)) from e
     except urllib.error.HTTPError as e:
-        body = e.read().decode()[:800]
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:800]
+        except OSError:
+            body = ""
         payload = json.loads(req.data.decode())
         # Older / stricter servers may reject stream_options — retry without it.
         if e.code == 400 and "stream_options" in payload:
@@ -561,17 +411,13 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
             )
             try:
                 return _open_and_read(retry)
+            except StreamError as e2:
+                raise ServerError(str(e2)) from e2
             except urllib.error.HTTPError as e2:
                 _raise_http_error(e2, cfg)
             except OSError as e2:
                 raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e2}")
-        # Reconstruct HTTPError-like handling with already-read body.
-        lower = body.lower()
-        if e.code in (400, 413) and any(
-            t in lower for t in ("context", "token", "length", "too long", "maximum")
-        ):
-            raise ServerError(status_mod.msg_context_overflow())
-        raise ServerError(f"LM Studio returned HTTP {e.code}: {body[:500]}")
+        _raise_http_error(e, cfg, body=body)
     except OSError as e:
         raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e}")
 
@@ -599,328 +445,68 @@ def _accumulate_usage(stats: "dict | None", usage: dict) -> None:
     stats["last_completion_tokens"] = int(usage.get("completion_tokens") or 0)
 
 
-def _default_echo_delta(piece: str) -> None:
-    sys.stdout.write(piece)
-    sys.stdout.flush()
+# Soft-stop fallback: models lack a "meant to tool-call" signal, so we
+# treat first-line / last-line prefixes as intent-only narration.
+_INTENT_STARTS = (
+    "let me",
+    "i'll",
+    "i will",
+    "i'm going to",
+    "i am going to",
+    "i'm about to",
+    "i am about to",
+    "next,",
+    "next:",
+    "next ",
+    "now i'll",
+    "now i will",
+    "now let me",
+    "i need to",
+    "looking at",
+    "looking into",
+    "diving",
+    "exploring",
+    "checking",
+    "investigating",
+)
+_CODE_EXTS = frozenset({
+    "py", "md", "go", "ts", "js", "tsx", "jsx", "rs", "java", "c", "h", "cpp",
+})
 
 
-class _GeneratingIndicator:
-    """TTY spinner while waiting for the first streamed token.
-
-    Once cleared (content/reasoning/tools arrived), further ``tick`` calls are
-    no-ops — later SSE chunks (usage, trailing tool deltas) must not resurrect
-    the spinner onto the round/tool lines.
-    """
-
-    _FRAMES = "⠋⠙⠹⠸⠴⠦⠧⠇⠏"
-
-    def __init__(self):
-        self._n = 0
-        self._shown = False
-        self._stopped = False
-
-    def tick(self) -> None:
-        if self._stopped or not sys.stdout.isatty():
-            return
-        frame = self._FRAMES[self._n % len(self._FRAMES)]
-        self._n += 1
-        sys.stdout.write(f"\r  {frame} generating…")
-        sys.stdout.flush()
-        self._shown = True
-
-    def clear(self) -> None:
-        self._stopped = True
-        if not self._shown:
-            return
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
-        self._shown = False
+def _line_has_intent(line: str) -> bool:
+    s = (line or "").strip().lower()
+    return any(s.startswith(p) for p in _INTENT_STARTS)
 
 
-def _load_rich():
-    """Load rich Console/Live/Markdown once. Returns the tuple or False."""
-    global _RICH
-    if _RICH is not None:
-        return _RICH
-    try:
-        from rich.console import Console
-        from rich.live import Live
-        from rich.markdown import Markdown
-        _RICH = (Console, Live, Markdown)
-    except ImportError:
-        _RICH = False
-    return _RICH
-
-
-def _rich_live_available() -> bool:
-    if not sys.stdout.isatty():
+def _has_continue_intent(text: str) -> bool:
+    s = (text or "").strip()
+    if not s:
         return False
-    return _load_rich() is not False
-
-
-class _StreamPrinter:
-    """Live plain-token writer with blank-line suppression (or silent tracker)."""
-
-    def __init__(self, write=None):
-        self._write = write
-        self._leading = ""
-        self._trailing_nl = ""
-        self._started = False
-
-    @property
-    def visible(self) -> bool:
-        return self._started
-
-    def feed(self, piece: str) -> None:
-        if not piece:
-            return
-        if not self._started:
-            self._leading += piece
-            if not self._leading.strip():
-                return
-            text = self._leading.lstrip("\r\n")
-            self._leading = ""
-            self._started = True
-            if text:
-                self._emit(text)
-            return
-        self._emit(piece)
-
-    def _out(self, text: str) -> None:
-        if text and self._write is not None:
-            self._write(text)
-
-    def _emit(self, text: str) -> None:
-        i = len(text)
-        while i > 0 and text[i - 1] in "\r\n":
-            i -= 1
-        body, nl = text[:i], text[i:]
-        if body:
-            if self._trailing_nl:
-                self._out("\n")
-                self._trailing_nl = ""
-            self._out(body)
-        if nl:
-            self._trailing_nl = "\n"
-
-    def reset(self) -> None:
-        self._leading = ""
-        self._trailing_nl = ""
-        self._started = False
-
-    def finish(self) -> bool:
-        self._leading = ""
-        if not self._started:
-            self._trailing_nl = ""
-            self.reset()
-            return False
-        self._out("\n")
-        self._trailing_nl = ""
-        started = self._started
-        self.reset()
-        return started
-
-
-class _MarkdownLivePrinter:
-    """Stream tokens into a rich.Live Markdown view (live + prettied)."""
-
-    def __init__(self, color: bool = True):
-        self._parts: list = []
-        self._leading = ""
-        self._started = False
-        self._live = None
-        self._color = color
-
-    @property
-    def visible(self) -> bool:
-        return self._started
-
-    def feed(self, piece: str) -> None:
-        if not piece:
-            return
-        if not self._started:
-            self._leading += piece
-            if not self._leading.strip():
-                return
-            text = self._leading.lstrip("\r\n")
-            self._leading = ""
-            self._started = True
-            self._ensure_live()
-            if text:
-                self._parts.append(text)
-                self._refresh()
-            return
-        self._parts.append(piece)
-        self._refresh()
-
-    def _ensure_live(self) -> None:
-        if self._live is not None:
-            return
-        rich = _load_rich()
-        if not rich:
-            return
-        Console, Live, Markdown = rich
-        console = Console(
-            highlight=False,
-            soft_wrap=True,
-            color_system="auto" if self._color else None,
-            force_terminal=True,
-        )
-        # ellipsis (not visible): Live can only reliably redraw within the
-        # viewport. vertical_overflow="visible" leaves prior frames in
-        # scrollback as the markdown grows, which looks like repeated lines.
-        # Live.stop() switches to visible for a single final full render.
-        self._live = Live(
-            Markdown(""),
-            console=console,
-            refresh_per_second=12,
-            vertical_overflow="ellipsis",
-        )
-        self._live.start()
-
-    def _refresh(self) -> None:
-        if self._live is None:
-            return
-        rich = _load_rich()
-        if not rich:
-            return
-        _Console, _Live, Markdown = rich
-        self._live.update(Markdown("".join(self._parts)))
-
-    def reset(self) -> None:
-        self._parts = []
-        self._leading = ""
-        self._started = False
-        if self._live is not None:
-            try:
-                self._live.stop()
-            except Exception:
-                pass
-            self._live = None
-
-    def finish(self) -> bool:
-        self._leading = ""
-        if not self._started:
-            self.reset()
-            return False
-        if self._live is not None:
-            self._refresh()
-            self._live.stop()
-            self._live = None
-        started = self._started
-        self._parts = []
-        self._started = False
-        return started
-
-
-class _ThinkingLive:
-    """Dim gray thinking stream that can be erased from the TTY when done."""
-
-    def __init__(self, color: bool = True):
-        use = color and sys.stdout.isatty()
-        self._dim = "\033[2m" if use else ""
-        self._reset = "\033[0m" if use else ""
-        self._parts: list = []
-        self._line_buf = ""
-        self._lines_shown = 0
-        self._active = False
-        self._erased = False
-
-    @property
-    def active(self) -> bool:
-        return self._active and not self._erased
-
-    def text(self) -> str:
-        return "".join(self._parts)
-
-    def feed(self, piece: str) -> None:
-        if not piece or self._erased:
-            return
-        self._active = True
-        self._parts.append(piece)
-        self._line_buf += piece
-        while "\n" in self._line_buf:
-            line, self._line_buf = self._line_buf.split("\n", 1)
-            self._write_line(line)
-
-    def _write_line(self, line: str) -> None:
-        sys.stdout.write(f"{self._dim}  ▎{line}{self._reset}\n")
-        sys.stdout.flush()
-        self._lines_shown += 1
-
-    def _flush_partial(self) -> None:
-        if self._line_buf:
-            self._write_line(self._line_buf.rstrip("\r\n"))
-            self._line_buf = ""
-
-    def erase(self) -> str:
-        """Remove thinking lines from the TTY; return full text for Ctrl+O."""
-        if not self._active and not self._parts:
-            return ""
-        self._flush_partial()
-        text = self.text()
-        if self._lines_shown and sys.stdout.isatty():
-            for _ in range(self._lines_shown):
-                sys.stdout.write("\033[1A\033[2K")
-            sys.stdout.flush()
-        self._lines_shown = 0
-        self._active = False
-        self._erased = True
-        return text
-
-    def finish_keep(self) -> str:
-        """Flush remaining line without erasing (reasoning-only final reply)."""
-        self._flush_partial()
-        self._active = False
-        return self.text()
-
-
-def _emit_assistant_content(echo, content: str, printer, live_mode: str) -> None:
-    """Finish live display; echo only when nothing was streamed on-screen."""
-    streamed = False
-    if printer is not None:
-        streamed = bool(printer.finish())
-    if not content:
-        return
-    # Live modes already painted tokens; skip only when something was shown.
-    # Reasoning→content fallback never hits the printer — must echo.
-    if live_mode in ("plain", "markdown") and streamed:
-        return
-    echo(content)
-
-
-# Soft-stop fallback: phrase list as data (models lack a "meant to tool-call" signal).
-CONTINUE_INTENT_PHRASES = (
-    r"let me\b",
-    r"i(?:'ll| will)\b",
-    r"i(?:'m| am) (?:going to|about to)\b",
-    r"next[,:]?\s",
-    r"now (?:i(?:'ll| will)|let me)\b",
-    r"(?:i need to|looking (?:at|into)|diving|exploring|checking|investigating)\b",
-)
-_CONTINUE_PHRASE = "|".join(CONTINUE_INTENT_PHRASES)
-_CONTINUE_INTENT_RE = re.compile(
-    rf"(?is)(?:^\s*(?:{_CONTINUE_PHRASE}).{{0,{CONTINUE_NUDGE_MAX_CHARS}}}$|"
-    rf"(?:{_CONTINUE_PHRASE}).{{0,80}}$)"
-)
-# Grounded answers that open with "Looking at…" should not be nudged.
-# Prefer hard evidence (paths, URLs, code) — not numbered plan lists.
-_EVIDENCE_RE = re.compile(
-    r"(?:"
-    r"`[^`]+`|"                              # inline code
-    r"\b[\w./+-]+\.(?:py|md|go|ts|js|tsx|jsx|rs|java|c|h|cpp):\d+\b|"
-    r"(?:^|\s)/(?:[\w.-]+/)+[\w.-]+|"        # path-like
-    r"https?://"
-    r")",
-    re.M,
-)
-
-# Back-compat alias for tests / rollback that historically compared nudge text.
-_NUDGE_CONTINUE = status_mod.NUDGE_CONTINUE_TEXT
+    if _line_has_intent(s):
+        return True
+    last_line = s.rsplit("\n", 1)[-1]
+    if _line_has_intent(last_line):
+        return True
+    return _line_has_intent(s.rsplit(".", 1)[-1])
 
 
 def _looks_grounded(text: str) -> bool:
-    return bool(_EVIDENCE_RE.search(text or ""))
+    """True when the reply cites a path, URL, or inline code — not just a plan."""
+    if not text:
+        return False
+    if "`" in text or "http://" in text or "https://" in text:
+        return True
+    for raw in text.replace(",", " ").replace("(", " ").replace(")", " ").split():
+        token = raw.strip()
+        if token.startswith("/") and "/" in token[1:]:
+            return True
+        if ":" not in token or "." not in token:
+            continue
+        path, _, rest = token.partition(":")
+        if rest[:1].isdigit() and path.rsplit(".", 1)[-1].lower() in _CODE_EXTS:
+            return True
+    return False
 
 
 def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
@@ -938,7 +524,7 @@ def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
         return False
     if len(text) > CONTINUE_NUDGE_MAX_CHARS:
         return False
-    if not _CONTINUE_INTENT_RE.search(text):
+    if not _has_continue_intent(text):
         return False
     if _looks_grounded(text):
         return False
@@ -946,37 +532,8 @@ def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
     return True
 
 
-def _open_live_display(echo_delta, color: bool = True):
-    """Return (printer, mode) where mode is silent|plain|markdown."""
-    if echo_delta is False:
-        return _StreamPrinter(None), "silent"
-    if echo_delta is True:
-        return _StreamPrinter(_default_echo_delta), "plain"
-    if callable(echo_delta):
-        return _StreamPrinter(echo_delta), "plain"
-    # None = auto: stream markdown live when possible, else plain tokens.
-    if _rich_live_available():
-        return _MarkdownLivePrinter(color=color), "markdown"
-    return _StreamPrinter(_default_echo_delta), "plain"
-
-
-def _resolve_echo_delta(echo_delta):
-    """Back-compat helper for tests: False/None silent writer mapping.
-
-    Prefer ``_open_live_display`` for real display selection.
-    """
-    if echo_delta is None or echo_delta is False:
-        return None
-    if echo_delta is True:
-        return _default_echo_delta
-    return echo_delta
-
-
 def _call_echo_tool(echo_tool, name: str, preview: str, stats: "dict | None") -> None:
-    try:
-        echo_tool(name, preview, stats)
-    except TypeError:
-        echo_tool(name, preview)
+    echo_tool(name, preview, stats)
 
 
 def _named_tool_calls(tool_calls: list) -> list:
@@ -1022,45 +579,12 @@ def _rollback_incomplete_messages(messages: list, start: int) -> None:
         break
 
 
-def _safe_clear_indicator(indicator) -> None:
-    if indicator is None:
-        return
-    try:
-        indicator.clear()
-    except Exception:
-        pass
-
-
-def _safe_finish_printer(printer) -> None:
-    if printer is None:
-        return
-    try:
-        printer.finish()
-    except Exception:
-        try:
-            printer.reset()
-        except Exception:
-            pass
-
-
-def _safe_close_thinking(thinking, *, keep: bool = False) -> None:
-    if thinking is None:
-        return
-    try:
-        if keep and thinking.active:
-            thinking.finish_keep()
-        elif thinking.active:
-            thinking.erase()
-    except Exception:
-        pass
-
-
 # ---------------------------------------------------------------- act loop
 
 def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None,
         confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
         echo_status=None, stats: "dict | None" = None, echo_round=None,
-        on_collapse=None, context_limit: int = 0,
+        on_thinking=None, context_limit: int = 0,
         context_reserve: int = 2048) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
@@ -1075,8 +599,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     Optional callbacks:
     - ``echo_status(text)`` for lmloop status lines (defaults to ``echo``)
     - ``echo_round(round_idx, stats, messages)`` after each model round
-    - ``on_collapse(kind, text)`` when thinking/tool detail is stored for Ctrl+O
-      (kind is ``\"thinking\"`` or ``\"tool\"``)
+    - ``on_thinking(text)`` when thinking is stored for Ctrl+O
 
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
@@ -1120,20 +643,20 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             if use_stream and live_mode in ("silent", "markdown"):
                 indicator = _GeneratingIndicator()
             thinking_cleared = False
-            keep_thinking = False
             printer_finished = False
 
-            def _clear_thinking_for_output():
+            def _retire_thinking(*, keep: bool = False) -> str:
                 nonlocal thinking_cleared
                 if thinking_cleared or thinking is None:
-                    return
-                text = thinking.erase()
+                    return ""
+                text = thinking.finish_keep() if keep else thinking.erase()
                 thinking_cleared = True
-                if text.strip() and on_collapse:
-                    on_collapse("thinking", text)
+                if text.strip() and on_thinking:
+                    on_thinking(text)
+                return text
 
             def on_delta(piece: str, _printer=printer, _ind=indicator, _mode=live_mode) -> None:
-                _clear_thinking_for_output()
+                _retire_thinking()
                 if _ind is not None:
                     _ind.clear()
                 was = _printer.visible
@@ -1151,7 +674,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             def on_tools(_ind=indicator) -> None:
                 if _ind is not None:
                     _ind.clear()
-                _clear_thinking_for_output()
+                _retire_thinking()
 
             try:
                 msg, usage = _chat(
@@ -1162,7 +685,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     on_tools=on_tools if use_stream else None,
                 )
                 # Always retire the spinner before any post-stream prints.
-                _safe_clear_indicator(indicator)
+                if indicator is not None:
+                    indicator.clear()
                 _accumulate_usage(stats, usage)
                 turn_rounds += 1
                 tool_calls = _named_tool_calls(msg.get("tool_calls") or [])
@@ -1174,29 +698,21 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     content = reasoning_text
 
                 if tool_calls:
-                    _clear_thinking_for_output()
+                    _retire_thinking()
                 elif (
                     thinking is not None and thinking.active
                     and not tool_calls
                     and content
                     and content == reasoning_text
                 ):
-                    # Reasoning-only final already shown in gray — keep it.
-                    keep_thinking = True
-                    thinking.finish_keep()
-                    thinking_cleared = True
-                    if on_collapse:
-                        on_collapse("thinking", content)
+                    # Reasoning-only final: clear compact status, echo as answer.
+                    _retire_thinking(keep=True)
                 elif content and thinking is not None and thinking.active:
-                    _clear_thinking_for_output()
+                    _retire_thinking()
                 elif thinking is not None and thinking.active and not content and not tool_calls:
-                    keep_thinking = True
-                    kept = thinking.finish_keep()
-                    thinking_cleared = True
+                    kept = _retire_thinking(keep=True)
                     if kept.strip():
                         content = kept.strip()
-                        if on_collapse:
-                            on_collapse("thinking", kept)
 
                 store_content = content if content else ""
                 assistant_entry = {"role": "assistant", "content": store_content}
@@ -1207,8 +723,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                 # Finish Live/stream display before any other stdout writes
                 # (round breadcrumb, tool lines). Printing while rich.Live is
                 # active bypasses its cursor control and corrupts the frame.
-                # Skip re-echo when reasoning is already kept on screen.
-                if content and not keep_thinking:
+                if content:
                     _emit_assistant_content(
                         echo, content, printer if use_stream else None, live_mode,
                     )
@@ -1218,8 +733,6 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                 elif use_stream:
                     printer.finish()
                     printer_finished = True
-                    if content and keep_thinking and session_log:
-                        memory.log_event(session_log, "assistant", content)
 
                 if echo_round is not None:
                     echo_round(round_idx + 1, stats, messages, context_limit, context_reserve)
@@ -1238,7 +751,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     if soft_stop or (
                         nudge_count >= max_nudges
                         and content
-                        and _CONTINUE_INTENT_RE.search(content)
+                        and _has_continue_intent(content)
                         and not _looks_grounded(content)
                     ):
                         echo_status(status_mod.msg_stopped_unfinished())
@@ -1256,9 +769,6 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     arg_preview = args if len(args) <= 160 else args[:160] + "..."
                     _call_echo_tool(echo_tool, name, arg_preview, stats)
                     result = tools.dispatch(impls, name, args)
-                    detail = f"{name}({arg_preview})\n\n{result}"
-                    if on_collapse:
-                        on_collapse("tool", detail)
                     if session_log:
                         memory.log_event(
                             session_log, "tool",
@@ -1270,11 +780,12 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                         "content": result,
                     })
             finally:
-                _safe_clear_indicator(indicator)
-                if not keep_thinking:
-                    _safe_close_thinking(thinking, keep=False)
-                if not printer_finished:
-                    _safe_finish_printer(printer)
+                if indicator is not None:
+                    indicator.clear()
+                if thinking is not None and thinking.active:
+                    thinking.erase()
+                if not printer_finished and printer is not None:
+                    printer.finish()
 
         if stats is not None:
             stats["turns"] = stats.get("turns", 0) + 1
@@ -1283,15 +794,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             stats["interrupted"] = False
         echo_status(status_mod.msg_hit_max_rounds())
         return messages
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, Exception):
         _mark_interrupted()
         _rollback_incomplete_messages(messages, checkpoint)
         raise
-    except ServerError:
-        _mark_interrupted()
-        _rollback_incomplete_messages(messages, checkpoint)
-        raise
-    except Exception as e:
-        _mark_interrupted()
-        _rollback_incomplete_messages(messages, checkpoint)
-        raise ServerError(f"agent loop failed: {type(e).__name__}: {e}") from e

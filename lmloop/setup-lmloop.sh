@@ -1,30 +1,65 @@
 #!/bin/bash
-# One-time setup for lmloop. Agent loop is stdlib-only; the interactive REPL
-# requires prompt_toolkit + rich (installed into lmloop/.venv). Symlinks the
-# launcher into ~/.local/bin and checks the LM Studio toolchain.
+# One-time setup for lmloop. Requires Python 3.10+ (Homebrew python preferred
+# over Apple's 3.9). Creates lmloop/.venv, installs requirements (prompt_toolkit,
+# rich, ddgs), symlinks the launcher into ~/.local/bin, and checks LM Studio.
 set -e
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 VENV="$HERE/.venv"
+MIN_PY_MAJOR=3
+MIN_PY_MINOR=10
 
 echo "== lmloop setup =="
 
-# 1. Python
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "error: python3 not found. Install it first (brew install python3)." >&2
+py_at_least() {
+  "$1" -c "import sys; raise SystemExit(0 if sys.version_info >= (${MIN_PY_MAJOR}, ${MIN_PY_MINOR}) else 1)" 2>/dev/null
+}
+
+find_python() {
+  local c
+  for c in \
+    /opt/homebrew/bin/python3 \
+    /usr/local/bin/python3 \
+    python3.14 python3.13 python3.12 python3.11 python3.10 \
+    python3
+  do
+    if [ -x "$c" ] || command -v "$c" >/dev/null 2>&1; then
+      if py_at_least "$c"; then
+        command -v "$c" 2>/dev/null || echo "$c"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+PYTHON="$(find_python || true)"
+if [ -z "$PYTHON" ]; then
+  echo "error: Python ${MIN_PY_MAJOR}.${MIN_PY_MINOR}+ is required." >&2
+  echo "  Found: $(command -v python3 >/dev/null && python3 --version || echo 'no python3')" >&2
+  echo "  macOS:  brew install python" >&2
+  echo "  Linux:  install python3.12+ from your package manager" >&2
   exit 1
 fi
-PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-echo "python3 $PYVER found"
+echo "using $PYTHON ($("$PYTHON" --version 2>&1))"
 
-# 2. Local venv + REPL dependency (prompt_toolkit)
-echo "creating $VENV and installing prompt_toolkit + rich…"
-python3 -m venv "$VENV"
+# Recreate the venv when missing or too old (e.g. leftover Apple 3.9 tree).
+if [ ! -x "$VENV/bin/python" ] || ! py_at_least "$VENV/bin/python"; then
+  echo "creating $VENV and installing requirements…"
+  rm -rf "$VENV"
+  "$PYTHON" -m venv "$VENV"
+else
+  echo "reusing $VENV ($("$VENV/bin/python" --version 2>&1))"
+fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 python -m pip install --upgrade pip >/dev/null
 python -m pip install -r "$HERE/requirements.txt"
-python -c 'import prompt_toolkit; print("prompt_toolkit", prompt_toolkit.__version__)'
+python -c 'import sys
+from importlib.metadata import version
+print("python", "%d.%d.%d" % sys.version_info[:3])
+for pkg in ("prompt-toolkit", "rich", "ddgs"):
+    print(pkg, version(pkg))'
 deactivate
 
 # 3. Launcher symlink
