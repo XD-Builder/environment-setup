@@ -14,6 +14,7 @@ import re
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -100,7 +101,7 @@ def decisions_file(slug: "str | None" = None) -> Path:
 
 def add_learning(insight: str, type: str = "pattern", key: str = "",
                  confidence: int = 7, source: str = "observed",
-                 slug: "str | None" = None) -> dict:
+                 slug: "str | None" = None, cfg: "dict | None" = None) -> dict:
     if type not in LEARNING_TYPES:
         type = "pattern"
     key = re.sub(r"[^a-zA-Z0-9_-]", "-", key or insight[:40].strip().lower().replace(" ", "-"))
@@ -113,7 +114,7 @@ def add_learning(insight: str, type: str = "pattern", key: str = "",
         "source": source if source in ("observed", "user-stated", "inferred") else "observed",
     }
     _append_jsonl(learnings_file(slug), row)
-    _on_learning_written(row, slug)
+    KnowledgeGraph(slug).on_learning(row, cfg)
     return row
 
 
@@ -157,10 +158,10 @@ def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10
                   slug: "str | None" = None, cfg: "dict | None" = None) -> str:
     """Shared keyword search over learnings + decisions (used by recall_memory)."""
     if cfg and cfg.get("use_graph"):
-        ensure_graph(cfg, slug)
-        return _search_memory_graph(
+        kg = KnowledgeGraph(slug)
+        kg.ensure(cfg)
+        return kg.search(
             query, learning_limit=learning_limit, decision_limit=decision_limit,
-            slug=slug,
         )
     terms = _query_terms(query)
     learnings = get_learnings(query=query, limit=learning_limit, slug=slug)
@@ -184,7 +185,7 @@ def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10
 # ---------------------------------------------------------------- decisions
 
 def add_decision(decision: str, rationale: str = "", supersedes: str = "",
-                 slug: "str | None" = None) -> dict:
+                 slug: "str | None" = None, cfg: "dict | None" = None) -> dict:
     row = {
         "id": uuid.uuid4().hex[:12],
         "kind": "supersede" if supersedes else "decide",
@@ -195,7 +196,7 @@ def add_decision(decision: str, rationale: str = "", supersedes: str = "",
     if supersedes:
         row["supersedes"] = supersedes
     _append_jsonl(decisions_file(slug), row)
-    _on_decision_written(row, slug)
+    KnowledgeGraph(slug).on_decision(row, cfg)
     return row
 
 
@@ -406,160 +407,8 @@ def session_preview(path: Path, max_chars: int = 120) -> str:
 
 # ---------------------------------------------------------------- knowledge graph
 
-def graph_nodes_file(slug: "str | None" = None) -> Path:
-    return project_dir(slug) / "graph_nodes.jsonl"
-
-
-def graph_edges_file(slug: "str | None" = None) -> Path:
-    return project_dir(slug) / "graph_edges.jsonl"
-
-
-def set_active_session(path: "Path | None") -> "Path | None":
-    """Set the session used for in_session edges. Returns the previous path."""
-    global _ACTIVE_SESSION
-    prev = _ACTIVE_SESSION
-    _ACTIVE_SESSION = path
-    return prev
-
-
-def _graph_active(slug: "str | None" = None) -> bool:
-    return graph_nodes_file(slug).exists()
-
-
 def _node_id(typ: str, key: str) -> tuple:
     return (typ, key)
-
-
-def add_graph_node(typ: str, key: str, label: str = "", confidence: int = 7,
-                   source: str = "observed", extra: "dict | None" = None,
-                   slug: "str | None" = None) -> dict:
-    """Append a typed node. Latest row per (type, key) wins at read time."""
-    if typ not in GRAPH_NODE_TYPES:
-        raise ValueError(f"unknown graph node type {typ!r}")
-    row = {
-        "ts": _now(),
-        "type": typ,
-        "key": key,
-        "label": (label or key).strip(),
-        "confidence": max(0, min(10, int(confidence))),
-        "source": source,
-    }
-    if extra:
-        row.update(extra)
-    _append_jsonl(graph_nodes_file(slug), row)
-    return row
-
-
-def add_graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
-                   edge_type: str, note: str = "",
-                   slug: "str | None" = None) -> dict:
-    """Append an edge between existing nodes. Raises ValueError if invalid."""
-    if from_type not in GRAPH_NODE_TYPES or to_type not in GRAPH_NODE_TYPES:
-        raise ValueError("unknown node type")
-    if edge_type not in GRAPH_EDGE_TYPES:
-        raise ValueError(f"unknown edge type {edge_type!r}")
-    nodes = get_graph_nodes(slug)
-    if _node_id(from_type, from_key) not in nodes:
-        if from_type == "concept":
-            add_graph_node("concept", from_key, label=from_key, slug=slug)
-        else:
-            raise ValueError(f"unknown node {from_type}:{from_key}")
-    if _node_id(to_type, to_key) not in nodes:
-        if to_type == "concept":
-            add_graph_node("concept", to_key, label=to_key, slug=slug)
-        else:
-            raise ValueError(f"unknown node {to_type}:{to_key}")
-    row = {
-        "ts": _now(),
-        "from_type": from_type,
-        "from_key": from_key,
-        "to_type": to_type,
-        "to_key": to_key,
-        "edge_type": edge_type,
-        "note": (note or "").strip(),
-    }
-    _append_jsonl(graph_edges_file(slug), row)
-    return row
-
-
-def get_graph_nodes(slug: "str | None" = None) -> dict:
-    """Latest node per (type, key), hiding effective confidence <= 0."""
-    rows = _read_jsonl(graph_nodes_file(slug))
-    by_id: dict = {}
-    for row in rows:
-        typ, key = row.get("type") or "", row.get("key") or ""
-        if typ and key:
-            by_id[_node_id(typ, key)] = row
-    return {
-        k: r for k, r in by_id.items()
-        if _graph_node_live(r)
-    }
-
-
-def _graph_node_live(row: dict) -> bool:
-    typ = row.get("type")
-    if typ in ("learning", "concept"):
-        return _effective_confidence(row) > 0
-    return True
-
-
-def get_graph_edges(slug: "str | None" = None) -> list:
-    """Edges whose endpoints still exist after decay filtering. Latest-wins."""
-    nodes = get_graph_nodes(slug)
-    last: dict[tuple, dict] = {}
-    for row in _read_jsonl(graph_edges_file(slug)):
-        a = _node_id(row.get("from_type") or "", row.get("from_key") or "")
-        b = _node_id(row.get("to_type") or "", row.get("to_key") or "")
-        et = row.get("edge_type") or ""
-        if a not in nodes or b not in nodes or not et:
-            continue
-        last[(a, b, et)] = row
-    return list(last.values())
-
-
-def ensure_graph(cfg: dict, slug: "str | None" = None) -> None:
-    """Backfill nodes from existing memory. No-op when use_graph is off."""
-    if not cfg.get("use_graph"):
-        return
-    _backfill_graph(slug)
-
-
-def _backfill_graph(slug: "str | None" = None) -> None:
-    existing = get_graph_nodes(slug)
-    wrote = False
-    for r in get_learnings(limit=10000, slug=slug):
-        ident = _node_id("learning", r["key"])
-        if ident not in existing:
-            add_graph_node(
-                "learning", r["key"], label=r.get("insight") or r["key"],
-                confidence=int(r.get("confidence") or 7),
-                source=r.get("source") or "observed",
-                extra={"ts": r.get("ts") or _now()},
-                slug=slug,
-            )
-            wrote = True
-    for d in get_decisions(limit=10000, slug=slug):
-        ident = _node_id("decision", d["id"])
-        if ident not in existing:
-            add_graph_node(
-                "decision", d["id"], label=d.get("decision") or d["id"],
-                extra={"ts": d.get("date") or _now()},
-                slug=slug,
-            )
-            wrote = True
-    for path in all_sessions(slug=slug):
-        ident = _node_id("session", path.stem)
-        if ident not in existing:
-            add_graph_node(
-                "session", path.stem, label=session_preview(path),
-                extra={"path": str(path)},
-                slug=slug,
-            )
-            wrote = True
-    if not wrote and not graph_nodes_file(slug).exists():
-        path = graph_nodes_file(slug)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
 
 
 def _paths_in_text(text: str) -> list:
@@ -590,224 +439,412 @@ def _session_key() -> str:
     return _ACTIVE_SESSION.stem
 
 
-def _on_learning_written(row: dict, slug: "str | None") -> None:
-    if not _graph_active(slug):
-        return
-    add_graph_node(
-        "learning", row["key"], label=row.get("insight") or row["key"],
-        confidence=int(row.get("confidence") or 7),
-        source=row.get("source") or "observed",
-        extra={"ts": row.get("ts") or _now()},
-        slug=slug,
-    )
-    sess = _session_key()
-    if sess:
-        if _node_id("session", sess) not in get_graph_nodes(slug):
-            add_graph_node("session", sess, label=sess, extra={}, slug=slug)
-        add_graph_edge(
-            "learning", row["key"], "session", sess, "in_session",
-            note="auto", slug=slug,
-        )
-    for path in _paths_in_text(row.get("insight") or ""):
-        add_graph_node("file", path, label=path, slug=slug)
-        add_graph_edge(
-            "learning", row["key"], "file", path, "references",
-            note="auto", slug=slug,
-        )
+def _graph_node_live(row: dict) -> bool:
+    typ = row.get("type")
+    if typ in ("learning", "concept"):
+        return _effective_confidence(row) > 0
+    return True
 
 
-def _on_decision_written(row: dict, slug: "str | None") -> None:
-    if not _graph_active(slug):
-        return
-    add_graph_node(
-        "decision", row["id"], label=row.get("decision") or row["id"],
-        extra={"ts": row.get("date") or _now()},
-        slug=slug,
-    )
-    sess = _session_key()
-    if sess:
-        if _node_id("session", sess) not in get_graph_nodes(slug):
-            add_graph_node("session", sess, label=sess, extra={}, slug=slug)
-        add_graph_edge(
-            "decision", row["id"], "session", sess, "in_session",
-            note="auto", slug=slug,
+@dataclass
+class KnowledgeGraph:
+    """Opt-in JSONL knowledge graph for one project slug."""
+
+    slug: "str | None" = None
+
+    def nodes_path(self) -> Path:
+        return project_dir(self.slug) / "graph_nodes.jsonl"
+
+    def edges_path(self) -> Path:
+        return project_dir(self.slug) / "graph_edges.jsonl"
+
+    @staticmethod
+    def enabled(cfg: "dict | None") -> bool:
+        return bool(cfg and cfg.get("use_graph"))
+
+    def ensure(self, cfg: dict) -> None:
+        if not self.enabled(cfg):
+            return
+        self._backfill()
+
+    def add_node(self, typ: str, key: str, label: str = "", confidence: int = 7,
+                 source: str = "observed", extra: "dict | None" = None) -> dict:
+        if typ not in GRAPH_NODE_TYPES:
+            raise ValueError(f"unknown graph node type {typ!r}")
+        row = {
+            "ts": _now(),
+            "type": typ,
+            "key": key,
+            "label": (label or key).strip(),
+            "confidence": max(0, min(10, int(confidence))),
+            "source": source,
+        }
+        if extra:
+            row.update(extra)
+        _append_jsonl(self.nodes_path(), row)
+        return row
+
+    def add_edge(self, from_type: str, from_key: str, to_type: str, to_key: str,
+                 edge_type: str, note: str = "") -> dict:
+        if from_type not in GRAPH_NODE_TYPES or to_type not in GRAPH_NODE_TYPES:
+            raise ValueError("unknown node type")
+        if edge_type not in GRAPH_EDGE_TYPES:
+            raise ValueError(f"unknown edge type {edge_type!r}")
+        nodes = self.nodes()
+        if _node_id(from_type, from_key) not in nodes:
+            if from_type == "concept":
+                self.add_node("concept", from_key, label=from_key)
+            else:
+                raise ValueError(f"unknown node {from_type}:{from_key}")
+        if _node_id(to_type, to_key) not in nodes:
+            if to_type == "concept":
+                self.add_node("concept", to_key, label=to_key)
+            else:
+                raise ValueError(f"unknown node {to_type}:{to_key}")
+        row = {
+            "ts": _now(),
+            "from_type": from_type,
+            "from_key": from_key,
+            "to_type": to_type,
+            "to_key": to_key,
+            "edge_type": edge_type,
+            "note": (note or "").strip(),
+        }
+        _append_jsonl(self.edges_path(), row)
+        return row
+
+    def nodes(self) -> dict:
+        """Latest node per (type, key), hiding effective confidence <= 0."""
+        by_id: dict = {}
+        for row in _read_jsonl(self.nodes_path()):
+            typ, key = row.get("type") or "", row.get("key") or ""
+            if typ and key:
+                by_id[_node_id(typ, key)] = row
+        return {k: r for k, r in by_id.items() if _graph_node_live(r)}
+
+    def edges(self) -> list:
+        """Edges whose endpoints still exist after decay filtering. Latest-wins."""
+        live = self.nodes()
+        last: dict[tuple, dict] = {}
+        for row in _read_jsonl(self.edges_path()):
+            a = _node_id(row.get("from_type") or "", row.get("from_key") or "")
+            b = _node_id(row.get("to_type") or "", row.get("to_key") or "")
+            et = row.get("edge_type") or ""
+            if a not in live or b not in live or not et:
+                continue
+            last[(a, b, et)] = row
+        return list(last.values())
+
+    def on_learning(self, row: dict, cfg: "dict | None") -> None:
+        if not self.enabled(cfg):
+            return
+        self.ensure(cfg)
+        self.add_node(
+            "learning", row["key"], label=row.get("insight") or row["key"],
+            confidence=int(row.get("confidence") or 7),
+            source=row.get("source") or "observed",
+            extra={
+                "ts": row.get("ts") or _now(),
+                "learning_type": row.get("type"),
+            },
         )
-    hay = (row.get("decision") or "") + " " + (row.get("rationale") or "")
-    for path in _paths_in_text(hay):
-        add_graph_node("file", path, label=path, slug=slug)
-        add_graph_edge(
-            "decision", row["id"], "file", path, "references",
-            note="auto", slug=slug,
-        )
-    if row.get("supersedes"):
-        nodes = get_graph_nodes(slug)
-        if _node_id("decision", row["supersedes"]) in nodes:
-            add_graph_edge(
-                "decision", row["id"], "decision", row["supersedes"],
-                "supersedes", note="auto", slug=slug,
+        sess = _session_key()
+        if sess:
+            if _node_id("session", sess) not in self.nodes():
+                self.add_node("session", sess, label=sess)
+            self.add_edge(
+                "learning", row["key"], "session", sess, "in_session", note="auto",
             )
+        for path in _paths_in_text(row.get("insight") or ""):
+            self.add_node("file", path, label=path)
+            self.add_edge(
+                "learning", row["key"], "file", path, "references", note="auto",
+            )
+
+    def on_decision(self, row: dict, cfg: "dict | None") -> None:
+        if not self.enabled(cfg):
+            return
+        self.ensure(cfg)
+        self.add_node(
+            "decision", row["id"], label=row.get("decision") or row["id"],
+            extra={"ts": row.get("date") or _now()},
+        )
+        sess = _session_key()
+        if sess:
+            if _node_id("session", sess) not in self.nodes():
+                self.add_node("session", sess, label=sess)
+            self.add_edge(
+                "decision", row["id"], "session", sess, "in_session", note="auto",
+            )
+        hay = (row.get("decision") or "") + " " + (row.get("rationale") or "")
+        for path in _paths_in_text(hay):
+            self.add_node("file", path, label=path)
+            self.add_edge(
+                "decision", row["id"], "file", path, "references", note="auto",
+            )
+        if row.get("supersedes"):
+            if _node_id("decision", row["supersedes"]) in self.nodes():
+                self.add_edge(
+                    "decision", row["id"], "decision", row["supersedes"],
+                    "supersedes", note="auto",
+                )
+
+    def record_skill_use(self, skill_name: str, session: "Path | None",
+                         cfg: "dict | None") -> None:
+        if not self.enabled(cfg):
+            return
+        self.ensure(cfg)
+        self.add_node("skill", skill_name, label=skill_name)
+        path = session or _ACTIVE_SESSION
+        if path is None:
+            return
+        sess = path.stem
+        if _node_id("session", sess) not in self.nodes():
+            self.add_node("session", sess, label=sess, extra={"path": str(path)})
+        self.add_edge(
+            "session", sess, "skill", skill_name, "uses_skill", note="auto",
+        )
+
+    def neighbor_lines(self, ident: tuple) -> list:
+        live = self.nodes()
+        adj = self._adjacency(self.edges())
+        lines = []
+        for dest, edge, direction in adj.get(ident, []):
+            if dest not in live:
+                continue
+            lines.append(self._format_edge_line({
+                "node": live[dest],
+                "edge": edge,
+                "direction": direction,
+            }))
+        return lines
+
+    def search(self, query: str, learning_limit: int = 10,
+               decision_limit: int = 10) -> str:
+        terms = _query_terms(query)
+        learnings = get_learnings(query=query, limit=learning_limit, slug=self.slug)
+        decisions = get_decisions(limit=50, slug=self.slug)
+        if terms:
+            decisions = [
+                d for d in decisions
+                if any(t in (d.get("decision") or "").lower() for t in terms)
+            ]
+        decisions = decisions[:decision_limit]
+        out = []
+        if learnings:
+            lines = []
+            for r in learnings:
+                lines.append(f"- ({r['type']}, {r['confidence']}/10) {r['insight']}")
+                lines.extend(self.neighbor_lines(_node_id("learning", r["key"])))
+            out.append("Learnings:\n" + "\n".join(lines))
+        if decisions:
+            lines = []
+            for d in decisions:
+                lines.append(f"- [{d['id']}] {d['decision']}")
+                lines.extend(self.neighbor_lines(_node_id("decision", d["id"])))
+            out.append("Decisions:\n" + "\n".join(lines))
+        if not out and terms:
+            extra = []
+            for ident, row in self.nodes().items():
+                hay = (row.get("key", "") + " " + row.get("label", "")).lower()
+                if any(t in hay for t in terms):
+                    extra.append(self._format_node_line(row))
+                    extra.extend(self.neighbor_lines(ident))
+            if extra:
+                out.append("Graph:\n" + "\n".join(extra))
+        return "\n\n".join(out) or "(no memory matches)"
+
+    def stats(self) -> str:
+        """Adjacency-list stats: counts, orphans, contradiction clusters."""
+        live = self.nodes()
+        edge_rows = self.edges()
+        by_type: dict[str, int] = {}
+        for row in live.values():
+            by_type[row["type"]] = by_type.get(row["type"], 0) + 1
+        linked: set[tuple] = set()
+        contradicts = []
+        for e in edge_rows:
+            a = _node_id(e["from_type"], e["from_key"])
+            b = _node_id(e["to_type"], e["to_key"])
+            linked.add(a)
+            linked.add(b)
+            if e.get("edge_type") == "contradicts":
+                contradicts.append(e)
+        orphans = [n for ident, n in live.items() if ident not in linked]
+        lines = [
+            f"nodes: {len(live)}  edges: {len(edge_rows)}",
+            "by type: " + (", ".join(f"{t}={c}" for t, c in sorted(by_type.items())) or "(none)"),
+            f"orphans: {len(orphans)}",
+            f"contradicts: {len(contradicts)}",
+        ]
+        if orphans:
+            lines.append("orphan nodes:")
+            for n in orphans[:20]:
+                lines.append(f"  ({n['type']}) {n['key']}")
+        if contradicts:
+            lines.append("contradiction pairs:")
+            for e in contradicts[:20]:
+                lines.append(
+                    f"  {e['from_type']}:{e['from_key']} ⇄ {e['to_type']}:{e['to_key']}"
+                    + (f" — {e['note']}" if e.get("note") else "")
+                )
+        adj_lines = []
+        for ident, row in sorted(live.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+            nlines = self.neighbor_lines(ident)
+            if not nlines:
+                continue
+            adj_lines.append(f"{row['type']}:{row['key']}")
+            adj_lines.extend(nlines)
+        if adj_lines:
+            lines.append("adjacency:")
+            lines.extend(adj_lines[:80])
+        return "\n".join(lines)
+
+    def contradiction_text(self) -> str:
+        """Text dump of contradicts edges for /memory reconcile."""
+        live = self.nodes()
+        pairs = [e for e in self.edges() if e.get("edge_type") == "contradicts"]
+        if not pairs:
+            return "(no contradicts edges)"
+        lines = []
+        for e in pairs:
+            a = live.get(_node_id(e["from_type"], e["from_key"]))
+            b = live.get(_node_id(e["to_type"], e["to_key"]))
+            lines.append(
+                f"- {e['from_type']}:{e['from_key']}: {(a or {}).get('label', '')}\n"
+                f"  vs {e['to_type']}:{e['to_key']}: {(b or {}).get('label', '')}"
+                + (f"\n  note: {e['note']}" if e.get("note") else "")
+            )
+        return "\n".join(lines)
+
+    def _backfill(self) -> None:
+        existing = self.nodes()
+        wrote = False
+        for r in get_learnings(limit=10000, slug=self.slug):
+            ident = _node_id("learning", r["key"])
+            if ident not in existing:
+                self.add_node(
+                    "learning", r["key"], label=r.get("insight") or r["key"],
+                    confidence=int(r.get("confidence") or 7),
+                    source=r.get("source") or "observed",
+                    extra={
+                        "ts": r.get("ts") or _now(),
+                        "learning_type": r.get("type"),
+                    },
+                )
+                wrote = True
+        for d in get_decisions(limit=10000, slug=self.slug):
+            ident = _node_id("decision", d["id"])
+            if ident not in existing:
+                self.add_node(
+                    "decision", d["id"], label=d.get("decision") or d["id"],
+                    extra={"ts": d.get("date") or _now()},
+                )
+                wrote = True
+        for path in all_sessions(slug=self.slug):
+            ident = _node_id("session", path.stem)
+            if ident not in existing:
+                self.add_node(
+                    "session", path.stem, label=session_preview(path),
+                    extra={"path": str(path)},
+                )
+                wrote = True
+        if not wrote and not self.nodes_path().exists():
+            path = self.nodes_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+
+    def _adjacency(self, edge_rows: list) -> dict:
+        adj: dict = {}
+        for e in edge_rows:
+            a = _node_id(e["from_type"], e["from_key"])
+            b = _node_id(e["to_type"], e["to_key"])
+            adj.setdefault(a, []).append((b, e, "out"))
+            adj.setdefault(b, []).append((a, e, "in"))
+        return adj
+
+    def _format_node_line(self, row: dict) -> str:
+        typ = row.get("type")
+        if typ == "learning":
+            subtype = row.get("learning_type") or "pattern"
+            return (
+                f"- ({subtype}, {row.get('confidence', '?')}/10) "
+                f"{row.get('label') or row.get('insight', '')}"
+            )
+        if typ == "decision":
+            return f"- [{row.get('key')}] {row.get('label')}"
+        return f"- ({typ}) {row.get('key')}: {row.get('label')}"
+
+    def _format_edge_line(self, hit: dict) -> str:
+        e = hit["edge"]
+        arrow = "←" if hit["direction"] == "in" else "→"
+        other = hit["node"]
+        return f"  {arrow} {e.get('edge_type')} {other.get('type')}:{other.get('key')}"
+
+
+def graph_nodes_file(slug: "str | None" = None) -> Path:
+    return KnowledgeGraph(slug).nodes_path()
+
+
+def graph_edges_file(slug: "str | None" = None) -> Path:
+    return KnowledgeGraph(slug).edges_path()
+
+
+def set_active_session(path: "Path | None") -> "Path | None":
+    """Set the session used for in_session edges. Returns the previous path."""
+    global _ACTIVE_SESSION
+    prev = _ACTIVE_SESSION
+    _ACTIVE_SESSION = path
+    return prev
+
+
+def add_graph_node(typ: str, key: str, label: str = "", confidence: int = 7,
+                   source: str = "observed", extra: "dict | None" = None,
+                   slug: "str | None" = None) -> dict:
+    """Append a typed node. Latest row per (type, key) wins at read time."""
+    return KnowledgeGraph(slug).add_node(
+        typ, key, label=label, confidence=confidence, source=source, extra=extra,
+    )
+
+
+def add_graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
+                   edge_type: str, note: str = "",
+                   slug: "str | None" = None) -> dict:
+    """Append an edge between existing nodes. Raises ValueError if invalid."""
+    return KnowledgeGraph(slug).add_edge(
+        from_type, from_key, to_type, to_key, edge_type, note=note,
+    )
+
+
+def get_graph_nodes(slug: "str | None" = None) -> dict:
+    """Latest node per (type, key), hiding effective confidence <= 0."""
+    return KnowledgeGraph(slug).nodes()
+
+
+def get_graph_edges(slug: "str | None" = None) -> list:
+    """Edges whose endpoints still exist after decay filtering. Latest-wins."""
+    return KnowledgeGraph(slug).edges()
+
+
+def ensure_graph(cfg: dict, slug: "str | None" = None) -> None:
+    """Backfill nodes from existing memory. No-op when use_graph is off."""
+    KnowledgeGraph(slug).ensure(cfg)
 
 
 def record_skill_use(skill_name: str, session: "Path | None" = None,
-                     slug: "str | None" = None) -> None:
+                     slug: "str | None" = None, cfg: "dict | None" = None) -> None:
     """Record a uses_skill edge from the current (or given) session."""
-    if not _graph_active(slug):
-        return
-    add_graph_node("skill", skill_name, label=skill_name, slug=slug)
-    path = session or _ACTIVE_SESSION
-    if path is None:
-        return
-    sess = path.stem
-    if _node_id("session", sess) not in get_graph_nodes(slug):
-        add_graph_node("session", sess, label=sess, extra={"path": str(path)}, slug=slug)
-    add_graph_edge(
-        "session", sess, "skill", skill_name, "uses_skill",
-        note="auto", slug=slug,
-    )
-
-
-def _adjacency(edges: list) -> dict:
-    adj: dict = {}
-    for e in edges:
-        a = _node_id(e["from_type"], e["from_key"])
-        b = _node_id(e["to_type"], e["to_key"])
-        adj.setdefault(a, []).append((b, e, "out"))
-        adj.setdefault(b, []).append((a, e, "in"))
-    return adj
-
-
-def _format_node_line(row: dict) -> str:
-    typ = row.get("type")
-    if typ == "learning":
-        return f"- ({row.get('type')}, {row.get('confidence', '?')}/10) {row.get('label') or row.get('insight', '')}"
-    if typ == "decision":
-        return f"- [{row.get('key')}] {row.get('label')}"
-    return f"- ({typ}) {row.get('key')}: {row.get('label')}"
-
-
-def _format_edge_line(hit: dict) -> str:
-    e = hit["edge"]
-    arrow = "←" if hit["direction"] == "in" else "→"
-    other = hit["node"]
-    return f"  {arrow} {e.get('edge_type')} {other.get('type')}:{other.get('key')}"
-
-
-def _search_memory_graph(query: str, learning_limit: int = 10,
-                         decision_limit: int = 10,
-                         slug: "str | None" = None) -> str:
-    terms = _query_terms(query)
-    learnings = get_learnings(query=query, limit=learning_limit, slug=slug)
-    decisions = get_decisions(limit=50, slug=slug)
-    if terms:
-        decisions = [
-            d for d in decisions
-            if any(t in (d.get("decision") or "").lower() for t in terms)
-        ]
-    decisions = decisions[:decision_limit]
-    out = []
-    if learnings:
-        lines = []
-        for r in learnings:
-            lines.append(f"- ({r['type']}, {r['confidence']}/10) {r['insight']}")
-            lines.extend(_neighbor_lines(_node_id("learning", r["key"]), slug))
-        out.append("Learnings:\n" + "\n".join(lines))
-    if decisions:
-        lines = []
-        for d in decisions:
-            lines.append(f"- [{d['id']}] {d['decision']}")
-            lines.extend(_neighbor_lines(_node_id("decision", d["id"]), slug))
-        out.append("Decisions:\n" + "\n".join(lines))
-    if not out and terms:
-        nodes = get_graph_nodes(slug)
-        extra = []
-        for ident, row in nodes.items():
-            hay = (row.get("key", "") + " " + row.get("label", "")).lower()
-            if any(t in hay for t in terms):
-                extra.append(_format_node_line(row))
-                extra.extend(_neighbor_lines(ident, slug))
-        if extra:
-            out.append("Graph:\n" + "\n".join(extra))
-    return "\n\n".join(out) or "(no memory matches)"
-
-
-def _neighbor_lines(ident: tuple, slug: "str | None") -> list:
-    nodes = get_graph_nodes(slug)
-    adj = _adjacency(get_graph_edges(slug))
-    lines = []
-    for dest, edge, direction in adj.get(ident, []):
-        if dest not in nodes:
-            continue
-        lines.append(_format_edge_line({
-            "node": nodes[dest],
-            "edge": edge,
-            "direction": direction,
-        }))
-    return lines
+    KnowledgeGraph(slug).record_skill_use(skill_name, session, cfg)
 
 
 def graph_stats(slug: "str | None" = None) -> str:
     """Adjacency-list stats: counts, orphans, contradiction clusters."""
-    nodes = get_graph_nodes(slug)
-    edges = get_graph_edges(slug)
-    by_type: dict[str, int] = {}
-    for row in nodes.values():
-        by_type[row["type"]] = by_type.get(row["type"], 0) + 1
-    linked: set[tuple] = set()
-    contradicts = []
-    for e in edges:
-        a = _node_id(e["from_type"], e["from_key"])
-        b = _node_id(e["to_type"], e["to_key"])
-        linked.add(a)
-        linked.add(b)
-        if e.get("edge_type") == "contradicts":
-            contradicts.append(e)
-    orphans = [n for ident, n in nodes.items() if ident not in linked]
-    lines = [
-        f"nodes: {len(nodes)}  edges: {len(edges)}",
-        "by type: " + (", ".join(f"{t}={c}" for t, c in sorted(by_type.items())) or "(none)"),
-        f"orphans: {len(orphans)}",
-        f"contradicts: {len(contradicts)}",
-    ]
-    if orphans:
-        lines.append("orphan nodes:")
-        for n in orphans[:20]:
-            lines.append(f"  ({n['type']}) {n['key']}")
-    if contradicts:
-        lines.append("contradiction pairs:")
-        for e in contradicts[:20]:
-            lines.append(
-                f"  {e['from_type']}:{e['from_key']} ⇄ {e['to_type']}:{e['to_key']}"
-                + (f" — {e['note']}" if e.get("note") else "")
-            )
-    adj_lines = []
-    for ident, row in sorted(nodes.items(), key=lambda kv: (kv[0][0], kv[0][1])):
-        nlines = _neighbor_lines(ident, slug)
-        if not nlines:
-            continue
-        adj_lines.append(f"{row['type']}:{row['key']}")
-        adj_lines.extend(nlines)
-    if adj_lines:
-        lines.append("adjacency:")
-        lines.extend(adj_lines[:80])
-    return "\n".join(lines)
+    return KnowledgeGraph(slug).stats()
 
 
 def contradiction_clusters(slug: "str | None" = None) -> str:
     """Text dump of contradicts edges for /memory reconcile."""
-    nodes = get_graph_nodes(slug)
-    pairs = [e for e in get_graph_edges(slug) if e.get("edge_type") == "contradicts"]
-    if not pairs:
-        return "(no contradicts edges)"
-    lines = []
-    for e in pairs:
-        a = nodes.get(_node_id(e["from_type"], e["from_key"]))
-        b = nodes.get(_node_id(e["to_type"], e["to_key"]))
-        lines.append(
-            f"- {e['from_type']}:{e['from_key']}: {(a or {}).get('label', '')}\n"
-            f"  vs {e['to_type']}:{e['to_key']}: {(b or {}).get('label', '')}"
-            + (f"\n  note: {e['note']}" if e.get("note") else "")
-        )
-    return "\n".join(lines)
+    return KnowledgeGraph(slug).contradiction_text()
 
 
 def try_add_graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
@@ -833,8 +870,9 @@ def try_add_graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
 
 def context_block(cfg: dict, slug: "str | None" = None) -> str:
     """Bounded memory snapshot injected into the system prompt at session start."""
-    if cfg.get("use_graph"):
-        ensure_graph(cfg, slug)
+    kg = KnowledgeGraph(slug)
+    if kg.enabled(cfg):
+        kg.ensure(cfg)
     parts = []
     decisions = get_decisions(limit=cfg.get("context_decisions", 6), slug=slug)
     if decisions:
@@ -844,8 +882,8 @@ def context_block(cfg: dict, slug: "str | None" = None) -> str:
             if d.get("rationale"):
                 line += f" (why: {d['rationale']})"
             lines.append(line)
-            if cfg.get("use_graph"):
-                lines.extend(_neighbor_lines(_node_id("decision", d["id"]), slug))
+            if kg.enabled(cfg):
+                lines.extend(kg.neighbor_lines(_node_id("decision", d["id"])))
         parts.append(_fence_memory(
             "Active decisions (treat as settled unless the user reverses them):\n"
             + "\n".join(lines)
@@ -855,8 +893,8 @@ def context_block(cfg: dict, slug: "str | None" = None) -> str:
         lines = []
         for r in learnings:
             lines.append(f"- ({r['type']}, {r['confidence']}/10) {r['insight']}")
-            if cfg.get("use_graph"):
-                lines.extend(_neighbor_lines(_node_id("learning", r["key"]), slug))
+            if kg.enabled(cfg):
+                lines.extend(kg.neighbor_lines(_node_id("learning", r["key"])))
         parts.append(_fence_memory(
             "Prior learnings from this project:\n" + "\n".join(lines)
         ))

@@ -84,6 +84,13 @@ class ParseGraphTests(unittest.TestCase):
             parse_graph("node a skill ceo\nnode a skill qa", "t")
         self.assertIn("duplicate", str(ctx.exception))
 
+    def test_duplicate_edge_on_same_outcome(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph(
+                "node a skill ceo\nedge a -> a\nedge a -> a on pass", "t",
+            )
+        self.assertIn("duplicate", str(ctx.exception))
+
     def test_empty_file(self):
         with self.assertRaises(GraphError) as ctx:
             parse_graph("# just a heading\n\n", "t")
@@ -183,6 +190,84 @@ class GraphRunnerTests(unittest.TestCase):
             self.assertEqual(nodes[2]["handoff"], "did the skill")
             self.assertTrue(any(e.get("role") == "mine" for e in run.events))
             self.assertEqual(mined["n"], 1)
+
+    def test_until_node_handoff_is_maker_summary(self):
+        def fake_until(cfg, model, *, run, **kwargs):
+            run.append("maker", "next", handoff="implemented the feature")
+            run.append("eval", "pass", handoff="looks good\nSTATUS: pass")
+            run.append("done", "pass")
+            return run
+
+        text = (
+            "node build until implement it\n"
+            "node qa skill qa\n"
+            "edge build -> qa"
+        )
+        defn = parse_graph(text, "t")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.graph.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.graph.isolated_act", side_effect=self._pass_act(root)), \
+                 patch("lmloop.graph.run_until", side_effect=fake_until), \
+                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                run = GraphRun.create("t")
+                run_graph(
+                    _cfg(), "m", run=run, defn=defn,
+                    echo=lambda *_a, **_k: None,
+                    echo_status=lambda *_a, **_k: None,
+                )
+            build = [e for e in run.events if e.get("node") == "build"][0]
+            self.assertEqual(build["handoff"], "implemented the feature")
+            self.assertNotIn("STATUS:", build["handoff"])
+
+    def test_skill_check_handoff_is_assistant_summary(self):
+        text = "node a skill ceo --check true"
+        defn = parse_graph(text, "t")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.graph.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 patch("lmloop.graph.isolated_act", side_effect=self._pass_act(root)), \
+                 patch("lmloop.graph.agent.load_skill", return_value="skill body"), \
+                 patch("lmloop.loop.run_shell", return_value="ok\n[exit code: 0]"):
+                run = GraphRun.create("t")
+                run_graph(
+                    _cfg(), "m", run=run, defn=defn,
+                    echo=lambda *_a, **_k: None,
+                    echo_status=lambda *_a, **_k: None,
+                    workspace_root=root,
+                )
+            node = [e for e in run.events if e.get("role") == "node"][0]
+            self.assertEqual(node["handoff"], "did the skill")
+            self.assertNotIn("exit code", node["handoff"])
+
+    def test_skill_node_records_uses_skill_after_act(self):
+        from lmloop import memory as memory_mod
+
+        text = "node a skill ceo"
+        defn = parse_graph(text, "t")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.graph.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.graph.isolated_act", side_effect=self._pass_act(root)), \
+                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                run = GraphRun.create("t")
+                run_graph(
+                    _cfg(use_graph=True), "m", run=run, defn=defn,
+                    echo=lambda *_a, **_k: None,
+                    echo_status=lambda *_a, **_k: None,
+                    workspace_root=root,
+                )
+                uses = [
+                    e for e in memory_mod.get_graph_edges()
+                    if e.get("edge_type") == "uses_skill"
+                ]
+            self.assertEqual(len(uses), 1)
+            self.assertEqual(uses[0]["to_key"], "ceo")
 
     def test_qa_fail_cycles_to_build(self):
         defn = parse_graph(COMPANY, "company")

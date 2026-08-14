@@ -39,6 +39,10 @@ def msg_until_step(role: str, step: int, max_steps: int) -> str:
 
 
 def msg_until_paused() -> str:
+    return status(f"until paused. {MSG_RESUME}")
+
+
+def msg_until_max_steps() -> str:
     return status(f"until hit until_max_steps — stopping. {MSG_RESUME}")
 
 

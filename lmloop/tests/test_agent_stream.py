@@ -158,10 +158,11 @@ class StreamPrinterTests(unittest.TestCase):
         fake_live = mock.MagicMock()
         fake_live.auto_refresh = False
         with mock.patch("lmloop.display._load_rich") as load_rich, \
-             mock.patch("lmloop.markdown_view.make_console") as make_console:
+             mock.patch("lmloop.markdown_view.make_console") as make_console, \
+             mock.patch("lmloop.display.terminal_size", return_value=(80, 40)):
             Console = mock.MagicMock()
             make_console.return_value.soft_wrap = False
-            make_console.return_value.width = 80
+            make_console.return_value.width = 79
             Live = mock.MagicMock(return_value=fake_live)
             Markdown = mock.MagicMock(side_effect=lambda t: t)
             load_rich.return_value = (Console, Live, Markdown)
@@ -171,9 +172,11 @@ class StreamPrinterTests(unittest.TestCase):
             self.assertEqual(kwargs.get("vertical_overflow"), "crop")
             self.assertTrue(kwargs.get("transient"))
             self.assertTrue(make_console.call_args.kwargs.get("force_terminal"))
-            self.assertIn("height", make_console.call_args.kwargs)
+            self.assertEqual(make_console.call_args.kwargs.get("height"), 38)
+            self.assertEqual(make_console.call_args.kwargs.get("width"), 79)
             updated = fake_live.update.call_args.args[0]
             self.assertIsInstance(updated, display._TailMarkdown)
+            self.assertGreaterEqual(updated.min_rows, 0)
 
     def test_tail_markdown_keeps_newest_lines(self):
         """Live preview must show the end of a long answer, not the opening."""
@@ -216,6 +219,54 @@ class StreamPrinterTests(unittest.TestCase):
             self.assertEqual(_live_preview_height(), 38)
         with mock.patch("lmloop.display.terminal_size", return_value=(80, 5)):
             self.assertEqual(_live_preview_height(), 4)
+
+    def test_live_preview_width_leaves_wrap_margin(self):
+        from lmloop.display import _live_preview_width
+        with mock.patch("lmloop.display.terminal_size", return_value=(80, 40)):
+            self.assertEqual(_live_preview_width(), 79)
+        with mock.patch("lmloop.display.terminal_size", return_value=(1, 24)):
+            self.assertEqual(_live_preview_width(), 1)
+
+    def test_tail_markdown_never_shrinks_below_min_rows(self):
+        """A reflow that renders fewer lines must still occupy the high-water rows."""
+        if not display._load_rich():
+            self.skipTest("rich not installed")
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(
+            file=buf, width=40, height=20, force_terminal=True,
+            soft_wrap=False, highlight=False, color_system=None,
+        )
+        tall = "# Title\n\n" + ("paragraph of content\n\n" * 4)
+        n = display._TailMarkdown(tall).row_count(console)
+        self.assertGreater(n, 3)
+        short = display._TailMarkdown("# Short\n", min_rows=n)
+        self.assertGreaterEqual(short.row_count(console), n)
+        console.print(short)
+        self.assertIn("Short", buf.getvalue())
+
+    def test_markdown_live_high_water_does_not_shrink(self):
+        """Printer keeps Live's occupied rows when markdown reflow gets shorter."""
+        if not display._load_rich():
+            self.skipTest("rich not installed")
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(
+            file=buf, width=40, height=20, force_terminal=True,
+            soft_wrap=False, highlight=False, color_system=None,
+        )
+        p = display._MarkdownLivePrinter(color=False, console=console)
+        p.feed("# Title\n\n" + ("paragraph of content here\n\n" * 4))
+        high = p._live_rows
+        self.assertGreater(high, 1)
+        p._parts = ["# Short\n"]
+        p._refresh()
+        self.assertGreaterEqual(p._live_rows, high)
+        p.finish()
 
     def test_markdown_live_keeps_wrapped_sentences(self):
         """Live + word-wrap must not crop the next sentence at terminal width."""
@@ -629,9 +680,11 @@ class PrinterResetTests(unittest.TestCase):
         p = display._MarkdownLivePrinter()
         p._parts = ["a", "b"]
         p._started = True
+        p._live_rows = 12
         p.reset()
         self.assertEqual(p._parts, [])
         self.assertFalse(p._started)
+        self.assertEqual(p._live_rows, 0)
 
     def test_stream_printer_finish_resets(self):
         out = []

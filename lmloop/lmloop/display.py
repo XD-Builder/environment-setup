@@ -9,10 +9,11 @@ import sys
 from .stream import _think_line_similar
 from .ui import terminal_size
 
-# Live markdown grows with the answer up to the terminal. Rich Live's
-# ellipsis/crop keep the *start* of the document, so new tokens vanish behind
-# a red "..." and leftover opening paragraphs stack in scrollback — we crop
-# to the newest lines only once the render would overflow the screen.
+# Live markdown grows with the answer up to the terminal and never shrinks:
+# a heading / "---" reflow that drops rows would leave leftovers in scrollback
+# if Live's cursor-up count fell. Crop to the newest lines only once the
+# render would overflow the screen. The Live console is one column short of
+# the TTY so a full-width rule cannot wrap an extra row and desync Live.
 
 # Live thinking prints as it streams; erased when tools/answer start.
 # Ctrl+O opens prior-turn thinking (chronological), not a newest-first cycle.
@@ -177,23 +178,37 @@ class _StreamPrinter:
 class _TailMarkdown:
     """Markdown that grows with the answer; tails only if it exceeds the viewport.
 
-    Short replies occupy as many Live rows as they need. Once the render is
-    taller than the terminal, keep the newest lines — Rich Live
-    ``vertical_overflow="ellipsis"`` would keep the *start* and hide new
-    tokens behind a red ``...``. ``visible`` overflow stacks frames in
-    scrollback as markdown reflows.
+    Short replies occupy as many Live rows as they need. ``min_rows`` pads blank
+    lines at the top so a later reflow cannot shrink the Live region (leftover
+    rows would stack in scrollback). Once the render is taller than the
+    terminal, keep the newest lines — Rich Live ``vertical_overflow="ellipsis"``
+    would keep the *start* and hide new tokens behind a red ``...``.
     """
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, min_rows: int = 0):
         self.text = text
+        self.min_rows = max(0, int(min_rows))
 
-    def __rich_console__(self, console, options):
-        from rich.segment import Segment
+    def _lines(self, console, options) -> list:
         from .markdown_view import render_markdown_lines
         cap = options.height or options.max_height or options.size.height
         lines = render_markdown_lines(console, self.text, options)
         if cap and len(lines) > cap:
             lines = lines[-cap:]
+        pad = max(0, self.min_rows - len(lines))
+        if cap:
+            pad = min(pad, max(0, cap - len(lines)))
+        if pad:
+            lines = [[]] * pad + lines
+        return lines
+
+    def row_count(self, console) -> int:
+        """Rows this renderable will occupy on ``console`` (including padding)."""
+        return len(self._lines(console, console.options))
+
+    def __rich_console__(self, console, options):
+        from rich.segment import Segment
+        lines = self._lines(console, options)
         new_line = Segment.line()
         for i, line in enumerate(lines):
             yield from line
@@ -207,6 +222,12 @@ def _live_preview_height() -> int:
     return max(4, lines - 2)
 
 
+def _live_preview_width() -> int:
+    """Live console width: one column short so a full-width rule cannot wrap."""
+    cols, _ = terminal_size()
+    return max(1, cols - 1)
+
+
 class _MarkdownLivePrinter:
     """Stream tokens into a rich.Live Markdown view (live + prettied)."""
 
@@ -215,6 +236,7 @@ class _MarkdownLivePrinter:
         self._leading = ""
         self._started = False
         self._live = None
+        self._live_rows = 0
         self._color = color
         self._console_override = console
 
@@ -251,6 +273,7 @@ class _MarkdownLivePrinter:
         else:
             console = make_console(
                 self._color, force_terminal=True,
+                width=_live_preview_width(),
                 height=_live_preview_height(),
             )
         # crop (not ellipsis/visible): _TailMarkdown already fits the
@@ -271,16 +294,26 @@ class _MarkdownLivePrinter:
         )
         self._live.start()
 
+    def _measure_rows(self, md: _TailMarkdown) -> int:
+        """Rows ``md`` will occupy. Skip mock consoles that tests inject."""
+        console = getattr(self._live, "console", None)
+        options = getattr(console, "options", None)
+        size = getattr(options, "size", None)
+        width = getattr(size, "width", None)
+        if not isinstance(width, int):
+            return md.min_rows
+        return md.row_count(console)
+
     def _refresh(self) -> None:
         if self._live is None:
             return
         rich = _load_rich()
         if not rich:
             return
-        self._live.update(
-            _TailMarkdown("".join(self._parts)),
-            refresh=not self._live.auto_refresh,
-        )
+        md = _TailMarkdown("".join(self._parts), min_rows=self._live_rows)
+        self._live_rows = max(self._live_rows, self._measure_rows(md))
+        md.min_rows = self._live_rows
+        self._live.update(md, refresh=not self._live.auto_refresh)
 
     def _stop_live(self) -> None:
         if self._live is None:
@@ -295,6 +328,7 @@ class _MarkdownLivePrinter:
         self._parts = []
         self._leading = ""
         self._started = False
+        self._live_rows = 0
         self._stop_live()
 
     def finish(self) -> bool:
@@ -314,6 +348,7 @@ class _MarkdownLivePrinter:
         started = self._started
         self._parts = []
         self._started = False
+        self._live_rows = 0
         return started
 
 

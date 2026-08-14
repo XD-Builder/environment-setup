@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from lmloop.agent import ServerError
 from lmloop.loop import (
     UntilRun,
     check_status_from_output,
@@ -164,6 +165,7 @@ class UntilRunGraphTests(unittest.TestCase):
 
 class UntilRunnerTests(unittest.TestCase):
     def _run(self, root: Path, cfg, fake_act, **kwargs):
+        echo_status = kwargs.pop("echo_status", lambda *_a, **_k: None)
         with patch("lmloop.loop.project_dir", return_value=root), \
              patch("lmloop.memory.project_dir", return_value=root), \
              patch("lmloop.loop.agent.act", side_effect=fake_act), \
@@ -172,7 +174,7 @@ class UntilRunnerTests(unittest.TestCase):
                                   check_cmd=kwargs.pop("check_cmd", None))
             return run_until(
                 cfg, "m", run=run, echo=lambda *_a, **_k: None,
-                echo_status=lambda *_a, **_k: None,
+                echo_status=echo_status,
                 workspace_root=root,
                 **kwargs,
             )
@@ -398,6 +400,44 @@ class UntilRunnerTests(unittest.TestCase):
     def test_keyboard_interrupt_pauses(self):
         def boom(cfg, model, messages, **kwargs):
             raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(Path(d), _cfg(), boom)
+            self.assertTrue(run.is_paused())
+            self.assertFalse(run.is_done())
+
+    def test_max_steps_status_mentions_cap(self):
+        statuses = []
+
+        def always_fail(cfg, model, messages, **kwargs):
+            if "independent checker" in messages[-1]["content"]:
+                messages.append({"role": "assistant", "content": "STATUS: fail"})
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            self._run(
+                Path(d), _cfg(until_max_steps=1), always_fail,
+                echo_status=statuses.append,
+            )
+        self.assertTrue(any("until_max_steps" in s for s in statuses))
+
+    def test_interrupt_status_does_not_claim_max_steps(self):
+        statuses = []
+
+        def boom(cfg, model, messages, **kwargs):
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as d:
+            self._run(Path(d), _cfg(), boom, echo_status=statuses.append)
+        joined = "\n".join(statuses)
+        self.assertIn("paused", joined)
+        self.assertNotIn("until_max_steps", joined)
+
+    def test_server_error_pauses(self):
+        def boom(cfg, model, messages, **kwargs):
+            raise ServerError("down")
 
         with tempfile.TemporaryDirectory() as d:
             run = self._run(Path(d), _cfg(), boom)

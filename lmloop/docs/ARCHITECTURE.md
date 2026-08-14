@@ -16,7 +16,7 @@ lmloop/
 ├── DEVELOPMENT.md              # contribution practices
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
-│   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (proposal)
+│   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (shipped opt-in)
 │   └── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
 ├── lmloop/
 │   ├── __init__.py             # version string
@@ -85,7 +85,7 @@ Key properties:
 - **No SDK dependency.** Plain `urllib` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible.
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
-- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer and only tails if it would overflow the terminal; `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
+- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
 
 ### Server management (`ensure_server`)
 
@@ -112,7 +112,7 @@ until goal:
 ```
 
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
-- Eval cannot `write_file`, `remember`, or `log_decision`. It may `run_shell` to verify.
+- Eval cannot `write_file`, `remember`, `log_decision`, or `graph_add_edge`. It may `run_shell` to verify.
 - `--check` fail (nonzero exit) goes straight back to maker — no eval turn. Check `DENIED:` is `blocked` → gate.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
@@ -139,9 +139,9 @@ edge <from> -> <to> [on pass|fail|blocked]
 
 - Packaged graphs live in `lmloop/graphs/*.md`; `~/.lmloop/graphs/<name>.md` overrides the same name.
 - One packaged graph: `company` (ceo → build → qa → mine).
-- Each node is an isolated thread. Handoff is the last assistant summary, not the tool transcript.
+- Each node is an isolated thread. Handoff is the last assistant summary, not the eval `STATUS:` line or the tool transcript.
 - Missing edge for fail/blocked → HITL gate; pass with no outgoing edge is terminal success.
-- `graph_max_steps` (default 24) counts **node entries this invocation**. Pause, then `/continue` or `lmloop graph` with no name resumes.
+- `graph_max_steps` (default 24) counts **skill/until node entries this invocation** (mine and HITL gate do not count). Pause, then `/continue` or `lmloop graph` with no name resumes.
 - REPL `/continue` prefers a paused `state.graph_run` over `state.until_run`. `/new` clears both pointers.
 - `lmloop graph <name>` starts a run (name required). `lmloop graph` with no name resumes the latest open graph run.
 - Run logs: `projects/<slug>/graphs/<name>/<ts>.jsonl`. Event written last, so a crash retries the same node.
@@ -234,12 +234,12 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 
 ### Knowledge graph (`graph_nodes.jsonl`, `graph_edges.jsonl`)
 
-Opt-in (`use_graph`, default false). When off, no graph files are created and `recall_memory` is unchanged.
+Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `memory.py`. When off, no graph files are created, auto-edges do not write (even if files already exist), and `recall_memory` is unchanged.
 
 - Nodes are typed (`learning`, `decision`, `session`, `file`, `skill`, `concept`). Latest row per `(type, key)` wins. Learning/concept nodes reuse confidence decay; others stay live.
 - Edges are typed (`leads_to`, `contradicts`, `in_session`, `references`, `uses_skill`, `related_to`, `supersedes`). Endpoints that decayed away are dropped at read time.
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
-- `recall_memory` does keyword match plus 1-hop BFS. `graph_add_edge` (tool, `use_graph` only) requires a `note`. `/memory graph` prints counts and an adjacency list. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
+- `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`. `/memory graph` prints counts and an adjacency list. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
 
 ---
 
@@ -287,10 +287,13 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop` | Interactive REPL |
 | `lmloop "task"` | Task, then REPL prompt when stdin is a TTY (exits when piped) |
 | `lmloop until [--check cmd] <goal>` | Goal loop, then REPL prompt when stdin is a TTY |
+| `lmloop until` | Resume latest open until-run |
 | `lmloop graph <name>` | Authored workflow graph, then REPL prompt when stdin is a TTY |
+| `lmloop graph` | Resume latest open graph-run |
 | `lmloop skill <name> [task]` | Skill, then REPL prompt when stdin is a TTY |
 | `lmloop skills` | List skill prompts |
 | `lmloop skills new <name> [brief]` | AI-draft a skill, review, then save |
+| `lmloop retro [N]` | Alias for `memory mine` |
 | `lmloop memory [query]` | Peek curated learnings |
 | `lmloop memory mine [N]` | Mine last N sessions into learnings |
 | `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |

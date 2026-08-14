@@ -267,6 +267,7 @@ class KnowledgeGraphTests(unittest.TestCase):
                     memory_mod.add_learning(
                         "setup.sh fails because of line endings",
                         key="line-endings",
+                        cfg={"use_graph": True},
                     )
                 finally:
                     memory_mod.set_active_session(None)
@@ -311,8 +312,8 @@ class KnowledgeGraphTests(unittest.TestCase):
             root = Path(d)
             with patch.object(memory_mod, "project_dir", return_value=root):
                 memory_mod.ensure_graph({"use_graph": True})
-                memory_mod.add_learning("a", key="aa")
-                memory_mod.add_learning("b", key="bb")
+                memory_mod.add_learning("a", key="aa", cfg={"use_graph": True})
+                memory_mod.add_learning("b", key="bb", cfg={"use_graph": True})
                 err = memory_mod.try_add_graph_edge(
                     "learning", "aa", "learning", "bb", "related_to", "",
                 )
@@ -331,8 +332,8 @@ class KnowledgeGraphTests(unittest.TestCase):
             root = Path(d)
             with patch.object(memory_mod, "project_dir", return_value=root):
                 memory_mod.ensure_graph({"use_graph": True})
-                memory_mod.add_learning("use pip", key="pip")
-                memory_mod.add_learning("use uv", key="uv")
+                memory_mod.add_learning("use pip", key="pip", cfg={"use_graph": True})
+                memory_mod.add_learning("use uv", key="uv", cfg={"use_graph": True})
                 memory_mod.add_graph_edge(
                     "learning", "pip", "learning", "uv", "contradicts",
                     note="cannot both be the installer",
@@ -342,6 +343,79 @@ class KnowledgeGraphTests(unittest.TestCase):
                 self.assertIn("pip", stats)
                 cluster = memory_mod.contradiction_clusters()
                 self.assertIn("pip", cluster)
+
+    def test_use_graph_false_skips_auto_edges_when_files_exist(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.ensure_graph({"use_graph": True})
+                memory_mod.add_learning(
+                    "first", key="first", cfg={"use_graph": True},
+                )
+                before = len(memory_mod.get_graph_edges())
+                memory_mod.add_learning(
+                    "second setup.sh", key="second", cfg={"use_graph": False},
+                )
+                memory_mod.add_learning("third", key="third")
+                self.assertEqual(len(memory_mod.get_graph_edges()), before)
+                nodes = memory_mod.get_graph_nodes()
+                self.assertNotIn(("learning", "second"), nodes)
+                self.assertNotIn(("learning", "third"), nodes)
+
+    def test_record_skill_use_writes_on_act_session(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "sessions" / "skill-run.jsonl"
+            log.parent.mkdir()
+            log.write_text("")
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.record_skill_use(
+                    "ceo", session=log, cfg={"use_graph": False},
+                )
+                self.assertFalse((root / "graph_nodes.jsonl").exists())
+                memory_mod.record_skill_use(
+                    "ceo", session=log, cfg={"use_graph": True},
+                )
+                edges = memory_mod.get_graph_edges()
+                uses = [e for e in edges if e.get("edge_type") == "uses_skill"]
+                self.assertEqual(len(uses), 1)
+                self.assertEqual(uses[0]["from_key"], "skill-run")
+                self.assertEqual(uses[0]["to_key"], "ceo")
+
+    def test_context_block_includes_neighbor(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.add_learning(
+                    "pytest.ini belongs in src/", key="pytest-config",
+                )
+                dec = memory_mod.add_decision("Use pytest for testing")
+                memory_mod.ensure_graph({"use_graph": True})
+                memory_mod.add_graph_edge(
+                    "decision", dec["id"], "learning", "pytest-config",
+                    "leads_to", note="that choice produced the learning",
+                )
+                block = memory_mod.context_block({
+                    "use_graph": True,
+                    "context_learnings": 8,
+                    "context_decisions": 6,
+                })
+                self.assertIn("leads_to", block)
+                off = memory_mod.context_block({
+                    "use_graph": False,
+                    "context_learnings": 8,
+                    "context_decisions": 6,
+                })
+                self.assertNotIn("leads_to", off)
 
 
 if __name__ == "__main__":

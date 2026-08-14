@@ -115,7 +115,7 @@ belongs in those modules, not as more private helpers in `agent.py`.
 - `ui.py` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
 - `loop.py` may import `agent.act`, `memory`, `status`, and `tools.run_shell` for the check command.
-- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, check helpers), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`.
+- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`.
 - `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
 - `agent.py` and `tools.py` may import `steer`.
 - `loop.py` must not import `graph`.
@@ -383,7 +383,7 @@ Docs are part of the diff, not a follow-up.
 |---|---|---|
 | Users | `README.md` | Flags, slash commands, tools, setup, troubleshooting |
 | Internals | `docs/ARCHITECTURE.md` | Component map, loop, memory layout, design choices |
-| Next-step proposals | `docs/DESIGN_*.md` | Stay labeled proposal until the code exists |
+| Next-step proposals | `docs/DESIGN_*.md` | Shipped files keep `Status: shipped`. Leftover ideas stay in Non-goals / Open questions. |
 | Contributors | `DEVELOPMENT.md` | Module ownership, contracts, conventions |
 | Skills | `lmloop/skills/*.md` | Opt-in playbooks the model follows when that job is named |
 | Steering | `lmloop/steer/*.md` | Always-on iron laws injected into the system prompt |
@@ -400,9 +400,9 @@ Rules:
 - Module docstrings and this file’s “where code goes” table stay aligned.
 - Do not mention a second way to do something that you just removed (`--skill`
   vs `lmloop skill`).
-- Proposal docs (`docs/DESIGN_*.md`) stay labeled as proposals until the
-  code exists. Do not describe unimplemented graph/memory features as current
-  behavior in `README.md` or `ARCHITECTURE.md`.
+- Shipped design docs keep a `Status: shipped` header. Leftover ideas stay in
+  Non-goals / Open questions. Do not describe unimplemented graph/memory
+  features as current behavior in `README.md` or `ARCHITECTURE.md`.
 - Skills are opt-in playbooks (`/skill`, `/name`). Steering is always
   injected and has no slash command. Do not turn a steer file into a skill
   or the reverse.

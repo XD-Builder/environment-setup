@@ -421,7 +421,8 @@ class WebResearchToolTests(unittest.TestCase):
         specs, impls = build_tools({"confirm_shell": False})
         names = [s["function"]["name"] for s in specs]
         self.assertEqual(names, list(impls.keys()))
-        self.assertEqual(set(names), set(tool_names()))
+        self.assertEqual(set(names), set(tool_names(cfg={"confirm_shell": False})))
+        self.assertIn("graph_add_edge", tool_names())
         for s in specs:
             self.assertIsInstance(s["function"]["name"], str)
             self.assertTrue(s["function"]["parameters"]["properties"] or True)
@@ -439,7 +440,8 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("read_file", names)
         self.assertIn("recall_memory", names)
         self.assertIn("current_time", names)
-        self.assertEqual(set(tool_names()), full_names)
+        self.assertEqual(set(tool_names(cfg={"confirm_shell": False})), full_names)
+        self.assertIn("graph_add_edge", tool_names())
         self.assertGreaterEqual(len(full_names), 10)
         self.assertNotIn("graph_add_edge", full_names)
 
@@ -450,6 +452,21 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("graph_add_edge", impls)
         off, _ = build_tools({"confirm_shell": False})
         self.assertNotIn("graph_add_edge", {s["function"]["name"] for s in off})
+        from lmloop.tools import _TOOL_DEFS
+        self.assertIn("graph_add_edge", _TOOL_DEFS)
+
+    def test_registry_survives_use_graph_false_rebuild(self):
+        from lmloop.tools import _TOOL_DEFS
+
+        build_tools({"confirm_shell": False, "use_graph": True})
+        self.assertIn("graph_add_edge", _TOOL_DEFS)
+        specs, _ = build_tools({"confirm_shell": False})
+        self.assertNotIn("graph_add_edge", {s["function"]["name"] for s in specs})
+        self.assertIn("graph_add_edge", _TOOL_DEFS)
+        self.assertIn("graph_add_edge", tool_names())
+        self.assertNotIn(
+            "graph_add_edge", tool_names(cfg={"confirm_shell": False}),
+        )
 
     def test_command_table_reserves_slash_stems(self):
         slash = {c.name for c in slash_command_metas() if c.reserve_skill}

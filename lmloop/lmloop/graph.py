@@ -14,23 +14,23 @@ from pathlib import Path
 from . import agent, memory, status as status_mod
 from .config import STATE_ROOT, project_dir
 from .loop import (
+    DONE_ROLES,
     EVAL_PROMPT,
+    META_ROLE,
+    PAUSE_ROLE,
     UntilRun,
-    _run_check,
     check_status_from_output,
     clip_check_output,
     isolated_act,
     last_assistant,
     parse_eval_status,
     parse_until_args,
+    run_check,
     run_until,
 )
 
 NODE_KINDS = frozenset({"skill", "until", "mine"})
 EDGE_ON = frozenset({"pass", "fail", "blocked"})
-META_ROLE = "meta"
-PAUSE_ROLE = "pause"
-DONE_ROLES = frozenset({"mine", "done"})
 GRAPH_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 GRAPHS_DIR = Path(__file__).parent / "graphs"
 USER_GRAPHS_DIR = STATE_ROOT / "graphs"
@@ -425,7 +425,6 @@ def _run_skill_node(
     except FileNotFoundError as e:
         echo_error(str(e))
         return "blocked", str(e), ""
-    memory.record_skill_use(node.skill)
     result = isolated_act(
         cfg, model, prompt,
         confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
@@ -437,13 +436,14 @@ def _run_skill_node(
     if result is None:
         return "pause", "", ""
     messages, session_log = result
+    memory.record_skill_use(node.skill, session=session_log, cfg=cfg)
     summary = last_assistant(messages)
     if node.check_cmd:
-        output = _run_check(cfg, node.check_cmd, confirm_gate, workspace_root)
+        output = run_check(cfg, node.check_cmd, confirm_gate, workspace_root)
         displayed = clip_check_output(output)
         echo_status(displayed)
         status = check_status_from_output(output)
-        return status, displayed or summary, str(session_log)
+        return status, summary, str(session_log)
     eval_prompt = EVAL_PROMPT.format(
         goal=node.task or f"complete the {node.skill} playbook",
         handoff=summary or "(none)",
@@ -487,7 +487,7 @@ def _run_until_node(
     until_path = str(result.path)
     paths = result.session_paths()
     session = str(paths[-1]) if paths else ""
-    summary = result.last_handoff() or result.last_maker_handoff() or ""
+    summary = result.last_maker_handoff() or ""
     if result.is_paused():
         return "pause", summary, session, until_path
     last = result.last_work()
