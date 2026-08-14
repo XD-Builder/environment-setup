@@ -2,7 +2,7 @@
 
 A small, fully-local research and coding agent. Runs any model in LM Studio (or any OpenAI-compatible server), gives it real tools, and wraps it in persistent per-project memory. Everything stays on your machine.
 
-**Python 3.9+ stdlib only** for the agent core. The REPL adds `prompt_toolkit` and `rich`.
+**Python 3.10+ stdlib** for the agent core. The REPL adds `prompt_toolkit` and `rich`. Web search uses `ddgs` (no API key), then urllib fallbacks (DuckDuckGo HTML/Lite, Instant Answer, Wikipedia). How to change the code: [DEVELOPMENT.md](../DEVELOPMENT.md).
 
 ---
 
@@ -12,7 +12,8 @@ A small, fully-local research and coding agent. Runs any model in LM Studio (or 
 lmloop/
 ├── bin/lmloop                  # entrypoint script
 ├── setup-lmloop.sh             # venv + pip install + symlink
-├── requirements.txt            # prompt_toolkit, rich
+├── requirements.txt            # prompt_toolkit, rich, ddgs
+├── DEVELOPMENT.md              # contribution practices
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
 │   └── DESIGN_LOOP_AND_GRAPH.md
@@ -23,12 +24,16 @@ lmloop/
 │   ├── repl.py                 # interactive loop with slash commands
 │   ├── prompt.py               # prompt_toolkit session, completers
 │   ├── agent.py                # the loop: chat call + multi-round tool dispatch
+│   ├── stream.py               # SSE ingest, overlap, repeat-halt
+│   ├── display.py              # spinner, live printers, thinking lines
 │   ├── tools.py                # tool registry: specs + Python impls
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── config.py               # ~/.lmloop/config.json, project slug resolution
 │   ├── files_index.py          # git-aware @path completion + ref expansion
 │   ├── markdown_view.py        # render assistant markdown to terminal
 │   ├── ui.py                   # Console: ANSI theming, status bars, stats
+│   ├── commands.py             # slash/CLI command names + reserved skill stems
+│   ├── status.py               # status/resume copy
 │   └── skills/                 # packaged skill prompts (markdown playbooks)
 │       ├── system.md           # system prompt: how to work, memory, safety
 │       ├── _author.md          # meta-prompt for skill drafting (not user-facing)
@@ -66,7 +71,7 @@ Key properties:
 - **No SDK dependency.** Plain `urllib` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible.
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
-- **Streaming is on by default** (`stream: true` in config). Completions use SSE; tokens render live via `rich.Live` markdown when available (else plain tokens). A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
+- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
 
 ### Server management (`ensure_server`)
 
@@ -89,15 +94,15 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. Pipe/redirection syntax also requires confirmation. |
 | `read_file` | Read file with line numbers | Scoped to current working directory. Max 400 lines per call. |
 | `write_file` | Overwrite file | Scoped to current working directory. Creates parent dirs. |
-| `list_dir` | List directory entries | Scoped to CWD. Skips hidden files. |
+| `list_dir` | List directory entries | Scoped to CWD. Includes dotfiles. |
 | `search_files` | Regex search (ripgrep or grep fallback) | Scoped to CWD. Max 50 matches. |
-| `web_search` | DuckDuckGo HTML search (titles, URLs, snippets) | No API key. Content fenced as untrusted. CAPTCHA/empty → ERROR. |
+| `web_search` | `ddgs` metasearch (no key), then DuckDuckGo HTML/Lite, Instant Answer, Wikipedia | Optional `ddgs` dep. Content fenced as untrusted. All backends failing → ERROR (do not paraphrase-retry). |
 | `fetch_url` | HTTP(S) fetch with HTML→text + on-page links | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
-
-Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
 | `remember` | Save a learning to project memory | Write to learnings.jsonl |
 | `log_decision` | Record a durable decision | Write to decisions.jsonl |
 | `recall_memory` | Keyword-search learnings + decisions | Read-only view |
+
+Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
 
 Tool output is truncated to 12,000 chars to protect the context window.
 

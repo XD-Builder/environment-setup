@@ -7,6 +7,7 @@ import urllib.error
 from unittest import mock
 
 from lmloop import agent
+from lmloop.status import NUDGE_CONTINUE_TEXT
 
 
 def _sse(*chunks) -> bytes:
@@ -85,17 +86,26 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertTrue(p.finish())
         self.assertEqual("".join(out), "Hello\n")
 
+    def test_preserves_paragraph_break_across_chunks(self):
+        """SSE often sends '\\n' as its own token; do not collapse those."""
+        out, p = self._collect()
+        p.feed("Hello\n")
+        p.feed("\n")
+        p.feed("World")
+        self.assertTrue(p.finish())
+        self.assertEqual("".join(out), "Hello\n\nWorld\n")
+
     def test_open_live_display_modes(self):
         p, mode = agent._open_live_display(False)
         self.assertEqual(mode, "silent")
         self.assertIsNone(p._write)
         p, mode = agent._open_live_display(True)
         self.assertEqual(mode, "plain")
-        with mock.patch.object(agent, "_rich_live_available", return_value=True):
+        with mock.patch("lmloop.display._rich_live_available", return_value=True):
             p, mode = agent._open_live_display(None)
             self.assertEqual(mode, "markdown")
             self.assertIsInstance(p, agent._MarkdownLivePrinter)
-        with mock.patch.object(agent, "_rich_live_available", return_value=False):
+        with mock.patch("lmloop.display._rich_live_available", return_value=False):
             p, mode = agent._open_live_display(None)
             self.assertEqual(mode, "plain")
 
@@ -144,8 +154,12 @@ class StreamPrinterTests(unittest.TestCase):
             self.skipTest("rich not installed")
         p = agent._MarkdownLivePrinter()
         fake_live = mock.MagicMock()
-        with mock.patch.object(agent, "_load_rich") as load_rich:
+        fake_live.auto_refresh = False
+        with mock.patch("lmloop.display._load_rich") as load_rich, \
+             mock.patch("lmloop.markdown_view.make_console") as make_console:
             Console = mock.MagicMock()
+            make_console.return_value.soft_wrap = False
+            make_console.return_value.width = 80
             Live = mock.MagicMock(return_value=fake_live)
             Markdown = mock.MagicMock(side_effect=lambda t: t)
             load_rich.return_value = (Console, Live, Markdown)
@@ -153,6 +167,105 @@ class StreamPrinterTests(unittest.TestCase):
             self.assertTrue(Live.called)
             kwargs = Live.call_args.kwargs
             self.assertEqual(kwargs.get("vertical_overflow"), "ellipsis")
+            self.assertTrue(make_console.call_args.kwargs.get("force_terminal"))
+
+    def test_markdown_live_keeps_wrapped_sentences(self):
+        """Live + word-wrap must not crop the next sentence at terminal width."""
+        if not agent._load_rich():
+            self.skipTest("rich not installed")
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(
+            file=buf, width=40, height=12, force_terminal=True,
+            soft_wrap=False, highlight=False, color_system=None,
+        )
+        p = agent._MarkdownLivePrinter(color=False, console=console)
+        text = (
+            "First sentence is here. Second sentence continues the thought "
+            "and should remain visible on screen even though it is long. "
+            "Third sentence is the one users miss."
+        )
+        p.feed(text)
+        p.finish()
+        out = buf.getvalue()
+        self.assertIn("Third sentence", out)
+        self.assertIn("continues the thought", out)
+
+    def test_thinking_counts_wrapped_visual_rows(self):
+        t = agent._ThinkingLive(color=False)
+        ts = type("TS", (), {"columns": 20, "lines": 24})()
+        with mock.patch("sys.stdout") as out, \
+             mock.patch("lmloop.display.shutil.get_terminal_size", return_value=ts):
+            out.isatty.return_value = True
+            t._write_line("x" * 45)
+        # "  ▎" prefix + 45 = 48 cells → 3 rows at width 20
+        self.assertEqual(t._lines_shown, 3)
+
+    def _thinking_writes(self, feeds):
+        t = agent._ThinkingLive(color=False)
+        writes = []
+        ts = type("TS", (), {"columns": 80, "lines": 24})()
+        with mock.patch("sys.stdout") as out, \
+             mock.patch("lmloop.display.shutil.get_terminal_size", return_value=ts):
+            out.write.side_effect = lambda s: writes.append(s)
+            out.isatty.return_value = True
+            for piece in feeds:
+                t.feed(piece)
+            t.finish_keep()
+        return "".join(writes), t
+
+    def test_thinking_streams_live_text(self):
+        text, t = self._thinking_writes([
+            "first thought\n", "second thought\n",
+        ])
+        self.assertIn("first thought", text)
+        self.assertIn("second thought", text)
+        self.assertIn("first thought", t.text())
+
+    def test_thinking_skips_consecutive_duplicate_lines(self):
+        text, _t = self._thinking_writes([
+            "same thought\n", "same thought\n", "same thought\n", "new thought\n",
+        ])
+        self.assertEqual(text.count("same thought"), 1)
+        self.assertIn("new thought", text)
+
+    def test_thinking_skips_near_duplicate_paraphrases(self):
+        text, _t = self._thinking_writes([
+            "Let me try the searches once more with different phrasing and also try fetching known authority sites directly.\n",
+            "I'll retry the searches and try fetching known authority sites directly.\n",
+            "Let me retry the searches with different phrasing and try fetching known authority sites.\n",
+        ])
+        self.assertEqual(text.count("authority sites"), 1)
+
+    def test_thinking_carriage_return_rewrites_line(self):
+        text, t = self._thinking_writes(["draft\rfinal\n"])
+        self.assertIn("final", text)
+        self.assertNotIn("\r", t.text())
+
+    def test_thinking_erase_clears_rows(self):
+        t = agent._ThinkingLive(color=False)
+        writes = []
+        ts = type("TS", (), {"columns": 80, "lines": 24})()
+        with mock.patch("sys.stdout") as out, \
+             mock.patch("lmloop.display.shutil.get_terminal_size", return_value=ts):
+            out.write.side_effect = lambda s: writes.append(s)
+            out.isatty.return_value = True
+            t.feed("line one\nline two\n")
+            saved = t.erase()
+        joined = "".join(writes)
+        self.assertIn("line one", joined)
+        self.assertIn("\033[1A", joined)
+        self.assertIn("line one", saved)
+        self.assertFalse(t.active)
+
+    def test_overlap_keeps_paragraph_break_newlines(self):
+        parts = []
+        agent._ingest_text_delta(parts, "Hello\n")
+        self.assertEqual(agent._ingest_text_delta(parts, "\n"), "\n")
+        self.assertEqual(agent._ingest_text_delta(parts, "World\n"), "World\n")
+        self.assertEqual("".join(parts), "Hello\n\nWorld\n")
 
 
 class ContinueNudgeTests(unittest.TestCase):
@@ -243,7 +356,7 @@ class ContinueNudgeTests(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=[FakeResp(round1), FakeResp(round2), FakeResp(round3)],
         ), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -252,7 +365,7 @@ class ContinueNudgeTests(unittest.TestCase):
                 echo_tool=lambda n, a, *r: None,
             )
         self.assertTrue(any("paused mid-task" in str(x) for x in echoed))
-        self.assertTrue(any(m.get("content") == agent._NUDGE_CONTINUE for m in messages))
+        self.assertTrue(any(m.get("content") == NUDGE_CONTINUE_TEXT for m in messages))
         self.assertIn("Top idea: add tests.", messages[-1].get("content", ""))
 
 
@@ -299,6 +412,20 @@ class IngestTextDeltaTests(unittest.TestCase):
         self.assertEqual(agent._ingest_text_delta(parts, stale), "")
         self.assertEqual("".join(parts), long)
 
+    def test_medium_prefix_replay_ignored(self):
+        parts = []
+        body = "Let me search the web for Bay Area history now.\n"
+        agent._ingest_text_delta(parts, body)
+        agent._ingest_text_delta(parts, body + "Then I'll summarize.\n")
+        self.assertEqual(agent._ingest_text_delta(parts, body), "")
+        self.assertEqual("".join(parts).count(body.strip()), 1)
+
+    def test_overlap_window_keeps_only_new_suffix(self):
+        parts = []
+        agent._ingest_text_delta(parts, "AAA\nBBB\n")
+        self.assertEqual(agent._ingest_text_delta(parts, "BBB\nCCC\n"), "CCC\n")
+        self.assertEqual("".join(parts), "AAA\nBBB\nCCC\n")
+
     def test_small_prefix_chunk_still_appends(self):
         parts = []
         agent._ingest_text_delta(parts, "xxxxxxxxxxxxxxxxxxxx")
@@ -310,6 +437,52 @@ class IngestTextDeltaTests(unittest.TestCase):
         unit = "x" * agent._REPEAT_WINDOW
         self.assertFalse(agent._tail_repeats(unit * 2))
         self.assertTrue(agent._tail_repeats(unit * agent._REPEAT_TIMES))
+
+    def test_repeated_trailing_lines(self):
+        line = "The user asked about Bay Area history in detail."
+        self.assertFalse(agent._repeated_trailing_lines("\n".join([line] * 3)))
+        self.assertTrue(agent._repeated_trailing_lines("\n".join([line] * 6)))
+
+    def test_think_line_similar_paraphrases(self):
+        a = (
+            "Let me try the searches once more with different phrasing "
+            "and also try fetching known authority sites directly."
+        )
+        b = "I'll retry the searches and try fetching known authority sites directly."
+        c = (
+            "Let me retry the searches with different phrasing and try "
+            "fetching known authority sites."
+        )
+        self.assertTrue(agent._think_line_similar(a, b))
+        self.assertTrue(agent._think_line_similar(a, c))
+        self.assertTrue(agent._think_line_similar(b, c))
+        self.assertFalse(agent._think_line_similar(
+            "New York works well for first-time visitors to the East Coast.",
+            "Miami is better in winter for travelers who want beach weather.",
+        ))
+
+    def test_repeated_near_trailing_lines(self):
+        paraphrases = [
+            "Let me try the searches once more with different phrasing and also try fetching known authority sites directly.",
+            "I'll retry the searches and try fetching known authority sites directly.",
+            "Let me retry the searches with different phrasing and try fetching known authority sites.",
+            "I'll retry the searches with slightly different phrasing and also try fetching known authority sites directly.",
+        ]
+        self.assertTrue(agent._repeated_near_trailing_lines("\n".join(paraphrases)))
+        distinct = [
+            "I'll search for East Coast destinations.",
+            "New York works well for first-time visitors.",
+            "Boston is compact and walkable.",
+            "Miami is better in winter.",
+        ]
+        self.assertFalse(agent._repeated_near_trailing_lines("\n".join(distinct)))
+
+    def test_alternating_near_trailing_lines(self):
+        a = "Let me try the searches once more with different phrasing and also try fetching known authority sites directly."
+        b = "I'll retry the searches and try fetching known authority sites directly."
+        # Alternating A/B still fails exact-line halt; near-dup should catch it.
+        text = "\n".join([a, b, a, b, a, b])
+        self.assertTrue(agent._repeated_near_trailing_lines(text))
 
 
 class PrinterResetTests(unittest.TestCase):
@@ -458,6 +631,55 @@ class ChatStreamTests(unittest.TestCase):
         self.assertEqual(msg["content"], "answer")
         self.assertEqual(msg.get("_reasoning"), "step1 step2")
 
+    def test_reasoning_repeated_lines_halt_further_chunks(self):
+        line = "The user asked about Bay Area history in detail.\n"
+        body = _sse(
+            {"choices": [{"delta": {"reasoning_content": line * 8}}]},
+            {"choices": [{"delta": {"reasoning_content": "SHOULD_NOT_APPEAR\n"}}]},
+            {"choices": [{"delta": {"content": "answer"}}]},
+            None,
+        )
+        reasoning = []
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(
+                cfg, "m", [], None, on_reasoning=reasoning.append,
+            )
+        self.assertNotIn("SHOULD_NOT_APPEAR", "".join(reasoning))
+        self.assertNotIn("SHOULD_NOT_APPEAR", msg.get("_reasoning", ""))
+        self.assertEqual(msg["content"], "answer")
+
+    def test_reasoning_paraphrase_loop_halts_further_chunks(self):
+        body = _sse(
+            {"choices": [{"delta": {"reasoning_content": (
+                "Let me try the searches once more with different phrasing "
+                "and also try fetching known authority sites directly.\n"
+            )}}]},
+            {"choices": [{"delta": {"reasoning_content": (
+                "I'll retry the searches and try fetching known authority sites directly.\n"
+            )}}]},
+            {"choices": [{"delta": {"reasoning_content": (
+                "Let me retry the searches with different phrasing and try "
+                "fetching known authority sites.\n"
+            )}}]},
+            {"choices": [{"delta": {"reasoning_content": (
+                "I'll retry the searches with slightly different phrasing and "
+                "also try fetching known authority sites directly.\n"
+            )}}]},
+            {"choices": [{"delta": {"reasoning_content": "SHOULD_NOT_APPEAR\n"}}]},
+            {"choices": [{"delta": {"content": "answer"}}]},
+            None,
+        )
+        reasoning = []
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(
+                cfg, "m", [], None, on_reasoning=reasoning.append,
+            )
+        self.assertNotIn("SHOULD_NOT_APPEAR", "".join(reasoning))
+        self.assertNotIn("SHOULD_NOT_APPEAR", msg.get("_reasoning", ""))
+        self.assertEqual(msg["content"], "answer")
+
     def test_empty_stream_raises(self):
         cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(b"")):
@@ -486,12 +708,11 @@ class ActIntegrationTests(unittest.TestCase):
         }
         echoed, out = [], []
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
-             mock.patch.object(agent, "_default_echo_delta", side_effect=out.append):
+             mock.patch("lmloop.display._rich_live_available", return_value=False):
             # Re-bind plain writer through True path for capture
             agent.act(
                 cfg, "m", [{"role": "user", "content": "hi"}],
-                echo=echoed.append, echo_delta=out.append, echo_tool=lambda n, a: None,
+                echo=echoed.append, echo_delta=out.append, echo_tool=lambda n, a, s=None: None,
             )
         self.assertEqual(echoed, [])
         self.assertEqual("".join(out), "hello\n")
@@ -509,7 +730,7 @@ class ActIntegrationTests(unittest.TestCase):
             ind_cls.return_value = ind
             agent.act(
                 cfg, "m", [{"role": "user", "content": "hi"}],
-                echo=echoed.append, echo_delta=False, echo_tool=lambda n, a: None,
+                echo=echoed.append, echo_delta=False, echo_tool=lambda n, a, s=None: None,
             )
         self.assertEqual(echoed, ["**hello**"])
         ind.tick.assert_called()
@@ -548,7 +769,7 @@ class ActIntegrationTests(unittest.TestCase):
             ind_cls.return_value = ind
             agent.act(
                 cfg, "m", [{"role": "user", "content": "hi"}],
-                echo=echoed.append, echo_tool=lambda n, a: None,
+                echo=echoed.append, echo_tool=lambda n, a, s=None: None,
             )
         self.assertEqual(echoed, [])
         self.assertEqual(feeds, ["**a**", " b"])
@@ -588,7 +809,7 @@ class ActIntegrationTests(unittest.TestCase):
             "last_prompt_tokens": 0, "last_completion_tokens": 0,
         }
         with mock.patch("urllib.request.urlopen", side_effect=[FakeResp(round1), FakeResp(round2)]), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -742,7 +963,7 @@ class ActIntegrationTests(unittest.TestCase):
             raise agent.ServerError("boom")
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             with self.assertRaises(agent.ServerError):
@@ -756,6 +977,25 @@ class ActIntegrationTests(unittest.TestCase):
         self.assertEqual(messages[start_len + 1]["role"], "tool")
         self.assertEqual(len(messages), start_len + 2)
 
+    def test_act_unexpected_error_reraises_without_wrapping(self):
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True, "confirm_shell": False,
+        }
+        messages = [{"role": "user", "content": "hi"}]
+
+        with mock.patch.object(agent, "_chat", side_effect=RuntimeError("bug")), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
+             mock.patch.object(agent.tools, "dispatch", return_value="ok"):
+            with self.assertRaises(RuntimeError) as ctx:
+                agent.act(
+                    cfg, "m", messages,
+                    echo=lambda *_a: None, echo_delta=False,
+                    echo_tool=lambda n, a, *r: None,
+                )
+        self.assertEqual(str(ctx.exception), "bug")
+        self.assertEqual(messages, [{"role": "user", "content": "hi"}])
+
     def test_act_keyboard_interrupt_rolls_back_orphan_assistant_tools(self):
         cfg = {
             "base_url": "http://127.0.0.1:1234/v1",
@@ -767,7 +1007,7 @@ class ActIntegrationTests(unittest.TestCase):
             raise KeyboardInterrupt
 
         with mock.patch.object(agent, "_chat", side_effect=boom), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             with self.assertRaises(KeyboardInterrupt):
                 agent.act(
@@ -792,7 +1032,7 @@ class ActIntegrationTests(unittest.TestCase):
         }
         echoed = []
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -818,7 +1058,7 @@ class ActIntegrationTests(unittest.TestCase):
         }
         messages = [{"role": "user", "content": "hi"}]
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp:
             agent.act(
@@ -852,7 +1092,7 @@ class ActIntegrationTests(unittest.TestCase):
             )
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             agent.act(
                 cfg, "m", messages,
@@ -864,7 +1104,7 @@ class ActIntegrationTests(unittest.TestCase):
         self.assertFalse(messages[-1].get("tool_calls"))
 
     def test_act_nudge_skipped_on_final_round(self):
-        """Do not leave an unanswered _NUDGE_CONTINUE when max_rounds is exhausted."""
+        """Do not leave an unanswered continue-nudge when max_rounds is exhausted."""
         cfg = {
             "base_url": "http://127.0.0.1:1234/v1",
             "temperature": 0.7, "timeout_s": 5, "stream": True,
@@ -891,7 +1131,7 @@ class ActIntegrationTests(unittest.TestCase):
             )
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -900,7 +1140,7 @@ class ActIntegrationTests(unittest.TestCase):
                 echo_tool=lambda n, a, *r: None,
             )
         self.assertEqual(calls["n"], 2)
-        self.assertFalse(any(m.get("content") == agent._NUDGE_CONTINUE for m in messages))
+        self.assertFalse(any(m.get("content") == NUDGE_CONTINUE_TEXT for m in messages))
         self.assertFalse(any("paused mid-task" in str(x) for x in echoed))
         self.assertTrue(any("stopped without finishing" in str(x) for x in echoed))
 
@@ -927,7 +1167,7 @@ class ActIntegrationTests(unittest.TestCase):
             return ({"role": "assistant", "content": ""}, {})
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch.object(agent, "_rich_live_available", return_value=False), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -937,7 +1177,7 @@ class ActIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(calls["n"], 2)
         self.assertFalse(any("paused mid-task" in str(x) for x in echoed))
-        self.assertFalse(any(m.get("content") == agent._NUDGE_CONTINUE for m in messages))
+        self.assertFalse(any(m.get("content") == NUDGE_CONTINUE_TEXT for m in messages))
 
 
 class MalformedToolDeltaTests(unittest.TestCase):

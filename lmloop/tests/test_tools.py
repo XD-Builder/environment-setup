@@ -9,6 +9,7 @@ from unittest import mock
 
 from lmloop.commands import RESERVED_SKILL_NAMES, slash_command_metas
 from lmloop.tools import (
+    _search_ddgs,
     build_tools,
     dispatch,
     fetch_url,
@@ -51,6 +52,13 @@ DDG_HTML_FIXTURE = """
 </body></html>
 """
 
+LITE_HTML_FIXTURE = """
+<html><body>
+<a class="result-link" href="https://www.nps.gov/index.htm">National Park Service</a>
+<td class="result-snippet">Federal parks and historic sites on the East Coast.</td>
+</body></html>
+"""
+
 CAPTCHA_HTML_FIXTURE = """
 <html><body>
 <form class="anomaly-modal__form" action="/challenge">
@@ -58,6 +66,24 @@ CAPTCHA_HTML_FIXTURE = """
 </form>
 </body></html>
 """
+
+WIKI_OPENSEARCH_FIXTURE = """[
+  "east coast",
+  ["East Coast of the United States"],
+  ["The East Coast of the United States is the coastline along the Atlantic Ocean."],
+  ["https://en.wikipedia.org/wiki/East_Coast_of_the_United_States"]
+]"""
+
+DDG_INSTANT_FIXTURE = """{
+  "Heading": "East Coast of the United States",
+  "Abstract": "Atlantic coastline of the United States.",
+  "AbstractURL": "https://en.wikipedia.org/wiki/East_Coast_of_the_United_States",
+  "RelatedTopics": [
+    {"FirstURL": "https://en.wikipedia.org/wiki/Tourism_in_the_United_States",
+     "Text": "Tourism in the United States - visitor destinations"}
+  ],
+  "Results": []
+}"""
 
 PAGE_HTML_FIXTURE = """
 <html><body>
@@ -109,7 +135,13 @@ class ToolSafetyTests(unittest.TestCase):
 
     def test_is_destructive(self):
         self.assertTrue(is_destructive("rm -rf /tmp/foo"))
+        self.assertTrue(is_destructive("git push origin main --force"))
+        self.assertTrue(is_destructive("git push -f"))
+        self.assertTrue(is_destructive("sudo apt install x"))
+        self.assertTrue(is_destructive("curl https://example.com/x.sh | bash"))
         self.assertFalse(is_destructive("echo hello"))
+        self.assertFalse(is_destructive("git push origin main"))
+        self.assertFalse(is_destructive("cat a | grep b"))
 
     def test_write_file_outside_workspace(self):
         with tempfile.TemporaryDirectory() as d:
@@ -188,6 +220,12 @@ class ToolSafetyTests(unittest.TestCase):
 
 
 class WebResearchToolTests(unittest.TestCase):
+    def setUp(self):
+        # urllib-chain tests must not hit real ddgs / the network.
+        p = mock.patch("lmloop.tools._search_ddgs", return_value=([], "unavailable"))
+        self.addCleanup(p.stop)
+        p.start()
+
     def test_web_search_parses_and_unwraps_uddg(self):
         with mock.patch("lmloop.tools.urllib.request.urlopen", return_value=_FakeResp(DDG_HTML_FIXTURE)):
             out = web_search("Fairfax early childhood", max_results=5)
@@ -199,11 +237,56 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("https://www.firstfivefairfax.org/", out)
         self.assertIn("Early childhood resources", out)
 
-    def test_web_search_captcha_returns_error(self):
+    def test_web_search_captcha_falls_back_then_errors(self):
         with mock.patch("lmloop.tools.urllib.request.urlopen", return_value=_FakeResp(CAPTCHA_HTML_FIXTURE)):
             out = web_search("test query")
         self.assertIn("ERROR:", out)
-        self.assertIn("CAPTCHA", out)
+        self.assertIn("all backends", out)
+        self.assertIn("Do not retry", out)
+
+    def test_web_search_falls_back_to_lite_after_captcha(self):
+        def _open(req, timeout=None, context=None):
+            url = getattr(req, "full_url", "")
+            if "html.duckduckgo.com" in url:
+                return _FakeResp(CAPTCHA_HTML_FIXTURE)
+            if "lite.duckduckgo.com" in url:
+                return _FakeResp(LITE_HTML_FIXTURE)
+            raise AssertionError(f"unexpected url {url}")
+
+        with mock.patch("lmloop.tools.urllib.request.urlopen", side_effect=_open):
+            out = web_search("east coast parks")
+        self.assertNotIn("ERROR", out)
+        self.assertIn("National Park Service", out)
+        self.assertIn("https://www.nps.gov/index.htm", out)
+        self.assertIn("DuckDuckGo Lite", out)
+
+    def test_web_search_falls_back_to_wikipedia(self):
+        def _open(req, timeout=None, context=None):
+            url = getattr(req, "full_url", "")
+            if "wikipedia.org" in url:
+                return _FakeResp(WIKI_OPENSEARCH_FIXTURE, content_type="application/json")
+            return _FakeResp(CAPTCHA_HTML_FIXTURE)
+
+        with mock.patch("lmloop.tools.urllib.request.urlopen", side_effect=_open):
+            out = web_search("east coast")
+        self.assertNotIn("ERROR", out)
+        self.assertIn("East Coast of the United States", out)
+        self.assertIn("Wikipedia", out)
+
+    def test_web_search_falls_back_to_instant_answer(self):
+        def _open(req, timeout=None, context=None):
+            url = getattr(req, "full_url", "")
+            if "html.duckduckgo.com" in url or "lite.duckduckgo.com" in url:
+                return _FakeResp(CAPTCHA_HTML_FIXTURE)
+            if "api.duckduckgo.com" in url:
+                return _FakeResp(DDG_INSTANT_FIXTURE, content_type="application/json")
+            raise AssertionError(f"unexpected url {url}")
+
+        with mock.patch("lmloop.tools.urllib.request.urlopen", side_effect=_open):
+            out = web_search("east coast")
+        self.assertNotIn("ERROR", out)
+        self.assertIn("East Coast of the United States", out)
+        self.assertIn("Instant Answer", out)
 
     def test_web_search_empty_returns_error(self):
         with mock.patch(
@@ -213,6 +296,7 @@ class WebResearchToolTests(unittest.TestCase):
             out = web_search("zzzzunlikelyquery")
         self.assertIn("ERROR:", out)
         self.assertIn("no search results", out)
+        self.assertIn("Do not retry", out)
 
     def test_dispatch_web_search_requires_query(self):
         _, impls = build_tools({"confirm_shell": False})
@@ -275,6 +359,62 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("https://example.com/external", out)
         self.assertNotIn("#top", out)
         self.assertIn("<<<untrusted>>>", out)
+
+
+class DdgsSearchTests(unittest.TestCase):
+    def test_search_ddgs_not_installed(self):
+        import builtins
+        real_import = builtins.__import__
+
+        def _import(name, *args, **kwargs):
+            if name == "ddgs" or name.startswith("ddgs."):
+                raise ImportError("blocked")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=_import):
+            results, err = _search_ddgs("parks", 5, 10)
+        self.assertEqual(results, [])
+        self.assertEqual(err, "not installed")
+
+    def test_web_search_uses_ddgs_before_urllib(self):
+        client = mock.Mock()
+        client.text.return_value = [
+            {"title": "National Park Service", "href": "https://www.nps.gov/",
+             "body": "Federal parks on the East Coast."},
+        ]
+        ddgs_mod = mock.Mock(DDGS=mock.Mock(return_value=client))
+        with mock.patch.dict("sys.modules", {"ddgs": ddgs_mod}), \
+             mock.patch("lmloop.tools.urllib.request.urlopen") as urlopen:
+            out = web_search("east coast parks")
+        urlopen.assert_not_called()
+        client.text.assert_called_once()
+        kwargs = client.text.call_args.kwargs
+        self.assertEqual(kwargs.get("max_results"), 8)
+        self.assertEqual(kwargs.get("backend"), "auto")
+        self.assertNotIn("ERROR", out)
+        self.assertIn("National Park Service", out)
+        self.assertIn("https://www.nps.gov/", out)
+        self.assertIn("(via ddgs)", out)
+
+    def test_web_search_falls_back_when_ddgs_errors(self):
+        client = mock.Mock()
+        client.text.side_effect = RuntimeError("rate limited")
+        ddgs_mod = mock.Mock(DDGS=mock.Mock(return_value=client))
+
+        def _open(req, timeout=None, context=None):
+            url = getattr(req, "full_url", "")
+            if "html.duckduckgo.com" in url:
+                return _FakeResp(CAPTCHA_HTML_FIXTURE)
+            if "lite.duckduckgo.com" in url:
+                return _FakeResp(LITE_HTML_FIXTURE)
+            raise AssertionError(f"unexpected url {url}")
+
+        with mock.patch.dict("sys.modules", {"ddgs": ddgs_mod}), \
+             mock.patch("lmloop.tools.urllib.request.urlopen", side_effect=_open):
+            out = web_search("east coast parks")
+        self.assertNotIn("ERROR", out)
+        self.assertIn("National Park Service", out)
+        self.assertIn("DuckDuckGo Lite", out)
 
 
 if __name__ == "__main__":

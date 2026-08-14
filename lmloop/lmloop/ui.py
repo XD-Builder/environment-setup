@@ -61,6 +61,40 @@ def strip_ansi(text: str) -> str:
     return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
+def drain_tty_input() -> int:
+    """Discard bytes waiting on stdin (keys typed while the model streamed).
+
+    Without this, a mid-stream Ctrl+O sits in the TTY buffer and fires as soon
+    as prompt_toolkit resumes — opening ``less`` and looking like the stream
+    was interrupted.
+    """
+    if not sys.stdin.isatty():
+        return 0
+    import fcntl
+    import os
+    import select
+
+    n = 0
+    fd = sys.stdin.fileno()
+    try:
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        try:
+            while True:
+                ready, _, _ = select.select([fd], [], [], 0)
+                if not ready:
+                    break
+                chunk = os.read(fd, 4096)
+                if not chunk:
+                    break
+                n += len(chunk)
+        finally:
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+    except (OSError, ValueError):
+        return n
+    return n
+
+
 def visible_len(text: str) -> int:
     return len(strip_ansi(text))
 
@@ -332,7 +366,8 @@ class Console:
             f"  {t.c('Ctrl-C', t.green)} dismisses / @ completion, then twice to exit"
         )
         lines.append(
-            f"  {t.c('Ctrl-O', t.green)} expands the latest thinking or tool response"
+            f"  {t.c('Ctrl-O', t.green)} opens prior-turn thinking "
+            f"(oldest first; live thinking already streamed)"
         )
         return "\n".join(lines)
 
@@ -361,19 +396,6 @@ class Console:
         if stats and stats.get("total_tokens"):
             line += f"  ·  {format_tokens(stats['total_tokens'])} session"
         print(t.c(line, t.dim_cyan))
-
-    def expand_collapse(self, kind: str, text: str) -> None:
-        """Print a previously collapsed thinking or tool block (Ctrl+O)."""
-        t = self.t
-        label = "thinking" if kind == "thinking" else "tool"
-        print(t.c(f"── {label} ──", t.dim))
-        body = (text or "").rstrip()
-        if kind == "thinking":
-            for line in body.splitlines() or [""]:
-                print(t.c(f"  ▎{line}", t.dim))
-        else:
-            print(body)
-        print(t.c("── end ──", t.dim))
 
     def warn(self, msg: str) -> None:
         print(self.t.c(msg, self.t.bold_yellow))

@@ -1,16 +1,19 @@
 """Interactive REPL for lmloop."""
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from . import agent, memory, tools
+from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
 from .files_index import expand_at_refs
 from .status import MSG_RESUME
 from .ui import Console, ask_yes_no, fresh_stats
+
+_THINKING_HISTORY_MAX = 30
 
 
 @dataclass
@@ -33,10 +36,9 @@ class SessionState:
     console: Console
     context_limit: int = 0
     prompt_session: object = None
-    # Latest collapsed thinking / tool block for Ctrl+O expand.
-    last_collapse_kind: str = ""
-    last_collapse_text: str = ""
-    collapse_expanded: bool = False
+    # Prior-turn thinking for Ctrl+O (newest last). Live thinking is not stored
+    # here until the turn retires it.
+    thinking_history: list = field(default_factory=list)
 
     @property
     def user_turns(self) -> int:
@@ -45,6 +47,44 @@ class SessionState:
     @property
     def context_reserve(self) -> int:
         return int(self.cfg.get("context_reserve") or 2048)
+
+    def push_thinking(self, text: str) -> None:
+        """Store a thinking block for later review."""
+        body = (text or "").rstrip()
+        if not body:
+            return
+        self.thinking_history.append(body)
+        if len(self.thinking_history) > _THINKING_HISTORY_MAX:
+            self.thinking_history = self.thinking_history[-_THINKING_HISTORY_MAX:]
+
+    def thinking_entries(self) -> list:
+        return list(self.thinking_history)
+
+    def prior_thinking_transcript(self) -> "str | None":
+        """All thinking except the latest, oldest-first (already seen live).
+
+        Latest thinking was shown while streaming and erased on tools/answer;
+        Ctrl+O is for earlier turns, not a newest→oldest cycle.
+        """
+        entries = self.thinking_history
+        if len(entries) < 2:
+            return None
+        prior = entries[:-1]
+        parts = []
+        for i, text in enumerate(prior, 1):
+            parts.append(f"── thinking (turn {i}/{len(prior)}) ──")
+            for line in (text or "").splitlines() or [""]:
+                parts.append(f"{THINK_LINE_PREFIX}{line}")
+            parts.append("")
+        parts.append("── end ──")
+        parts.append("(q returns · this is prior-turn thinking, oldest first)")
+        return "\n".join(parts) + "\n"
+
+    def thinking_count(self) -> int:
+        return len(self.thinking_history)
+
+    def prior_thinking_count(self) -> int:
+        return max(0, self.thinking_count() - 1)
 
 
 def _refresh_context_limit(state: SessionState) -> None:
@@ -85,12 +125,6 @@ def _echo_assistant(console: Console):
     return echo
 
 
-def _on_collapse(state: SessionState, kind: str, text: str) -> None:
-    state.last_collapse_kind = kind
-    state.last_collapse_text = text
-    state.collapse_expanded = False
-
-
 def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
     # Expand @path refs for every turn (freeform, /skill, /continue, …).
     user_text = expand_at_refs(user_text)
@@ -106,7 +140,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> None:
             echo_status=state.console.hint,
             echo_tool=state.console.tool_call,
             echo_round=state.console.round_usage,
-            on_collapse=lambda kind, text: _on_collapse(state, kind, text),
+            on_thinking=state.push_thinking,
             context_limit=state.context_limit,
             context_reserve=state.context_reserve,
         )

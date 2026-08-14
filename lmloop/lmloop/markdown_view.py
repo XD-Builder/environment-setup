@@ -15,6 +15,35 @@ def _rich_available() -> bool:
         return False
 
 
+def make_console(
+    color: bool = True,
+    *,
+    file=None,
+    width: "int | None" = None,
+    force_terminal: "bool | None" = None,
+    truecolor: bool = False,
+):
+    """Rich Console with word-wrap. ``soft_wrap=False`` so long lines wrap
+    instead of being cropped by Live."""
+    from rich.console import Console
+    if force_terminal is None:
+        force_terminal = bool(color and sys.stdout.isatty())
+    kwargs = {
+        "highlight": False,
+        "soft_wrap": False,
+        "color_system": (
+            ("truecolor" if color else None) if truecolor
+            else ("auto" if color else None)
+        ),
+        "force_terminal": force_terminal,
+    }
+    if file is not None:
+        kwargs["file"] = file
+    if width is not None:
+        kwargs["width"] = width
+    return Console(**kwargs)
+
+
 def print_markdown(text: str, color: bool = True) -> None:
     """Print markdown rendered for the terminal. Falls back to plain text."""
     if not text:
@@ -22,16 +51,8 @@ def print_markdown(text: str, color: bool = True) -> None:
     if not _rich_available() or not sys.stdout.isatty():
         print(text)
         return
-    from rich.console import Console
     from rich.markdown import Markdown
-
-    console = Console(
-        highlight=False,
-        soft_wrap=True,
-        color_system="auto" if color else None,
-        force_terminal=bool(color and sys.stdout.isatty()),
-    )
-    console.print(Markdown(text))
+    make_console(color).print(Markdown(text))
 
 
 def render_markdown_ansi(text: str, width: "int | None" = None, color: bool = True) -> str:
@@ -40,18 +61,13 @@ def render_markdown_ansi(text: str, width: "int | None" = None, color: bool = Tr
         return ""
     if not _rich_available():
         return text if text.endswith("\n") else text + "\n"
-    from rich.console import Console
     from rich.markdown import Markdown
 
     cols = width or shutil.get_terminal_size((100, 24)).columns
     buf = StringIO()
-    console = Console(
-        file=buf,
-        force_terminal=True,
-        color_system="truecolor" if color else None,
-        width=max(40, cols),
-        highlight=False,
-        soft_wrap=True,
+    console = make_console(
+        color, file=buf, width=max(40, cols),
+        force_terminal=True, truecolor=True,
     )
     console.print(Markdown(text))
     return buf.getvalue()
