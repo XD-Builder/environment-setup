@@ -6,6 +6,7 @@ State layout (gstack-inspired, file-only):
     ├── config.json                    # user settings
     ├── history                        # REPL prompt history (prompt_toolkit)
     ├── skills/<name>.md               # user-authored skills (override packaged)
+    ├── steer/<name>.md                # user always-on steering (concatenated)
     └── projects/<slug>/
         ├── learnings.jsonl            # append-only, dedup at read time
         ├── decisions.jsonl            # event-sourced (decide / supersede)

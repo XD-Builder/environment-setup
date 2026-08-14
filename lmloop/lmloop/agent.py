@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import memory, tools
+from . import memory, steer, tools
 from .commands import RESERVED_SKILL_NAMES
 from .config import STATE_ROOT
 from . import status as status_mod
@@ -274,7 +274,7 @@ def generate_skill_draft(cfg: dict, model: str, name: str, brief: str) -> str:
     return extract_skill_markdown(msg.get("content") or "")
 
 
-def system_prompt(cfg: dict) -> str:
+def system_prompt(cfg: dict, workspace_root: "Path | None" = None) -> str:
     base = load_skill("system")
     names = tools.tool_names(cfg=cfg)
     tools_block = (
@@ -288,6 +288,10 @@ def system_prompt(cfg: dict) -> str:
         base = base.replace(marker, tools_block + marker, 1)
     else:
         base += tools_block
+    base += "\n\n" + steer.clock_block()
+    steering = steer.steering_block(workspace_root)
+    if steering:
+        base += "\n\n" + steering
     ctx = memory.context_block(cfg)
     if ctx:
         base += "\n\n## Context recovery (from project memory)\n\n" + ctx

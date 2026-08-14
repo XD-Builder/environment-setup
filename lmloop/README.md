@@ -84,7 +84,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 
 In the REPL:
 
-- **Peek:** `/memory`, `/decisions`, `/history`, `/context` (what is injected into the system prompt). Checkpoints newer than 14 days are auto-injected.
+- **Peek:** `/memory`, `/decisions`, `/history`, `/context` (memory injected into the system prompt). Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle.
 - **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
@@ -148,7 +148,7 @@ REPL UX (prompt_toolkit + rich):
       │ runs tools locally, feeds results back (multi-round loop)
       ▼
  shell · read/write file · list_dir · search (rg) · web_search · fetch_url
- remember · log_decision · recall_memory
+ current_time · remember · log_decision · recall_memory
  (ToolDef registry + commands.py + status.py as single sources of truth)
       │
       ▼
@@ -196,6 +196,13 @@ local, single-user research loop needs.
   a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/skills/<name>.md` —
   numbered steps, English conditionals, explicit report format. Immediately
   available as `lmloop skill <name>`, `/skill <name>`, and `/name`.
+- **Steering:** always-on markdown (not a `/name` skill). Drop `*.md` in
+  `lmloop/steer/`, `~/.lmloop/steer/`, or `<workspace>/.lmloop/steer/`. Files
+  concatenate into the system prompt (packaged, then user, then project; later
+  dirs can contradict earlier; same-name files add, they do not override).
+  A Clock block (UTC date) is injected on every `system_prompt()` call so
+  relative windows like "last 4 weeks" use today, not a training-cutoff year.
+  `current_time` refreshes that clock in a long REPL session.
 - **New graph:** drop `~/.lmloop/graphs/<name>.md` (overrides packaged). Line-based
   `node` / `edge` markdown; see `lmloop/graphs/company.md`. Run with
   `lmloop graph <name>` or `/graph <name>`.
@@ -245,6 +252,7 @@ zsh completion for `config set` is generated from these keys.
 | `lmloop --skill …` fails | `--skill` was replaced by the subcommand: `lmloop skill <name> [task]` |
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
 | Tools can't read `/etc/...` | File tools are scoped to the workspace directory captured at session start |
+| "Last 4 weeks" searches 2024/2025 | Clock is injected into the system prompt. In a long REPL, `/new` or the `current_time` tool. Add project rules in `<workspace>/.lmloop/steer/`. |
 
 ## Safety
 
