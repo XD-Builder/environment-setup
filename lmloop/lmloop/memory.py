@@ -81,6 +81,14 @@ def _read_jsonl(path: Path) -> "list[dict]":
 
 # ---------------------------------------------------------------- learnings
 
+def learnings_file(slug: "str | None" = None) -> Path:
+    return project_dir(slug) / "learnings.jsonl"
+
+
+def decisions_file(slug: "str | None" = None) -> Path:
+    return project_dir(slug) / "decisions.jsonl"
+
+
 def add_learning(insight: str, type: str = "pattern", key: str = "",
                  confidence: int = 7, source: str = "observed",
                  slug: "str | None" = None) -> dict:
@@ -95,7 +103,7 @@ def add_learning(insight: str, type: str = "pattern", key: str = "",
         "confidence": max(1, min(10, int(confidence))),
         "source": source if source in ("observed", "user-stated", "inferred") else "observed",
     }
-    _append_jsonl(project_dir(slug) / "learnings.jsonl", row)
+    _append_jsonl(learnings_file(slug), row)
     return row
 
 
@@ -117,7 +125,7 @@ def _query_terms(query: str) -> "list[str]":
 
 def get_learnings(query: str = "", limit: int = 20, slug: "str | None" = None) -> "list[dict]":
     """Deduped (latest row per key wins), decayed, optionally keyword-filtered."""
-    rows = _read_jsonl(project_dir(slug) / "learnings.jsonl")
+    rows = _read_jsonl(learnings_file(slug))
     by_key: "dict[str, dict]" = {}
     for row in rows:  # file order == chronological, so later rows overwrite
         if row.get("key") and row.get("insight"):
@@ -170,13 +178,13 @@ def add_decision(decision: str, rationale: str = "", supersedes: str = "",
     }
     if supersedes:
         row["supersedes"] = supersedes
-    _append_jsonl(project_dir(slug) / "decisions.jsonl", row)
+    _append_jsonl(decisions_file(slug), row)
     return row
 
 
 def get_decisions(limit: int = 20, slug: "str | None" = None) -> "list[dict]":
     """Active set: decide/supersede events not retired by a later supersede."""
-    rows = _read_jsonl(project_dir(slug) / "decisions.jsonl")
+    rows = _read_jsonl(decisions_file(slug))
     retired = {r["supersedes"] for r in rows if r.get("supersedes")}
     active = [r for r in rows if r.get("id") not in retired and r.get("decision")]
     return active[-limit:]

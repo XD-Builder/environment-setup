@@ -10,10 +10,11 @@ from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
 from .files_index import expand_at_refs
-from .status import MSG_RESUME
-from .ui import Console, ask_yes_no, fresh_stats, make_confirm_gate
+from .status import MSG_RESUME, msg_until_continue, status as status_line
+from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate
 
 _THINKING_HISTORY_MAX = 30
+_UNTIL_FOLLOWUP = "Ready to continue from this until-run. Ask a follow-up."
 
 
 @dataclass
@@ -269,7 +270,10 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
         workspace_root=Path.cwd().resolve(),
         log_label=label,
     )
-    return 0 if result is not None else 1
+    if result is None:
+        return 1
+    console.hint(f"[learnings → {memory.learnings_file()}]")
+    return 0
 
 
 def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
@@ -288,7 +292,12 @@ def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
             return True
         label = f"last {len(paths)} session(s)"
         state.console.hint(f"[memory mine · {label} · current conversation unchanged]")
-        mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
+        try:
+            mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
+        except KeyboardInterrupt:
+            state.console.hint(
+                f"\n[interrupted — current conversation unchanged; {MSG_RESUME}]"
+            )
         return True
     if arg:
         state.console.info("usage: /memory mine [n]")
@@ -300,10 +309,15 @@ def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
         state.console.info("(no session transcript to mine)")
         return True
     state.console.hint("[memory mine · this session · current conversation unchanged]")
-    mine_sessions(
-        state.cfg, state.model, None, state.console, confirm_gate,
-        transcript=transcript,
-    )
+    try:
+        mine_sessions(
+            state.cfg, state.model, None, state.console, confirm_gate,
+            transcript=transcript,
+        )
+    except KeyboardInterrupt:
+        state.console.hint(
+            f"\n[interrupted — current conversation unchanged; {MSG_RESUME}]"
+        )
     return True
 
 
@@ -399,19 +413,22 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
 def _isolated_act(state: SessionState, user_text: str, confirm_gate,
                   *, log_label: str) -> "list | None":
     """Run act() on a fresh thread. Returns messages, or None on failure."""
-    result = loop_mod.isolated_act(
-        state.cfg, state.model, user_text,
-        confirm_gate=confirm_gate,
-        echo=_echo_assistant(state.console),
-        echo_status=state.console.hint,
-        echo_error=state.console.error,
-        echo_tool=state.console.tool_call,
-        echo_round=state.console.round_usage,
-        context_limit=state.context_limit,
-        context_reserve=state.context_reserve,
-        workspace_root=state.workspace_root,
-        log_label=log_label,
-    )
+    try:
+        result = loop_mod.isolated_act(
+            state.cfg, state.model, user_text,
+            confirm_gate=confirm_gate,
+            echo=_echo_assistant(state.console),
+            echo_status=state.console.hint,
+            echo_error=state.console.error,
+            echo_tool=state.console.tool_call,
+            echo_round=state.console.round_usage,
+            context_limit=state.context_limit,
+            context_reserve=state.context_reserve,
+            workspace_root=state.workspace_root,
+            log_label=log_label,
+        )
+    except KeyboardInterrupt:
+        return None
     if result is None:
         return None
     messages, _session_log = result
@@ -597,17 +614,41 @@ def _until_callbacks(state: SessionState, confirm_gate):
         context_limit=state.context_limit,
         context_reserve=state.context_reserve,
         workspace_root=state.workspace_root,
-        ask_gate=ask_yes_no,
+        ask_gate=ask_until_gate,
         mine=mine if state.cfg.get("until_mine", True) else None,
     )
+
+
+def attach_until_result(state: SessionState, run: loop_mod.UntilRun) -> None:
+    """Append the until outcome to the live thread so follow-ups have context."""
+    loaded = loop_mod.UntilRun.load(run.path) if run.path.exists() else run
+    if loaded.is_done():
+        state.until_run = None
+        last = loaded.last_work()
+        if last and last.get("role") == "gate" and last.get("status") == "no":
+            outcome = "stopped"
+        else:
+            outcome = "done"
+        state.console.hint(msg_until_continue())
+    elif loaded.is_paused():
+        state.until_run = loaded.path
+        outcome = "paused"
+    else:
+        state.until_run = loaded.path
+        outcome = "stopped"
+        state.console.hint(status_line(f"until stopped — {MSG_RESUME}"))
+    summary = loaded.last_handoff() or loaded.last_maker_handoff() or "(no handoff)"
+    user = f"Until-run ({outcome}). Goal: {loaded.goal}\n\n{summary}"
+    state.messages.append({"role": "user", "content": user})
+    state.messages.append({"role": "assistant", "content": _UNTIL_FOLLOWUP})
+    memory.log_event(state.session_log, "user", user)
+    memory.log_event(state.session_log, "assistant", _UNTIL_FOLLOWUP)
 
 
 def _advance_until(state: SessionState, run: loop_mod.UntilRun, confirm_gate) -> None:
     state.until_run = run.path
     loop_mod.run_until(state.cfg, state.model, run=run, **_until_callbacks(state, confirm_gate))
-    loaded = loop_mod.UntilRun.load(run.path)
-    if loaded.is_done():
-        state.until_run = None
+    attach_until_result(state, run)
 
 
 def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
@@ -759,7 +800,8 @@ def _require_prompt_toolkit(console: Console) -> bool:
 
 
 def run_repl(cfg: dict, console: "Console | None" = None,
-             skill: "str | None" = None, first_task: "str | None" = None) -> int:
+             skill: "str | None" = None, first_task: "str | None" = None,
+             until_run: "loop_mod.UntilRun | None" = None) -> int:
     console = console or Console(cfg.get("color", True))
 
     try:
@@ -804,7 +846,11 @@ def run_repl(cfg: dict, console: "Console | None" = None,
 
     console.banner(slug)
 
-    if skill:
+    if until_run is not None:
+        attach_until_result(state, until_run)
+        if not interactive:
+            return 0
+    elif skill:
         try:
             prompt_text = agent.load_skill(skill, public_only=True)
         except FileNotFoundError as e:

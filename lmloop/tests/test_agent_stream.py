@@ -241,6 +241,32 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertIn("Third sentence", out)
         self.assertIn("continues the thought", out)
 
+    def test_tail_markdown_keeps_list_tails(self):
+        """Live list items must fold, not crop at terminal width."""
+        if not display._load_rich():
+            self.skipTest("rich not installed")
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(
+            file=buf, width=40, height=24, force_terminal=True,
+            soft_wrap=False, highlight=False, color_system=None,
+        )
+        text = (
+            "Saved:\n\n"
+            "1. pitfall_ambiguous_numeric_abbreviation — \"59K\" is ambiguous "
+            "(delivery count vs. $59,000 price). Always disambiguate early to "
+            "avoid wasted searches.\n"
+            "2. operational_geographic_split_queries — For geographic research, "
+            "split web searches by region (e.g., \"West Coast California\" vs "
+            "\"East Coast Florida\").\n"
+        )
+        console.print(display._TailMarkdown(text))
+        plain = " ".join(buf.getvalue().split())
+        self.assertIn("wasted searches", plain)
+        self.assertIn("East Coast Florida", plain)
+
     def test_thinking_counts_wrapped_visual_rows(self):
         t = display._ThinkingLive(color=False)
         ts = type("TS", (), {"columns": 20, "lines": 24})()

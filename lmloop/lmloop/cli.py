@@ -1,8 +1,8 @@
 """lmloop CLI.
 
     lmloop                          interactive REPL
-    lmloop "prompt"                 one-shot task
-    lmloop until [--check cmd] goal work until a check or evaluator passes
+    lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
+    lmloop until [--check cmd] goal work until a check or evaluator passes; REPL on a TTY
     lmloop skills [names]           list skill prompts (names = one per line)
     lmloop skills new <name> [brief]  draft a skill with AI, review, then save
     lmloop skill <name> [task]      start with a skill
@@ -30,7 +30,7 @@ from . import agent, loop as loop_mod, memory
 from .commands import cli_subcommand_metas, cli_subcommand_names
 from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
 from .repl import mine_sessions, run_repl
-from .ui import Console, ask_yes_no, make_confirm_gate
+from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
 
 EPILOG = """
 project memory commands:
@@ -61,7 +61,11 @@ def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
     except agent.ServerError as e:
         console.error(f"error: {e}")
         return 1
-    return mine_sessions(cfg, model, sessions, console, make_confirm_gate(console))
+    try:
+        return mine_sessions(cfg, model, sessions, console, make_confirm_gate(console))
+    except KeyboardInterrupt:
+        console.hint("\n[interrupted]")
+        return 1
 
 
 def cmd_retro(cfg: dict, count: int, console: Console) -> int:
@@ -339,10 +343,12 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
         context_limit=agent.get_context_limit(model, cfg),
         context_reserve=int(cfg.get("context_reserve") or 2048),
         workspace_root=Path.cwd().resolve(),
-        ask_gate=ask_yes_no,
+        ask_gate=ask_until_gate,
         mine=mine if cfg.get("until_mine", True) else None,
     )
     loaded = loop_mod.UntilRun.load(run.path)
+    if sys.stdin.isatty():
+        return run_repl(cfg, console=console, until_run=loaded)
     if loaded.is_paused():
         console.hint("paused — run `lmloop until` with no goal to resume")
     return 0

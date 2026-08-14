@@ -220,6 +220,31 @@ def _resolve_path(path: str, root: "Path | None" = None) -> Path:
     return p.resolve() if p.is_absolute() else (root / p).resolve()
 
 
+_TOOL_PREVIEW_LIMIT = 160
+_FILE_PATH_TOOLS = frozenset({"read_file", "write_file", "list_dir", "search_files"})
+
+
+def format_tool_preview(name: str, args: str,
+                        workspace_root: "Path | None" = None,
+                        limit: int = _TOOL_PREVIEW_LIMIT) -> str:
+    """Compact ⚙-line args. File tools show the resolved workspace path."""
+    text = args or ""
+    if name in _FILE_PATH_TOOLS:
+        try:
+            parsed = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            raw = parsed.get("path", ".")
+            if isinstance(raw, str):
+                parsed = dict(parsed)
+                parsed["path"] = str(_resolve_path(raw, workspace_root))
+                text = json.dumps(parsed, ensure_ascii=False)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
 def _workspace_root() -> Path:
     return Path.cwd().resolve()
 
@@ -306,7 +331,7 @@ def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES,
     start = max(1, start_line)
     chunk = lines[start - 1: start - 1 + max_lines]
     numbered = [f"{start + i:5d}| {line}" for i, line in enumerate(chunk)]
-    header = f"[{path}: lines {start}-{start + len(chunk) - 1} of {len(lines)}]"
+    header = f"[{p}: lines {start}-{start + len(chunk) - 1} of {len(lines)}]"
     return _truncate(header + "\n" + "\n".join(numbered))
 
 
@@ -320,7 +345,7 @@ def write_file(path: str, content: str, workspace_root: "Path | None" = None) ->
         p.write_text(content)
     except OSError as e:
         return f"ERROR: {e}"
-    return f"Wrote {len(content)} chars to {path}"
+    return f"Wrote {len(content)} chars to {p}"
 
 
 def list_dir(path: str = ".", workspace_root: "Path | None" = None) -> str:
@@ -927,11 +952,11 @@ def build_tools(cfg: dict, confirm_gate=None,
 
     def _remember(insight: str, type: str = "pattern", key: str = "", confidence: int = 7) -> str:
         row = memory.add_learning(insight, type=type, key=key, confidence=confidence)
-        return f"Saved learning [{row['key']}]"
+        return f"Saved learning [{row['key']}] to {memory.learnings_file()}"
 
     def _decide(decision: str, rationale: str = "", supersedes: str = "") -> str:
         row = memory.add_decision(decision, rationale=rationale, supersedes=supersedes)
-        return f"Logged decision [{row['id']}]"
+        return f"Logged decision [{row['id']}] to {memory.decisions_file()}"
 
     def _recall(query: str) -> str:
         return memory.search_memory(query, learning_limit=10, decision_limit=10)
@@ -955,7 +980,8 @@ def build_tools(cfg: dict, confirm_gate=None,
         ),
         ToolDef(
             "read_file",
-            "Read a file under the current working directory with line numbers.",
+            "Read a file under the session workspace (cwd at start) with line numbers. "
+            "path is relative to that workspace unless it is absolute.",
             {"path": s, "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}},
             ["path"],
             lambda path, start_line=1, max_lines=MAX_READ_LINES: read_file(
@@ -965,7 +991,8 @@ def build_tools(cfg: dict, confirm_gate=None,
         ),
         ToolDef(
             "write_file",
-            "Write (overwrite) a file under the current working directory.",
+            "Write (overwrite) a file under the session workspace (cwd at start). "
+            "path is relative to that workspace unless it is absolute.",
             {"path": s, "content": s}, ["path", "content"],
             lambda path, content: write_file(path, content, workspace_root=root),
             allow_empty=("content",),

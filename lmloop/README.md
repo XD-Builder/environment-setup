@@ -107,7 +107,7 @@ Inside the REPL:
 | `/decisions` | show active project decisions |
 | `/context` | show memory injected into the system prompt |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/until` |
-| `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes |
+| `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; then type to continue from a handoff |
 | `/save [title]` | checkpoint session for later restore |
 | `/memory [query \| mine [n]]` | peek learnings, or mine this session (or last n prior files) |
 | `/model <name>` | switch model, or list models with no argument |
@@ -121,7 +121,7 @@ Every file in `skills/` (except `system.md`) is also available as `/name` automa
 
 REPL UX (prompt_toolkit + rich):
 
-- **Assistant replies** are rendered as markdown. Live preview grows with the answer (tails only if it would overflow the terminal); the final TTY print uses terminal wrap so lines reflow when you resize the window.
+- **Assistant replies** are rendered as markdown. Live preview grows with the answer (tails only if it would overflow the terminal); the final print wraps at the terminal width, including list items, so line tails are never cropped.
 - **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL.
 - **Prompt** shows `cwd · model ›` (decorative only) with a **bottom toolbar** for context fill / session tokens / turns.
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
@@ -236,7 +236,11 @@ zsh completion for `config set` is generated from these keys.
 ## Safety
 
 File tools (`read_file`, `write_file`, `list_dir`, `search_files`) are constrained
-to the workspace directory captured at session start. Shell commands without pipes
+to the workspace directory captured at session start. Relative paths are resolved
+against that directory (not `$HOME`); the ⚙ tool line shows the resolved path.
+Shell commands without pipes
 run via `exec` (no shell) with that directory as `cwd`. Destructive patterns
 require explicit user confirmation; pipes/redirection do not unless you set
 `lmloop config set confirm_shell_syntax true`. HTTPS fetches verify TLS certificates.
+`remember` appends to `~/.lmloop/projects/<slug>/learnings.jsonl` (slug = git remote
+or directory name).

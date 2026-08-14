@@ -74,7 +74,7 @@ Key properties:
 - **No SDK dependency.** Plain `urllib` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible.
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
-- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer and only tails if it would overflow the terminal; `finish()` reprints the full answer with terminal wrap. A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
+- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer and only tails if it would overflow the terminal; `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
 
 ### Server management (`ensure_server`)
 
@@ -102,6 +102,7 @@ until goal:
 
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
+- After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
 - Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role.
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
@@ -118,14 +119,14 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | Tool | Purpose | Safety |
 |------|---------|--------|
 | `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. Pipe/redirection syntax is off by default (`confirm_shell_syntax`); set that key to enable. |
-| `read_file` | Read file with line numbers | Scoped to the workspace directory captured at session start. Max 400 lines per call. |
-| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. Creates parent dirs. |
+| `read_file` | Read file with line numbers | Scoped to the workspace directory captured at session start. Relative `path` resolves there; the ⚙ line and result header show the resolved path. Max 400 lines per call. |
+| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. Creates parent dirs. Result cites the resolved path. |
 | `list_dir` | List directory entries | Scoped to the session workspace. Includes dotfiles. |
 | `search_files` | Regex search (ripgrep or grep fallback) | Scoped to the session workspace. Max 50 matches. |
 | `web_search` | `ddgs` metasearch (no key), then DuckDuckGo HTML/Lite, Instant Answer, Wikipedia | Optional `ddgs` dep. Content fenced as untrusted. All backends failing → ERROR (do not paraphrase-retry). |
 | `fetch_url` | HTTP(S) fetch with HTML→text + on-page links | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
-| `remember` | Save a learning to project memory | Write to learnings.jsonl |
-| `log_decision` | Record a durable decision | Write to decisions.jsonl |
+| `remember` | Save a learning to project memory | Writes `~/.lmloop/projects/<slug>/learnings.jsonl`; tool result cites that path |
+| `log_decision` | Record a durable decision | Writes `~/.lmloop/projects/<slug>/decisions.jsonl`; tool result cites that path |
 | `recall_memory` | Keyword-search learnings + decisions | Read-only view |
 
 Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
@@ -226,9 +227,9 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | Command | Description |
 |---------|-------------|
 | `lmloop` | Interactive REPL |
-| `lmloop "task"` | One-shot task, exits after reply |
-| `lmloop until [--check cmd] <goal>` | Goal loop: isolated maker until a check or evaluator passes |
-| `lmloop skill <name> [task]` | Start with a skill prompt |
+| `lmloop "task"` | Task, then REPL prompt when stdin is a TTY (exits when piped) |
+| `lmloop until [--check cmd] <goal>` | Goal loop, then REPL prompt when stdin is a TTY |
+| `lmloop skill <name> [task]` | Skill, then REPL prompt when stdin is a TTY |
 | `lmloop skills` | List skill prompts |
 | `lmloop skills new <name> [brief]` | AI-draft a skill, review, then save |
 | `lmloop memory [query]` | Peek curated learnings |

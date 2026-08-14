@@ -731,6 +731,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
              patch("lmloop.cli.loop_mod.UntilRun.create", return_value=fake) as create, \
              patch("lmloop.cli.loop_mod.run_until") as run, \
              patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
+             patch("sys.stdin.isatty", return_value=False), \
              redirect_stdout(io.StringIO()):
             code = main(["until", "--check", "true", "green"])
         self.assertEqual(code, 0)
@@ -745,10 +746,28 @@ class MemoryMineAndUntilTests(unittest.TestCase):
              patch("lmloop.cli.loop_mod.latest_open_until_run", return_value=fake), \
              patch("lmloop.cli.loop_mod.run_until") as run, \
              patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
+             patch("sys.stdin.isatty", return_value=False), \
              redirect_stdout(io.StringIO()):
             code = main(["until"])
         self.assertEqual(code, 0)
         run.assert_called_once()
+
+    def test_until_cli_tty_enters_repl(self):
+        fake = Mock()
+        fake.path = Path("/tmp/until.jsonl")
+        fake.is_paused.return_value = False
+        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+             patch("lmloop.cli.loop_mod.UntilRun.create", return_value=fake), \
+             patch("lmloop.cli.loop_mod.run_until"), \
+             patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
+             patch("lmloop.cli.loop_mod.superseded_until_hint", return_value=None), \
+             patch("sys.stdin.isatty", return_value=True), \
+             patch("lmloop.cli.run_repl", return_value=0) as repl, \
+             redirect_stdout(io.StringIO()):
+            code = main(["until", "green"])
+        self.assertEqual(code, 0)
+        repl.assert_called_once()
+        self.assertIs(repl.call_args.kwargs["until_run"], fake)
 
     def test_until_empty_errors_without_open_run(self):
         err = io.StringIO()
@@ -789,6 +808,29 @@ class MemoryMineAndUntilTests(unittest.TestCase):
                  redirect_stdout(io.StringIO()):
                 _cmd_continue(state, "", lambda _: False)
             turn.assert_called_once()
+
+    def test_until_appends_handoff_to_live_thread(self):
+        from lmloop.loop import UntilRun
+        from lmloop.repl import _UNTIL_FOLLOWUP, attach_until_result
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            with patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root):
+                run = UntilRun.create("ship it")
+                run.append("eval", "pass", handoff="wrote findings.md")
+                run.append("done", "pass")
+                state = self._state(root, log)
+                prior = len(state.messages)
+                with redirect_stdout(io.StringIO()):
+                    attach_until_result(state, run)
+            self.assertEqual(len(state.messages), prior + 2)
+            self.assertIn("ship it", state.messages[-2]["content"])
+            self.assertIn("wrote findings.md", state.messages[-2]["content"])
+            self.assertEqual(state.messages[-1]["content"], _UNTIL_FOLLOWUP)
+            self.assertIsNone(state.until_run)
 
 
 class RegistryTests(unittest.TestCase):

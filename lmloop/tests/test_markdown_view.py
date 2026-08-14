@@ -38,6 +38,36 @@ class MarkdownViewTests(unittest.TestCase):
         self.assertIn("continues the thought", out)
         self.assertGreater(out.count("\n"), 1)
 
+    def test_numbered_list_wraps_instead_of_cropping(self):
+        from lmloop.markdown_view import _rich_available
+        if not _rich_available():
+            self.skipTest("rich not installed")
+        text = (
+            "Saved:\n\n"
+            "1. pitfall_ambiguous_numeric_abbreviation — \"59K\" is ambiguous "
+            "(delivery count vs. $59,000 price). Always disambiguate early to "
+            "avoid wasted searches.\n"
+            "2. operational_geographic_split_queries — For geographic research, "
+            "split web searches by region (e.g., \"West Coast California\" vs "
+            "\"East Coast Florida\").\n"
+        )
+        out = " ".join(render_markdown_ansi(text, width=40, color=False).split())
+        self.assertIn("wasted searches", out)
+        self.assertIn("East Coast Florida", out)
+
+    def test_bullet_list_wraps_instead_of_cropping(self):
+        from lmloop.markdown_view import _rich_available
+        if not _rich_available():
+            self.skipTest("rich not installed")
+        text = (
+            "Verification:\n\n"
+            "- West Coast coverage: Findings 2–3 cover Southern California "
+            "(delivery confirmation for June 21) and Irvine, CA buyer "
+            "(reservation held).\n"
+        )
+        out = " ".join(render_markdown_ansi(text, width=40, color=False).split())
+        self.assertIn("reservation held", out)
+
     def test_make_console_soft_wrap_default_off_for_live(self):
         from io import StringIO
         from lmloop.markdown_view import _rich_available

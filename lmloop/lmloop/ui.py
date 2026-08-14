@@ -523,6 +523,18 @@ def ask_yes_no(message: str) -> bool:
         return False
 
 
+def ask_until_gate(message: str) -> bool:
+    """y/N for until blocked. Ctrl-C raises KeyboardInterrupt (pause, not gate-no)."""
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        answer = input(message)
+        return (answer or "").strip().lower() == "y"
+    except EOFError:
+        print()
+        return False
+
+
 def make_confirm_gate(console: "Console"):
     """y/N gate for destructive / shell-syntax commands (plain input)."""
     def confirm_gate(command: str) -> bool:
