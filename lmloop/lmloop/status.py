@@ -58,6 +58,34 @@ def msg_until_continue() -> str:
     return status("until done — type to continue")
 
 
+def msg_graph_step(node: str, step: int, max_steps: int) -> str:
+    return status(f"graph {node} · step {step}/{max_steps}")
+
+
+def msg_graph_paused() -> str:
+    return status(f"graph paused. {MSG_RESUME}")
+
+
+def msg_graph_max_steps() -> str:
+    return status(f"graph hit graph_max_steps — stopping. {MSG_RESUME}")
+
+
+def msg_graph_blocked() -> str:
+    return status("graph node has no edge for this outcome — need a yes/no")
+
+
+def msg_graph_mining() -> str:
+    return status("graph passed — mining learnings")
+
+
+def msg_graph_done() -> str:
+    return status("graph: done")
+
+
+def msg_graph_continue() -> str:
+    return status("graph done — type to continue")
+
+
 def msg_context_pressure(pct: int) -> str:
     return status(
         f"context ~{pct}% full — /compact or /save recommended before continuing"

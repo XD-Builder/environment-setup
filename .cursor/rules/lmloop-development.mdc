@@ -1,0 +1,42 @@
+---
+description: lmloop engineering bar — OOP, registries, tests, docs, no brittle glue
+globs: lmloop/**/*
+alwaysApply: false
+---
+
+# lmloop development
+
+Follow [lmloop/DEVELOPMENT.md](lmloop/DEVELOPMENT.md). Architecture:
+[lmloop/docs/ARCHITECTURE.md](lmloop/docs/ARCHITECTURE.md).
+
+## Non-negotiables
+
+- **Critical:** remove tech debt in files you touch. No parallel registries,
+  unused args, `_safe_*` wrappers, or `except Exception` that hides bugs.
+- **Coverage:** new behavior, fixes, and refactors ship tests in the same diff.
+  Prefer fakes over network. Patch names where they are looked up
+  (`lmloop.display._rich_live_available`, not `lmloop.agent`).
+- **Share via types, not copies.** Tools = `ToolDef` rows; commands =
+  `CommandMeta`; session state = `SessionState`; TTY = `Console`. Do not add a
+  second name list.
+- **OOP pillars:** encapsulate invariants on the type; abstract with small
+  contracts (`feed`/`finish`/`reset`, `(body, err)`); compose rather than
+  inherit (except `HTMLParser`); polymorphic callables instead of `if kind ==`.
+  No framework, no single-impl ABCs, no god `agent.py` helpers that belong in
+  `stream.py` / `display.py` / `tools.py`.
+- **Import graph:** `stream` ↛ `agent`/`display`. `display` may import stream,
+  not `agent`. `loop.py` may import `agent`/`memory`/`tools`; `graph.py` may
+  import `loop`; `loop` ↛ `graph`; `agent`/`stream`/`display` ↛ `loop`/`graph`.
+- **Parsing:** `shlex`/`ShellCommand`, `html.parser`, `json`, `pathlib`,
+  `argparse` — not regex. Regex only as named compiled constants for charsets,
+  ANSI strip, slugs, `@path`.
+- **Deps:** stdlib + existing extras (`prompt_toolkit`, `rich`, `ddgs`). No
+  OpenAI SDK. urllib for the agent loop.
+- **Docs in the same diff:** user behavior → `README.md`; internals →
+  `ARCHITECTURE.md`; ownership/conventions → `DEVELOPMENT.md`. Keep command and
+  tool tables aligned with `commands.py` / `build_tools()`.
+
+Python 3.10+, PEP 8: `CapWords` types, `snake_case` functions, `UPPER_SNAKE`
+constants, `_` private. Type-hint public functions. Catch specific exceptions
+at boundaries only. `act()` rolls back and re-raises — never wrap bugs as
+`ServerError`.

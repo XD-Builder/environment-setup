@@ -1,10 +1,10 @@
 # Design: Graph engineering for lmloop (next implementation)
 
-**Status:** proposal — implement this after the shipped goal loop
+**Status:** shipped (control-flow graphs). Knowledge-graph memory is shipped opt-in in [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md)
 **Date:** 2026-08-14
 **Depends on:** `loop.py` (`until`), `memory mine`, DEVELOPMENT.md import graph
 
-This is the **control-flow** next step: how several loops hand off. It is not the knowledge-graph proposal in [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md). Do not implement that JSONL in this work. Do not add LangGraph.
+This is the **control-flow** spec: how several loops hand off. Knowledge-graph JSONL is [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md). Do not add LangGraph.
 
 An implementing agent should treat the **Ship** / **Do not ship** / **Tests** sections as the spec. Critique notes below are constraints, not optional flavor.
 
@@ -23,16 +23,16 @@ prompt / context → harness → loop (until) → graph (this proposal)
 
 Until is a one-node graph with an edge back to itself. A graph is worth it when **one loop is the wrong shape**: specialized roles that must hand off (the “run a company” case). Daily standup is still **OS cron + `lmloop skill …`**, not a graph.
 
-### Known holes in until (fix in phase 1 of this work)
+### Known holes in until (shipped in phase 1)
 
-These are correctness holes in the maker/checker split, not polish.
+These were correctness holes in the maker/checker split. **Shipped:**
 
-1. **Eval can still write files.** Isolation is a fresh *thread*, not a read-only tool set. The checker can `write_file` / `run_shell` that mutates the tree. Phase 1 must give eval a **read-only** (plus `run_shell` for verification) tool subset so it cannot implement.
-2. **Check fail always spends an eval turn.** Flowchart today: check fail → eval → maker. That is a second LLM call when the exit code already said fail. Phase 1: `--check` fail goes **straight back to maker**; eval runs only when there is no check command, or when check is `blocked` (DENIED). Keep eval on “no `--check`” paths.
-3. **Overlapping runs.** Starting `/until` while another run is open already prints a hint (`superseded_until_hint`). Phase 1: `/continue` in the REPL still resumes `state.until_run` (the run this session started). CLI `lmloop until` with no goal still resumes **latest** open run. Do not auto-resume a week-old paused run from `/continue` after `/new`. Document only; no new resume verb.
+1. **Eval is read-only.** Isolation is a fresh thread **and** a tool subset: eval omits `write_file` / `remember` / `log_decision`. It may still `run_shell` to verify.
+2. **Check fail goes to maker.** `--check` nonzero exit skips eval. Eval runs only when there is no check command. Check `DENIED:` is `blocked` → gate (not eval).
+3. **Overlapping runs.** Starting `/until` while another run is open already prints a hint (`superseded_until_hint`). `/continue` in the REPL still resumes `state.until_run` (the run this session started). CLI `lmloop until` with no goal still resumes **latest** open run. Do not auto-resume a week-old paused run from `/continue` after `/new`.
 4. **Checker is prompt-only about STATUS.** Missing token → `blocked` is correct. Do not let the maker’s last line count as `STATUS:`.
 
-Phase 1 stays in `loop.py` / `tools.py` / `agent.py` (optional `tools=` / `readonly` on `build_tools` + `act`). No `graph.py` yet.
+Phase 1 stays in `loop.py` / `tools.py` / `agent.py` (`readonly=` on `build_tools` + `act`). No `graph.py` in that change.
 
 ---
 
@@ -113,7 +113,7 @@ edge qa -> ceo    on blocked
 
 ### GraphRun
 
-Same bar as `UntilRun`: dataclass + append-only JSONL. Roles: `meta`, `node`, `eval`, `gate`, `mine`, `pause`, `done`. Handoff = last assistant summary from the node, not the full tool transcript. Crash retries the same node (event written last).
+Same bar as `UntilRun`: dataclass + append-only JSONL. Roles: `meta`, `node`, `gate`, `mine`, `pause`, `done`. Skill eval is folded into the `node` status (`pass`/`fail`/`blocked`), not a separate event. Handoff = last assistant summary from the node, not the eval `STATUS:` line or the tool transcript. Crash retries the same node (event written last).
 
 `/continue`: if `state.graph_run` is paused, resume it; else if `state.until_run` is paused, resume until; else today’s max_rounds resume. **One resume verb.** CLI: `lmloop graph` with no name resumes latest open graph run.
 

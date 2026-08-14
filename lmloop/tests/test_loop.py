@@ -106,14 +106,22 @@ class UntilRunGraphTests(unittest.TestCase):
                 run.append("maker", "next", handoff="did a bit")
                 self.assertEqual(run.next_role(do_mine=False), "eval")
 
-    def test_check_fail_goes_to_eval(self):
+    def test_check_fail_goes_to_maker(self):
         with tempfile.TemporaryDirectory() as d:
             with patch("lmloop.loop.project_dir", return_value=Path(d)):
                 run = UntilRun.create("g", check_cmd="false")
                 run.append("maker", "next")
                 self.assertEqual(run.next_role(do_mine=False), "check")
                 run.append("check", "fail")
-                self.assertEqual(run.next_role(do_mine=False), "eval")
+                self.assertEqual(run.next_role(do_mine=False), "maker")
+
+    def test_check_blocked_goes_to_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch("lmloop.loop.project_dir", return_value=Path(d)):
+                run = UntilRun.create("g", check_cmd="sudo rm")
+                run.append("maker", "next")
+                run.append("check", "blocked")
+                self.assertEqual(run.next_role(do_mine=False), "gate")
 
     def test_eval_pass_without_mine_is_done(self):
         with tempfile.TemporaryDirectory() as d:
@@ -236,29 +244,68 @@ class UntilRunnerTests(unittest.TestCase):
             for e in run.events
         ))
 
-    def test_eval_after_check_fail_sees_maker_handoff(self):
+    def test_check_fail_never_calls_eval(self):
         users = []
 
         def fake_act(cfg, model, messages, **kwargs):
             users.append(messages[-1]["content"])
-            if "independent checker" in messages[-1]["content"]:
-                messages.append({
-                    "role": "assistant",
-                    "content": "STATUS: pass",
-                })
-            else:
-                messages.append({
-                    "role": "assistant",
-                    "content": "maker did the work on foo.py",
-                })
+            messages.append({
+                "role": "assistant",
+                "content": "maker did the work on foo.py",
+            })
             return messages
 
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             with patch("lmloop.loop.run_shell", return_value="fail\n[exit code: 1]"):
-                self._run(root, _cfg(), fake_act, check_cmd="false")
-        eval_prompt = next(t for t in users if "independent checker" in t)
-        self.assertIn("maker did the work on foo.py", eval_prompt)
+                run = self._run(
+                    root, _cfg(until_max_steps=2), fake_act, check_cmd="false",
+                )
+        self.assertFalse(any("independent checker" in t for t in users))
+        roles = [e.get("role") for e in run.events]
+        self.assertNotIn("eval", roles)
+        self.assertGreaterEqual(roles.count("maker"), 2)
+        self.assertTrue(run.is_paused() or roles.count("maker") >= 2)
+
+    def test_eval_uses_readonly_tools(self):
+        seen = []
+
+        def fake_act(cfg, model, messages, **kwargs):
+            seen.append(bool(kwargs.get("readonly")))
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({
+                    "role": "assistant",
+                    "content": "ok\nSTATUS: pass",
+                })
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            self._run(Path(d), _cfg(), fake_act)
+        self.assertEqual(seen, [False, True])
+
+    def test_check_denied_goes_to_gate(self):
+        def fake_act(cfg, model, messages, **kwargs):
+            messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch(
+                "lmloop.loop.run_shell",
+                return_value="DENIED: the user declined to run this",
+            ):
+                run = self._run(
+                    root, _cfg(), fake_act, check_cmd="sudo rm",
+                    ask_gate=lambda _p: False,
+                )
+        roles = [e.get("role") for e in run.events]
+        self.assertIn("check", roles)
+        self.assertNotIn("eval", roles)
+        self.assertIn("gate", roles)
+        self.assertTrue(run.is_done())
 
     def test_check_never_calls_act_on_pass(self):
         acts = {"n": 0}

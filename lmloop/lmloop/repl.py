@@ -6,15 +6,17 @@ from pathlib import Path
 from typing import Callable
 
 from . import agent, loop as loop_mod, memory
+from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
 from .files_index import expand_at_refs
-from .status import MSG_RESUME, msg_until_continue, status as status_line
+from .status import MSG_RESUME, msg_graph_continue, msg_until_continue, status as status_line
 from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate
 
 _THINKING_HISTORY_MAX = 30
 _UNTIL_FOLLOWUP = "Ready to continue from this until-run. Ask a follow-up."
+_GRAPH_FOLLOWUP = "Ready to continue from this graph-run. Ask a follow-up."
 
 
 @dataclass
@@ -43,6 +45,7 @@ class SessionState:
     # here until the turn retires it.
     thinking_history: list = field(default_factory=list)
     until_run: "Path | None" = None
+    graph_run: "Path | None" = None
 
     @property
     def user_turns(self) -> int:
@@ -100,6 +103,7 @@ def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
     state.session_log = memory.new_session_log()
     state.thinking_history = []
     state.until_run = None
+    state.graph_run = None
     if not keep_stats:
         state.stats = fresh_stats()
 
@@ -202,6 +206,10 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
     if parts and parts[0] == "mine":
         rest = parts[1] if len(parts) > 1 else ""
         return _cmd_memory_mine(state, rest, confirm_gate)
+    if parts and parts[0] == "graph":
+        return _cmd_memory_graph(state)
+    if parts and parts[0] == "reconcile":
+        return _cmd_memory_reconcile(state, confirm_gate)
     rows = memory.get_learnings(query=arg, limit=30)
     for r in rows:
         state.console.info(
@@ -209,6 +217,34 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
         )
     if not rows:
         state.console.info("(no learnings yet — run tasks, then /memory mine)")
+    return True
+
+
+def _cmd_memory_graph(state: SessionState) -> bool:
+    if not state.cfg.get("use_graph"):
+        state.console.info("knowledge graph is off — `lmloop config set use_graph true`")
+        return True
+    memory.ensure_graph(state.cfg)
+    state.console.info(memory.graph_stats())
+    return True
+
+
+def _cmd_memory_reconcile(state: SessionState, confirm_gate) -> bool:
+    if not state.cfg.get("use_graph"):
+        state.console.info("knowledge graph is off — `lmloop config set use_graph true`")
+        return True
+    memory.ensure_graph(state.cfg)
+    cluster = memory.contradiction_clusters()
+    if cluster.startswith("(no "):
+        state.console.info(cluster)
+        return True
+    try:
+        prompt = agent.load_skill("_reconcile") + "\n\n" + cluster
+    except FileNotFoundError as e:
+        state.console.error(str(e))
+        return True
+    state.console.hint("[memory reconcile · current conversation unchanged]")
+    _isolated_act(state, prompt, confirm_gate, log_label="/memory reconcile")
     return True
 
 
@@ -257,6 +293,12 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
     except FileNotFoundError as e:
         console.error(str(e))
         return 1
+    if cfg.get("use_graph"):
+        memory.ensure_graph(cfg)
+        try:
+            task += "\n\n" + agent.load_skill("_graph_mine")
+        except FileNotFoundError:
+            pass
     result = loop_mod.isolated_act(
         cfg, model, task,
         confirm_gate=confirm_gate,
@@ -332,6 +374,7 @@ def _run_named_skill(state: SessionState, name: str, task: str, confirm_gate) ->
     except FileNotFoundError as e:
         state.console.error(str(e))
         return True
+    memory.record_skill_use(name, session=state.session_log)
     _run_turn(state, prompt + ("\n\nTask: " + task if task else ""), confirm_gate)
     return True
 
@@ -667,7 +710,98 @@ def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
     return True
 
 
+def _graph_callbacks(state: SessionState, confirm_gate):
+    def mine(paths):
+        if not paths:
+            return
+        mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
+
+    return dict(
+        confirm_gate=confirm_gate,
+        echo=_echo_assistant(state.console),
+        echo_status=state.console.hint,
+        echo_error=state.console.error,
+        echo_tool=state.console.tool_call,
+        echo_round=state.console.round_usage,
+        context_limit=state.context_limit,
+        context_reserve=state.context_reserve,
+        workspace_root=state.workspace_root,
+        ask_gate=ask_until_gate,
+        mine=mine if state.cfg.get("graph_mine", True) else None,
+    )
+
+
+def attach_graph_result(state: SessionState, run: graph_mod.GraphRun) -> None:
+    """Append the graph outcome to the live thread so follow-ups have context."""
+    loaded = graph_mod.GraphRun.load(run.path) if run.path.exists() else run
+    if loaded.is_done():
+        state.graph_run = None
+        last = loaded.last_work()
+        if last and last.get("role") == "gate" and last.get("status") == "no":
+            outcome = "stopped"
+        else:
+            outcome = "done"
+        state.console.hint(msg_graph_continue())
+    elif loaded.is_paused():
+        state.graph_run = loaded.path
+        outcome = "paused"
+    else:
+        state.graph_run = loaded.path
+        outcome = "stopped"
+        state.console.hint(status_line(f"graph stopped — {MSG_RESUME}"))
+    summary = loaded.last_handoff() or "(no handoff)"
+    user = f"Graph-run ({outcome}). Graph: {loaded.name}\n\n{summary}"
+    state.messages.append({"role": "user", "content": user})
+    state.messages.append({"role": "assistant", "content": _GRAPH_FOLLOWUP})
+    memory.log_event(state.session_log, "user", user)
+    memory.log_event(state.session_log, "assistant", _GRAPH_FOLLOWUP)
+
+
+def _advance_graph(state: SessionState, run: graph_mod.GraphRun,
+                   defn: graph_mod.GraphDef, confirm_gate) -> None:
+    state.graph_run = run.path
+    graph_mod.run_graph(
+        state.cfg, state.model, run=run, defn=defn,
+        **_graph_callbacks(state, confirm_gate),
+    )
+    attach_graph_result(state, run)
+
+
+def _cmd_graph(state: SessionState, arg: str, confirm_gate) -> bool:
+    name = (arg or "").strip().split()[0] if (arg or "").strip() else ""
+    if not name:
+        state.console.info("usage: /graph <name>")
+        known = ", ".join(graph_mod.list_graphs()) or "(none)"
+        state.console.info(f"  graphs: {known}")
+        state.console.info("  /continue resumes a paused graph-run")
+        return True
+    try:
+        defn = graph_mod.load_graph(name)
+    except graph_mod.GraphError as e:
+        state.console.error(str(e))
+        return True
+    hint = graph_mod.superseded_graph_hint()
+    run = graph_mod.GraphRun.create(name)
+    state.console.hint(f"[graph · {name}]")
+    if hint:
+        state.console.hint(hint)
+    _advance_graph(state, run, defn, confirm_gate)
+    return True
+
+
 def _cmd_continue(state: SessionState, arg: str, confirm_gate) -> bool:
+    if state.graph_run and state.graph_run.exists():
+        run = graph_mod.GraphRun.load(state.graph_run)
+        if not run.is_done():
+            try:
+                defn = graph_mod.load_graph(run.name)
+            except graph_mod.GraphError as e:
+                state.console.error(str(e))
+                return True
+            state.console.hint("[graph · resume]")
+            _advance_graph(state, run, defn, confirm_gate)
+            return True
+        state.graph_run = None
     if state.until_run and state.until_run.exists():
         run = loop_mod.UntilRun.load(state.until_run)
         if not run.is_done():
@@ -715,6 +849,7 @@ def _build_slash_commands(confirm_gate) -> list:
         "model": _cmd_model,
         "memory": lambda s, a: _cmd_memory(s, a, confirm_gate),
         "until": lambda s, a: _cmd_until(s, a, confirm_gate),
+        "graph": lambda s, a: _cmd_graph(s, a, confirm_gate),
         "save": lambda s, a: _cmd_save(s, a, confirm_gate),
         "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
         "quit": lambda s, a: False,
@@ -801,7 +936,8 @@ def _require_prompt_toolkit(console: Console) -> bool:
 
 def run_repl(cfg: dict, console: "Console | None" = None,
              skill: "str | None" = None, first_task: "str | None" = None,
-             until_run: "loop_mod.UntilRun | None" = None) -> int:
+             until_run: "loop_mod.UntilRun | None" = None,
+             graph_run: "graph_mod.GraphRun | None" = None) -> int:
     console = console or Console(cfg.get("color", True))
 
     try:
@@ -846,7 +982,11 @@ def run_repl(cfg: dict, console: "Console | None" = None,
 
     console.banner(slug)
 
-    if until_run is not None:
+    if graph_run is not None:
+        attach_graph_result(state, graph_run)
+        if not interactive:
+            return 0
+    elif until_run is not None:
         attach_until_result(state, until_run)
         if not interactive:
             return 0

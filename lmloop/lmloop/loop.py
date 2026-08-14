@@ -146,6 +146,7 @@ def isolated_act(
     echo_tool=None, echo_round=None, context_limit: int = 0,
     context_reserve: int = 2048, workspace_root: "Path | None" = None,
     log_label: str = "",
+    readonly: bool = False,
 ) -> "tuple[list, Path] | None":
     """Run act() on a fresh thread. Returns (messages, session_log), or None.
 
@@ -171,6 +172,7 @@ def isolated_act(
             context_limit=context_limit,
             context_reserve=context_reserve,
             workspace_root=workspace_root,
+            readonly=readonly,
         )
     except agent.ServerError as e:
         memory.log_event(session_log, "system", f"error: {e}")
@@ -308,7 +310,7 @@ class UntilRun:
         table = {
             ("maker", "next"): "check" if self.check_cmd else "eval",
             ("check", "pass"): after_pass,
-            ("check", "fail"): "eval",
+            ("check", "fail"): "maker",
             ("check", "blocked"): "gate",
             ("eval", "pass"): after_pass,
             ("eval", "fail"): "maker",
@@ -376,6 +378,7 @@ def run_until(
     workspace_root: "Path | None" = None,
     ask_gate=None,
     mine=None,
+    seed_handoff: str = "",
 ) -> UntilRun:
     """Advance ``run`` until pass, gate-no, pause, or interrupt. Mutates run."""
     if echo_status is None:
@@ -407,7 +410,7 @@ def run_until(
                 echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
                 prompt = MAKER_PROMPT.format(
                     goal=run.goal,
-                    handoff=run.last_handoff() or "(none)",
+                    handoff=run.last_handoff() or seed_handoff or "(none)",
                 )
                 result = isolated_act(
                     cfg, model, prompt,
@@ -446,6 +449,7 @@ def run_until(
                     echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
                     context_limit=context_limit, context_reserve=context_reserve,
                     workspace_root=root, log_label="/until eval",
+                    readonly=True,
                 )
                 if result is None:
                     return run

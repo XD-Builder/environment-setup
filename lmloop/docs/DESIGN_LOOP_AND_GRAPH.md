@@ -1,6 +1,6 @@
 # Design: Knowledge Graph Memory for lmloop
 
-**Status:** proposal (knowledge graph — not implemented)
+**Status:** shipped (knowledge-graph memory, opt-in `use_graph`) — control-flow graphs are in [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md)
 **Updated:** 2026-08-14
 **Original date:** 2025-07-13
 **References:** [Bian et al., "LLM-empowered knowledge graph construction: A survey" (arXiv 2510.20345v1)](https://arxiv.org/html/2510.20345v1)
@@ -9,7 +9,20 @@ This file is **only** a knowledge-graph memory proposal (nodes/edges over learni
 
 ## What shipped (August 2026)
 
-Control-flow **goal loop** is implemented. Do not re-implement it here.
+Control-flow **goal loop** and **workflow graphs** are implemented. This file is the knowledge-graph memory layer, now opt-in via `use_graph`.
+
+Shipped here (names resolved against `/graph` the control-flow stem):
+
+| Piece | Where |
+|-------|--------|
+| Storage | `graph_nodes.jsonl`, `graph_edges.jsonl` under the project dir |
+| Recall | `recall_memory` does keyword + 1-hop neighbors when `use_graph` |
+| Writes | `graph_add_edge` tool (registered only when `use_graph`) |
+| Slash | `/memory graph`, `/memory reconcile` — not `/graph *` |
+| Auto edges | `in_session` / `references` from `remember` and `log_decision`; `uses_skill` from `/skill` |
+| Decay | Learning/concept nodes with effective confidence ≤ 0 are hidden at query time, with their edges |
+
+`use_graph` defaults **false**. No graph files are created until it is enabled.
 
 | Piece | Where |
 |-------|--------|
@@ -22,10 +35,9 @@ Eval is a **fresh thread**. Missing `STATUS:` is `blocked`, never `pass`. Run lo
 
 ## What to implement next (not this file)
 
-1. **Control-flow graphs** (specialized loops with sparse authored edges): follow **[DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md)** first. Until is the inner node. Do not add LangGraph.
-2. **This document** stays the knowledge-graph layer. Implement it only after until-as-a-node is proven. Do not mix JSONL knowledge edges into `loop.py`.
+Control-flow graphs are shipped in [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md). Remaining non-goals: embeddings, graph DB, `/graph pending` queues, `graph_archive.jsonl`, ASCII overview art.
 
-`ARCHITECTURE.md` describes current until behavior. This file must not be copied into README as if graph memory exists.
+This file must not be copied into README as if graph memory is on by default — it is opt-in (`use_graph`).
 
 ---
 
