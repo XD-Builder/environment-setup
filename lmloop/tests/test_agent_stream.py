@@ -9,7 +9,7 @@ from unittest import mock
 from lmloop import agent
 from lmloop import display
 from lmloop import stream as stream_mod
-from lmloop.status import NUDGE_CONTINUE_TEXT
+from lmloop.status import ANSWER_TEXT, NUDGE_CONTINUE_TEXT, answer_message
 
 
 def _sse(*chunks) -> bytes:
@@ -525,6 +525,85 @@ class ContinueNudgeTests(unittest.TestCase):
         self.assertTrue(any(m.get("content") == NUDGE_CONTINUE_TEXT for m in messages))
         self.assertIn("Top idea: add tests.", messages[-1].get("content", ""))
 
+    def test_act_halted_thinking_without_tools_continues(self):
+        """A CoT halt is not a finished answer — keep gathering (write the file)."""
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False, "max_continue_nudges": 2,
+        }
+        messages = [{"role": "user", "content": "write the roadmap"}]
+        echoed = []
+        calls = {"n": 0}
+
+        def fake_chat(*_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                notes = (
+                    "From https://hbr.org/2025/06/example and `haroldjin.com` "
+                    "I now have enough. Let me compile the document now. "
+                ) * 8
+                return (
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "_reasoning": notes,
+                        "_halted": True,
+                    },
+                    {},
+                )
+            return ({"role": "assistant", "content": "Wrote the roadmap."}, {})
+
+        with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
+            agent.act(
+                cfg, "m", messages,
+                echo=echoed.append, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(any("thinking loop" in str(x) for x in echoed))
+        self.assertTrue(any(m.get("content") == NUDGE_CONTINUE_TEXT for m in messages))
+        self.assertEqual(messages[-1].get("content"), "Wrote the roadmap.")
+        self.assertNotIn("Let me compile", messages[-1].get("content", ""))
+
+    def test_act_halted_long_grounded_dump_still_nudges(self):
+        """Length/URL checks must not treat a halted dump as a real answer."""
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False, "max_continue_nudges": 2,
+        }
+        dump = (
+            "See https://hbr.org/2025/06/navigating and `skills.md` for "
+            "the plan. Let me write the file now.\n"
+        ) * 20
+        messages = [{"role": "user", "content": "compile it"}]
+        echoed = []
+        calls = {"n": 0}
+
+        def fake_chat(*_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return (
+                    {"role": "assistant", "content": dump, "_halted": True},
+                    {},
+                )
+            return ({"role": "assistant", "content": "File written."}, {})
+
+        with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
+            agent.act(
+                cfg, "m", messages,
+                echo=echoed.append, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(any("thinking loop" in str(x) for x in echoed))
+        self.assertEqual(messages[-1].get("content"), "File written.")
+
 
 class MergeToolCallDeltaTests(unittest.TestCase):
     def test_accumulates_arguments_by_index(self):
@@ -958,6 +1037,8 @@ class ChatStreamTests(unittest.TestCase):
         cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
             msg, _usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertTrue(msg.get("_halted"))
+        self.assertFalse((msg.get("content") or "").strip())
         self.assertNotIn("TOO_LATE", msg["content"])
         self.assertNotIn("TOO_LATE", msg.get("_reasoning", ""))
 
@@ -1361,12 +1442,17 @@ class ActIntegrationTests(unittest.TestCase):
                 )
         self.assertEqual(messages, [{"role": "user", "content": "hi"}])
 
-    def test_act_max_rounds_message(self):
-        body = _sse(
+    def test_act_max_rounds_writes_final_answer(self):
+        """Gather budget forces one tools-off answer instead of hanging on tools."""
+        gather = _sse(
             {"choices": [{"delta": {"tool_calls": [{
                 "index": 0, "id": "c1", "type": "function",
                 "function": {"name": "list_dir", "arguments": "{}"},
             }]}}]},
+            None,
+        )
+        answer = _sse(
+            {"choices": [{"delta": {"content": "Final after gather budget"}}]},
             None,
         )
         cfg = {
@@ -1375,17 +1461,27 @@ class ActIntegrationTests(unittest.TestCase):
             "confirm_shell": False, "max_rounds": 1,
         }
         echoed = []
-        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=[FakeResp(gather), FakeResp(answer)],
+        ) as urlopen, \
              mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
-             mock.patch.object(agent.tools, "dispatch", return_value="ok"):
+             mock.patch.object(agent.tools, "dispatch") as disp:
+            disp.return_value = "ok"
             agent.act(
-                cfg, "m", [{"role": "user", "content": "hi"}],
+                cfg, "m", messages,
                 echo=echoed.append, echo_delta=False,
                 echo_tool=lambda n, a, *r: None,
             )
-        self.assertTrue(any("max_rounds" in str(x) for x in echoed))
-        self.assertTrue(any("/continue" in str(x) for x in echoed))
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(disp.call_count, 1)
+        self.assertTrue(any("gather budget" in str(x) for x in echoed))
+        self.assertTrue(any("writing final answer" in str(x) for x in echoed))
+        self.assertTrue(any(m.get("content") == ANSWER_TEXT for m in messages))
+        self.assertEqual(messages[-1].get("content"), "Final after gather budget")
+        self.assertFalse(messages[-1].get("tool_calls"))
 
     def test_act_skips_empty_tool_names(self):
         body = _sse(
@@ -1524,6 +1620,220 @@ class ActIntegrationTests(unittest.TestCase):
         self.assertFalse(any(m.get("content") == NUDGE_CONTINUE_TEXT for m in messages))
 
 
+class GatherAnswerTests(unittest.TestCase):
+    """Gather/answer: many tool rounds, then tools-off; exact fingerprint stop."""
+
+    def _call(self, name, args="{}"):
+        return {
+            "id": "c1", "type": "function",
+            "function": {"name": name, "arguments": args},
+        }
+
+    def test_fingerprint_normalizes_json_whitespace(self):
+        a = [self._call("list_dir", '{"path": "/tmp"}')]
+        b = [self._call("list_dir", '{ "path": "/tmp" }')]
+        self.assertEqual(
+            agent._tool_calls_fingerprint(a),
+            agent._tool_calls_fingerprint(b),
+        )
+
+    def test_fingerprint_distinguishes_args(self):
+        a = [self._call("run_shell", '{"command":"echo q1"}')]
+        b = [self._call("run_shell", '{"command":"echo q3"}')]
+        self.assertNotEqual(
+            agent._tool_calls_fingerprint(a),
+            agent._tool_calls_fingerprint(b),
+        )
+
+    def _sse_text_and_tool(self, content, name, args, call_id="c1"):
+        return _sse(
+            {"choices": [{"delta": {"content": content}}]},
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0, "id": call_id, "type": "function",
+                "function": {"name": name, "arguments": args},
+            }]}}]},
+            None,
+        )
+
+    def test_act_repeated_tools_writes_final_answer(self):
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False,
+        }
+        args = "{}"
+        bodies = [
+            FakeResp(self._sse_text_and_tool("Looking around the project.", "list_dir", args, "c1")),
+            FakeResp(self._sse_text_and_tool("Looking around again.", "list_dir", args, "c2")),
+            FakeResp(_sse(
+                {"choices": [{"delta": {"content": "Here is the answer."}}]},
+                None,
+            )),
+        ]
+        echoed = []
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
+             mock.patch.object(agent.tools, "dispatch") as disp:
+            disp.return_value = "ok"
+            agent.act(
+                cfg, "m", messages,
+                echo=echoed.append, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(disp.call_count, 1)
+        self.assertTrue(any("repeated tools" in str(x) for x in echoed))
+        self.assertTrue(any("writing final answer" in str(x) for x in echoed))
+        self.assertTrue(any(m.get("content") == ANSWER_TEXT for m in messages))
+        self.assertEqual(messages[-1].get("content"), "Here is the answer.")
+        self.assertFalse(messages[-1].get("tool_calls"))
+
+    def test_act_cycle_revisits_seen_tool_set(self):
+        """A, B, A is a loop even though consecutive rounds differ."""
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False,
+        }
+        bodies = [
+            FakeResp(self._sse_text_and_tool("A", "list_dir", "{}", "c1")),
+            FakeResp(self._sse_text_and_tool(
+                "B", "read_file", '{"path":"a.py"}', "c2",
+            )),
+            FakeResp(self._sse_text_and_tool("A again", "list_dir", "{}", "c3")),
+            FakeResp(_sse(
+                {"choices": [{"delta": {"content": "Done cycling."}}]},
+                None,
+            )),
+        ]
+        echoed = []
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
+             mock.patch.object(agent.tools, "dispatch") as disp:
+            disp.return_value = "ok"
+            agent.act(
+                cfg, "m", messages,
+                echo=echoed.append, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual(disp.call_count, 2)
+        self.assertTrue(any("repeated tools" in str(x) for x in echoed))
+        self.assertEqual(messages[-1].get("content"), "Done cycling.")
+
+    def test_act_similar_body_different_tools_still_gathers(self):
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False,
+        }
+        review = "Here is my review of each answer. " * 8
+        bodies = [
+            FakeResp(self._sse_text_and_tool(
+                review, "run_shell", '{"command":"echo q1"}', "c1",
+            )),
+            FakeResp(self._sse_text_and_tool(
+                review, "run_shell", '{"command":"echo q3"}', "c2",
+            )),
+            FakeResp(_sse(
+                {"choices": [{"delta": {"content": "Word counts verified."}}]},
+                None,
+            )),
+        ]
+        messages = [{"role": "user", "content": "review"}]
+        with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
+             mock.patch.object(agent.tools, "dispatch") as disp:
+            disp.return_value = "48"
+            agent.act(
+                cfg, "m", messages,
+                echo=lambda *_a: None, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(disp.call_count, 2)
+        self.assertEqual(messages[-1].get("content"), "Word counts verified.")
+
+    def test_act_continues_when_round_makes_progress(self):
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False,
+        }
+        bodies = [
+            FakeResp(self._sse_text_and_tool(
+                "Listing the workspace now.", "list_dir", "{}", "c1",
+            )),
+            FakeResp(self._sse_text_and_tool(
+                "Reading a.py next.", "read_file", '{"path":"a.py"}', "c2",
+            )),
+            FakeResp(_sse(
+                {"choices": [{"delta": {"content": "All done"}}]},
+                None,
+            )),
+        ]
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
+             mock.patch.object(agent.tools, "dispatch") as disp:
+            disp.return_value = "ok"
+            agent.act(
+                cfg, "m", messages,
+                echo=lambda *_a: None, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(disp.call_count, 2)
+        self.assertEqual(messages[-1].get("content"), "All done")
+        self.assertFalse(any(m.get("content") == ANSWER_TEXT for m in messages))
+
+    def test_act_answer_round_omits_tools(self):
+        specs = []
+
+        def fake_chat(_cfg, _model, _messages, tool_specs, **_k):
+            specs.append(tool_specs)
+            n = len(specs)
+            if n < 3:
+                return (
+                    {"role": "assistant", "content": "", "tool_calls": [{
+                        "id": f"c{n}", "type": "function",
+                        "function": {"name": "list_dir", "arguments": "{}"},
+                    }]},
+                    {},
+                )
+            return ({"role": "assistant", "content": "Done."}, {})
+
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": False,
+            "confirm_shell": False,
+        }
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(
+                 agent.tools, "build_tools",
+                 return_value=([{"type": "function", "function": {"name": "list_dir"}}], {}),
+             ), \
+             mock.patch.object(agent.tools, "dispatch", return_value="ok"):
+            agent.act(
+                cfg, "m", messages,
+                echo=lambda *_a: None, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(len(specs), 3)
+        self.assertIsNotNone(specs[0])
+        self.assertIsNotNone(specs[1])
+        self.assertIsNone(specs[2])
+        self.assertEqual(messages[-1].get("content"), "Done.")
+
+
 class MalformedToolDeltaTests(unittest.TestCase):
     def test_bad_index_skipped(self):
         acc = {}
@@ -1561,6 +1871,16 @@ class MalformedToolDeltaTests(unittest.TestCase):
         agent._rollback_incomplete_messages(msgs, start=1)
         self.assertEqual(len(msgs), 3)
         self.assertEqual(msgs[-1]["role"], "tool")
+
+    def test_rollback_helper_pops_answer_prompt(self):
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "ok"},
+            answer_message(),
+        ]
+        agent._rollback_incomplete_messages(msgs, start=1)
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(msgs[-1]["content"], "ok")
 
 
 if __name__ == "__main__":

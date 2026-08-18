@@ -69,15 +69,16 @@ lmloop/
 The heart of lmloop. A single function, `act()`, implements the multi-round tool loop:
 
 ```
-for round_idx in range(max_rounds):
-    msg, usage = _chat(cfg, model, messages, tool_specs)  # → OpenAI-compatible /chat/completions
-    append assistant message to messages[]
-    echo content to user
+gather (tools on, up to max_rounds):
+    msg, usage = _chat(..., tool_specs)
     if no tool_calls:
-        return                          # final reply
-    for each tool_call:
-        result = impls[name](**args)    # run Python impl locally
-        append tool result to messages[]
+        return                          # natural final reply
+    if this tool set was already run this turn:
+        go to answer                    # exact name+args; not fuzzy text
+    run tools; append results
+answer (tools off, one call):
+    msg, usage = _chat(..., tools omitted)
+    return
 ```
 
 Key properties:
@@ -85,7 +86,7 @@ Key properties:
 - **No SDK dependency.** Plain `urllib` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible.
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
-- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). A spinner shows until the first token. Set `stream: false` for a non-SSE full reply.
+- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). A spinner shows until the first token. Set `stream: false` for a non-SSE full reply. Within one SSE body, `stream.py` halt-loops repeating thinking/content (`_halted`). A halt with no tools is not done: gather nudges and continues. Across rounds, `act()` is gather/answer: tools stay on for up to `max_rounds` gather steps; a repeated tool set (exact name+args already run this turn) or that budget forces one tools-off answer.
 
 ### Server management (`ensure_server`)
 

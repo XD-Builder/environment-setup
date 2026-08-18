@@ -224,7 +224,7 @@ zsh completion for `config set` is generated from these keys.
 |-----|---------|---------|
 | `base_url` | `http://127.0.0.1:1234/v1` | OpenAI-compatible API root |
 | `model` | *(empty)* | Empty = first model the server reports |
-| `max_rounds` | `60` | Tool-loop rounds per `act()` call |
+| `max_rounds` | `60` | Tool-gather rounds per `act()` call; a tools-off answer follows if gather repeats a tool set or hits this budget |
 | `max_continue_nudges` | `2` | Auto-resume when the model narrates a next step without tools |
 | `temperature` | `0.7` | Chat sampling temperature |
 | `timeout_s` | `600` | HTTP timeout for chat completions (seconds) |
@@ -257,7 +257,8 @@ zsh completion for `config set` is generated from these keys.
 | `lmloop --skill …` fails | `--skill` was replaced by the subcommand: `lmloop skill <name> [task]` |
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
 | Tools can't read `/etc/...` | File tools are scoped to the workspace directory captured at session start |
-| "Last 4 weeks" searches 2024/2025 | Clock is injected into the system prompt. In a long REPL, `/new` or the `current_time` tool. Add project rules in `<workspace>/.lmloop/steer/`. |
+| Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
+| "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes. |
 
 ## Safety
 

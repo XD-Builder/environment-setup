@@ -6,11 +6,18 @@ MSG_RESUME = "type /continue to resume"
 # Message metadata key for internal control messages (stripped before API send).
 LMLOOP_META = "_lmloop"
 META_NUDGE = "nudge"
+META_ANSWER = "answer"
+_CONTROL_META = frozenset({META_NUDGE, META_ANSWER})
 
 NUDGE_CONTINUE_TEXT = (
     f"{STATUS_PREFIX} You described a next step but did not call any tools and did not "
     "finish the user's request. Continue now: either call the tools you need, "
     "or give the final answer."
+)
+
+ANSWER_TEXT = (
+    f"{STATUS_PREFIX} Tools are no longer available. Give the final answer now. "
+    "Do not call tools."
 )
 
 
@@ -26,12 +33,24 @@ def msg_paused_continuing() -> str:
     return status("model paused mid-task — continuing…")
 
 
+def msg_halted_continuing() -> str:
+    return status("thinking loop — continuing…")
+
+
 def msg_stopped_unfinished() -> str:
     return status(f"model stopped without finishing — {MSG_RESUME}")
 
 
 def msg_hit_max_rounds() -> str:
     return status(f"hit max_rounds — stopping. {MSG_RESUME}")
+
+
+def msg_repeated_tools() -> str:
+    return status("repeated tools — writing final answer")
+
+
+def msg_gather_budget() -> str:
+    return status("gather budget — writing final answer")
 
 
 def msg_until_step(role: str, step: int, max_steps: int) -> str:
@@ -132,8 +151,25 @@ def nudge_message() -> dict:
     }
 
 
+def answer_message() -> dict:
+    """User-role prompt for the tools-off answer round."""
+    return {
+        "role": "user",
+        "content": ANSWER_TEXT,
+        LMLOOP_META: META_ANSWER,
+    }
+
+
 def is_nudge_message(msg: dict) -> bool:
     return isinstance(msg, dict) and msg.get(LMLOOP_META) == META_NUDGE
+
+
+def is_answer_message(msg: dict) -> bool:
+    return isinstance(msg, dict) and msg.get(LMLOOP_META) == META_ANSWER
+
+
+def is_control_message(msg: dict) -> bool:
+    return isinstance(msg, dict) and msg.get(LMLOOP_META) in _CONTROL_META
 
 
 def api_messages(messages: list) -> list:

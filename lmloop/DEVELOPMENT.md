@@ -135,9 +135,18 @@ belongs in those modules, not as more private helpers in `agent.py`.
 - Thinking-repeat has two layers on purpose: `stream.py` stops ingesting a loop
   (`_looping_text`: char-window, identical lines, paraphrases, and multi-line
   plan blocks); `_ThinkingLive` skips painting near-duplicate lines that still
-  arrived. Share `_think_line_similar`; do not copy the predicate. After halt,
-  `_read_sse` drains a short window for a late tool/answer, then closes — there
-  is no `max_tokens`, so a thinking loop can otherwise fill the context window.
+  arrived. Share `_think_line_similar` for thinking lines; do not copy that
+  predicate. After halt, `_read_sse` drains a short window for a late
+  tool/answer, then closes — there is no `max_tokens`, so a thinking loop can
+  otherwise fill the context window. A halted stream with no `tool_calls` is
+  unfinished: `_halted` is set, reasoning is not promoted to content, and
+  `act()` nudges gather to continue (so "let me write the file" cannot end the
+  turn). Do not add similarity thresholds for assistant prose.
+- Cross-round stop is a gather/answer state machine in `act()`, not a fuzzy
+  body detector. Gather may call tools for up to `max_rounds` steps. A round
+  whose tool set (exact name+args) already ran this turn, or hitting that
+  budget, forces one tools-off answer. A gather round with no `tool_calls` is
+  already the answer. Do not add similarity thresholds for assistant prose.
 
 A new collaborator is justified when it **owns state or a contract** that more
 than one caller needs. A new module is justified when a boundary already exists

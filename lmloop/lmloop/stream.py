@@ -377,17 +377,20 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
 
     content = "".join(content_parts)
     reasoning_text = "".join(reasoning_parts)
+    halted = content_halted or reasoning_halted
     has_named_tools = any(
         ((tool_acc[i].get("function") or {}).get("name") or "").strip()
         for i in tool_acc
     )
-    if not content.strip() and not has_named_tools and reasoning_text:
+    if not content.strip() and not has_named_tools and reasoning_text and not halted:
         # Fallback when the server only streamed reasoning (or empty-name
-        # tool stubs) and no final content.
+        # tool stubs) and no final content. A halt is not a finished answer.
         content = reasoning_text
     msg: dict = {"role": "assistant", "content": content}
     if tool_acc:
         msg["tool_calls"] = [tool_acc[i] for i in sorted(tool_acc)]
     if reasoning_text:
         msg["_reasoning"] = reasoning_text
+    if halted:
+        msg["_halted"] = True
     return msg, usage
