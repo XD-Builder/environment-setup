@@ -1,10 +1,11 @@
 """The agent loop: OpenAI-compatible multi-round tool calling against LM Studio.
 
 No SDK dependency — plain urllib against /v1/chat/completions with `tools`.
-The loop mirrors LM Studio's .act() semantics: model responds, requested tools
-run locally, results feed back, repeat until the model stops calling tools or
-max_rounds is hit. Tool errors are reported back to the model as text so it
-can self-correct instead of crashing the session.
+The loop is a gather/answer state machine: the model may call tools for up to
+``max_rounds`` gather steps, then one tools-off answer. Gather ends early when
+the model stops requesting tools, or when it repeats a tool set already run
+this turn (exact name+args). Tool errors are reported back as text so it can
+self-correct instead of crashing the session.
 
 Stream assembly lives in ``stream.py``. Live printers live in ``display.py``.
 """
@@ -516,6 +517,30 @@ def _named_tool_calls(tool_calls: list) -> list:
     return out
 
 
+def _tool_call_fingerprint(call: dict) -> tuple:
+    """Stable (name, args) so JSON key order / whitespace do not evade a match."""
+    fn = call.get("function") or {}
+    name = str(fn.get("name") or "").strip()
+    raw = fn.get("arguments")
+    if raw is None:
+        args = ""
+    elif isinstance(raw, str):
+        args = raw.strip()
+        try:
+            parsed = json.loads(args) if args else {}
+            args = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    else:
+        args = json.dumps(raw, sort_keys=True, separators=(",", ":"))
+    return (name, args)
+
+
+def _tool_calls_fingerprint(tool_calls: list) -> tuple:
+    """Ordered fingerprints for one gather round. Same set = no new information."""
+    return tuple(_tool_call_fingerprint(c) for c in (tool_calls or []))
+
+
 def _rollback_incomplete_messages(messages: list, start: int) -> None:
     """Pop trailing incomplete tool rounds / nudge prompts after abort.
 
@@ -524,7 +549,7 @@ def _rollback_incomplete_messages(messages: list, start: int) -> None:
     while len(messages) > start:
         last = messages[-1]
         role = last.get("role")
-        if role == "user" and status_mod.is_nudge_message(last):
+        if role == "user" and status_mod.is_control_message(last):
             messages.pop()
             continue
         if role == "tool":
@@ -571,6 +596,11 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     - ``echo_round(round_idx, stats, messages)`` after each model round
     - ``on_thinking(text)`` when thinking is stored for Ctrl+O
 
+    Gather may run tools for up to ``max_rounds`` steps. A tools-off answer
+    follows when gather repeats a tool set already run this turn, or hits that
+    budget. A gather round with no tool_calls is the final reply (no extra
+    answer call).
+
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
     """
@@ -588,7 +618,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     turn_tools = 0
     nudge_count = 0
     max_nudges = max(0, int(cfg.get("max_continue_nudges", 2)))
-    max_rounds = int(cfg.get("max_rounds", 60))
+    max_gather = max(1, int(cfg.get("max_rounds", 60)))
+    gathering = True
+    seen_fps: set = set()
     checkpoint = len(messages)
     context_warned = False
     prev_session = memory.set_active_session(session_log)
@@ -597,8 +629,24 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         if stats is not None:
             stats["interrupted"] = True
 
+    def _finish_turn() -> list:
+        if stats is not None:
+            stats["turns"] = stats.get("turns", 0) + 1
+            stats["rounds"] = stats.get("rounds", 0) + turn_rounds
+            stats["tool_calls"] = stats.get("tool_calls", 0) + turn_tools
+            stats["interrupted"] = False
+        return messages
+
     try:
-        for round_idx in range(max_rounds):
+        for round_idx in range(max_gather + 1):
+            if gathering and round_idx >= max_gather:
+                gathering = False
+                echo_status(status_mod.msg_gather_budget())
+            is_answer = not gathering
+            if is_answer and not (
+                messages and status_mod.is_answer_message(messages[-1])
+            ):
+                messages.append(status_mod.answer_message())
             if context_limit and not context_warned:
                 used = 0
                 if stats is not None:
@@ -652,7 +700,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
             try:
                 msg, usage = _chat(
-                    cfg, model, messages, tool_specs,
+                    cfg, model, messages, None if is_answer else tool_specs,
                     on_delta=on_delta if use_stream else None,
                     on_activity=indicator.tick if indicator else None,
                     on_reasoning=on_reasoning if use_stream else None,
@@ -663,20 +711,29 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     indicator.clear()
                 _accumulate_usage(stats, usage)
                 turn_rounds += 1
-                tool_calls = _named_tool_calls(msg.get("tool_calls") or [])
+                halted = bool(msg.get("_halted"))
+                tool_calls = (
+                    [] if is_answer
+                    else _named_tool_calls(msg.get("tool_calls") or [])
+                )
                 content = (msg.get("content") or "").strip()
                 reasoning_text = (msg.get("_reasoning") or "").strip()
-                # Promote reasoning when it was the only usable reply (no
-                # content and no named tools — including empty-name stubs).
-                if not content and not tool_calls and reasoning_text:
-                    content = reasoning_text
-
-                if thinking is not None:
-                    content, retired = thinking.retire_for_round(
-                        tool_calls, content, reasoning_text,
-                    )
-                    if retired.strip() and on_thinking:
-                        on_thinking(retired)
+                # A halt is an unfinished round, not an answer. Do not promote
+                # looping reasoning into content (that made gather stop).
+                if halted and not tool_calls:
+                    if thinking is not None and thinking.active:
+                        retired = thinking.erase()
+                        if retired.strip() and on_thinking:
+                            on_thinking(retired)
+                else:
+                    if not content and not tool_calls and reasoning_text:
+                        content = reasoning_text
+                    if thinking is not None:
+                        content, retired = thinking.retire_for_round(
+                            tool_calls, content, reasoning_text,
+                        )
+                        if retired.strip() and on_thinking:
+                            on_thinking(retired)
 
                 store_content = content if content else ""
                 assistant_entry = {"role": "assistant", "content": store_content}
@@ -701,17 +758,31 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                 if echo_round is not None:
                     echo_round(round_idx + 1, stats, messages, context_limit, context_reserve)
 
+                if is_answer:
+                    return _finish_turn()
+
                 if not tool_calls:
+                    can_nudge = (
+                        nudge_count < max_nudges and round_idx + 1 < max_gather
+                    )
+                    if halted and can_nudge:
+                        nudge_count += 1
+                        echo_status(status_mod.msg_halted_continuing())
+                        messages.append(status_mod.nudge_message())
+                        continue
+                    if halted:
+                        echo_status(status_mod.msg_stopped_unfinished())
+                        return _finish_turn()
                     soft_stop = _should_nudge_continue(
                         content, turn_tools, nudge_count, max_nudges,
                     )
-                    # Only inject a nudge when another model round can still run.
-                    if soft_stop and round_idx + 1 < max_rounds:
+                    # Only inject a nudge when another gather round can still run.
+                    if soft_stop and round_idx + 1 < max_gather:
                         nudge_count += 1
                         echo_status(status_mod.msg_paused_continuing())
                         messages.append(status_mod.nudge_message())
                         continue
-                    # Nudges exhausted, or soft-stop on the final allowed round.
+                    # Nudges exhausted, or soft-stop on the final gather round.
                     if soft_stop or (
                         nudge_count >= max_nudges
                         and content
@@ -719,13 +790,16 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                         and not _looks_grounded(content)
                     ):
                         echo_status(status_mod.msg_stopped_unfinished())
-                    if stats is not None:
-                        stats["turns"] = stats.get("turns", 0) + 1
-                        stats["rounds"] = stats.get("rounds", 0) + turn_rounds
-                        stats["tool_calls"] = stats.get("tool_calls", 0) + turn_tools
-                        stats["interrupted"] = False
-                    return messages
+                    return _finish_turn()
 
+                fp = _tool_calls_fingerprint(tool_calls)
+                if fp in seen_fps:
+                    echo_status(status_mod.msg_repeated_tools())
+                    messages[-1].pop("tool_calls", None)
+                    gathering = False
+                    continue
+
+                seen_fps.add(fp)
                 for call_idx, call in enumerate(tool_calls):
                     turn_tools += 1
                     fn = call.get("function", {})
@@ -745,6 +819,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                         "tool_call_id": call.get("id") or f"call_{round_idx}_{call_idx}",
                         "content": result,
                     })
+                if round_idx + 1 >= max_gather:
+                    echo_status(status_mod.msg_gather_budget())
+                    gathering = False
             finally:
                 if indicator is not None:
                     indicator.clear()
@@ -753,13 +830,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                 if not printer_finished and printer is not None:
                     printer.finish()
 
-        if stats is not None:
-            stats["turns"] = stats.get("turns", 0) + 1
-            stats["rounds"] = stats.get("rounds", 0) + turn_rounds
-            stats["tool_calls"] = stats.get("tool_calls", 0) + turn_tools
-            stats["interrupted"] = False
         echo_status(status_mod.msg_hit_max_rounds())
-        return messages
+        return _finish_turn()
     except (KeyboardInterrupt, Exception):
         _mark_interrupted()
         _rollback_incomplete_messages(messages, checkpoint)
