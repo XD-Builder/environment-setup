@@ -580,8 +580,13 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         on_thinking=None, context_limit: int = 0,
         context_reserve: int = 2048,
         workspace_root: "Path | None" = None,
-        readonly: bool = False) -> list:
+        readonly: bool = False,
+        extra_readable: "list | None" = None) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
+
+    ``extra_readable`` is a turn-scoped list of paths the user attached with
+    ``@``; ``read_file`` / ``list_dir`` may open those even outside the
+    workspace. Writes stay workspace-scoped.
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
     is SSE and tokens are shown live:
@@ -613,7 +618,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     color = bool(cfg.get("color", True))
     tool_specs, impls = tools.build_tools(
         cfg, confirm_gate=confirm_gate, workspace_root=workspace_root,
-        readonly=readonly,
+        readonly=readonly, extra_readable=extra_readable,
     )
     use_stream = bool(cfg.get("stream", True))
     turn_rounds = 0

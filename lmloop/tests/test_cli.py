@@ -239,22 +239,98 @@ class AtRefTurnTests(unittest.TestCase):
                 session_log=root / "session.jsonl",
                 stats=fresh_stats(),
                 console=Console(color=False),
+                workspace_root=root.resolve(),
             )
             state.session_log.write_text("")
             captured = {}
 
             def fake_act(cfg, model, messages, **kwargs):
                 captured["content"] = messages[-1]["content"]
+                captured["extra"] = kwargs.get("extra_readable")
                 return messages
 
             with patch("lmloop.repl.agent.act", side_effect=fake_act), \
-                 patch("lmloop.repl.Path.cwd", return_value=root), \
-                 patch("lmloop.files_index.Path.cwd", return_value=root):
+                 redirect_stdout(io.StringIO()) as out:
                 # Skill-style turn (previously missed expand_at_refs)
                 _run_turn(state, "# Skill\n\nTask: look at @a.py", lambda _: False)
 
-            self.assertIn("Referenced files (use read_file):", captured["content"])
-            self.assertIn("- a.py", captured["content"])
+            resolved = (root / "a.py").resolve()
+            self.assertIn("Referenced files (use read_file / list_dir", captured["content"])
+            self.assertIn(f"- @a.py → {resolved.as_posix()}", captured["content"])
+            self.assertEqual(captured["extra"], [resolved])
+            self.assertIn(f"[referenced a.py → {resolved}]", out.getvalue())
+
+    def test_run_turn_warns_on_missing_at_ref(self):
+        from lmloop.repl import SessionState, _run_turn
+        from lmloop.ui import Console, fresh_stats
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            state = SessionState(
+                cfg={},
+                model="m",
+                messages=[{"role": "system", "content": "s"}],
+                session_log=root / "session.jsonl",
+                stats=fresh_stats(),
+                console=Console(color=False),
+                workspace_root=root.resolve(),
+            )
+            state.session_log.write_text("")
+
+            def fake_act(cfg, model, messages, **kwargs):
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 redirect_stdout(io.StringIO()) as out:
+                _run_turn(state, "see @nope.py", lambda _: False)
+
+            self.assertIn("[no file at @nope.py]", out.getvalue())
+            self.assertNotIn("Referenced files", state.messages[-1]["content"])
+
+    def test_compact_expands_focus_at_refs(self):
+        from lmloop.repl import SessionState, _cmd_compact
+        from lmloop.ui import Console, fresh_stats
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "a.py").write_text("x\n")
+            log = root / "s.jsonl"
+            log.write_text("")
+            state = SessionState(
+                cfg={},
+                model="m",
+                messages=[
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": "keep me"},
+                    {"role": "assistant", "content": "ok"},
+                ],
+                session_log=log,
+                stats=fresh_stats(),
+                console=Console(color=False),
+                workspace_root=root.resolve(),
+            )
+            captured = {}
+
+            def fake_act(cfg, model, messages, **kwargs):
+                captured["user"] = messages[-1]["content"]
+                captured["extra"] = kwargs.get("extra_readable")
+                messages.append({"role": "assistant", "content": "summary"})
+                return messages
+
+            with patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 patch("lmloop.repl.ask_yes_no", return_value=False), \
+                 redirect_stdout(io.StringIO()):
+                _cmd_compact(state, "look at @a.py", lambda _: False)
+
+            resolved = (root / "a.py").resolve()
+            self.assertIn("Focus:", captured["user"])
+            self.assertIn(f"@a.py → {resolved.as_posix()}", captured["user"])
+            self.assertEqual(captured["extra"], [resolved])
+            # Transcript body is not re-expanded as a whole (no second block).
+            self.assertEqual(captured["user"].count("Referenced files"), 1)
 
     def test_run_turn_keeps_repl_on_unexpected_error(self):
         from lmloop.repl import SessionState, _run_turn

@@ -159,6 +159,73 @@ class ToolSafetyTests(unittest.TestCase):
             result = read_file("/etc/hosts")
             self.assertIn("outside workspace", result)
 
+    def test_read_file_extra_readable_outside(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ws"
+            root.mkdir()
+            outside = Path(d) / "secret.txt"
+            outside.write_text("hello\n")
+            other = Path(d) / "other.txt"
+            other.write_text("nope\n")
+            self.assertIn(
+                "outside workspace",
+                read_file(str(outside), workspace_root=root),
+            )
+            result = read_file(
+                str(outside), workspace_root=root,
+                extra_readable=[outside.resolve()],
+            )
+            self.assertIn("hello", result)
+            self.assertNotIn("ERROR", result)
+            self.assertIn(
+                "outside workspace",
+                read_file(
+                    str(other), workspace_root=root,
+                    extra_readable=[outside.resolve()],
+                ),
+            )
+            self.assertIn(
+                "outside workspace",
+                write_file(str(outside), "x", workspace_root=root),
+            )
+
+    def test_list_dir_extra_readable_outside(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ws"
+            root.mkdir()
+            outdir = Path(d) / "extdir"
+            outdir.mkdir()
+            (outdir / "a.txt").write_text("x\n")
+            self.assertIn(
+                "outside workspace",
+                list_dir(str(outdir), workspace_root=root),
+            )
+            result = list_dir(
+                str(outdir), workspace_root=root,
+                extra_readable=[outdir.resolve()],
+            )
+            self.assertIn("a.txt", result)
+            nested = read_file(
+                str(outdir / "a.txt"), workspace_root=root,
+                extra_readable=[outdir.resolve()],
+            )
+            self.assertIn("x", nested)
+
+    def test_build_tools_extra_readable_read_not_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ws"
+            root.mkdir()
+            outside = Path(d) / "secret.txt"
+            outside.write_text("hello\n")
+            _, impls = build_tools(
+                {"confirm_shell": False},
+                workspace_root=root,
+                extra_readable=[outside.resolve()],
+            )
+            result = impls["read_file"](str(outside))
+            self.assertIn("hello", result)
+            self.assertIn("outside workspace", impls["write_file"](str(outside), "x"))
+
     def test_read_file_inside_workspace(self):
         with tempfile.TemporaryDirectory() as d:
             os.chdir(d)

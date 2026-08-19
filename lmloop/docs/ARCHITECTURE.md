@@ -30,7 +30,7 @@ lmloop/
 │   ├── tools.py                # tool registry: specs + Python impls
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── config.py               # ~/.lmloop/config.json, project slug resolution
-│   ├── files_index.py          # git-aware @path completion + ref expansion
+│   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── markdown_view.py        # render assistant markdown to terminal
 │   ├── ui.py                   # Console: ANSI theming, status bars, stats
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
@@ -159,9 +159,9 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | Tool | Purpose | Safety |
 |------|---------|--------|
 | `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. Pipe/redirection syntax is off by default (`confirm_shell_syntax`); set that key to enable. |
-| `read_file` | Read file with line numbers | Scoped to the workspace directory captured at session start. Relative `path` resolves there; the ⚙ line and result header show the resolved path. Max 400 lines per call. |
-| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. Creates parent dirs. Result cites the resolved path. |
-| `list_dir` | List directory entries | Scoped to the session workspace. Includes dotfiles. |
+| `read_file` | Read file with line numbers | Scoped to the workspace directory captured at session start, plus paths the user attached with `@` on this turn. Relative `path` resolves there; `~` and absolute paths work. The ⚙ line and result header show the resolved path. Max 400 lines per call. |
+| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. Creates parent dirs. Result cites the resolved path. `@` attachments do not grant write access outside the workspace. |
+| `list_dir` | List directory entries | Scoped to the session workspace, plus directories the user attached with `@` this turn. Includes dotfiles. |
 | `search_files` | Regex search (ripgrep or grep fallback) | Scoped to the session workspace. Max 50 matches. |
 | `web_search` | `ddgs` metasearch (no key), then DuckDuckGo HTML/Lite, Instant Answer, Wikipedia | Optional `ddgs` dep. Content fenced as untrusted. All backends failing → ERROR (do not paraphrase-retry). |
 | `fetch_url` | HTTP(S) fetch with HTML→text + on-page links | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
@@ -266,10 +266,11 @@ This keeps the system prompt small for local models with limited context windows
 
 The interactive mode uses `prompt_toolkit` for:
 
-- **As-you-type completion** for `/` slash commands (with blurbs) and `@` file paths (git-aware).
+- **As-you-type completion** for `/` slash commands (with blurbs) and `@` file paths (git-aware project index, plus filesystem completion for `~/`, `/`, `./`, `../`). Filesystem matches show the resolved path in the menu.
 - **Decorative prompt** showing `cwd · model ›`.
 - **Bottom toolbar** showing context fill bar, session tokens, and turn count.
 - **Double Ctrl-C to exit** (first dismisses completion menu, second exits).
+- **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Missing tokens warn; existing ones are readable this turn even outside the workspace.
 
 Slash commands (`/help`, `/stats`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately.
 

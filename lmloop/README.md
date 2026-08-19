@@ -134,7 +134,7 @@ REPL UX (prompt_toolkit + rich):
 - **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL.
 - **Prompt** shows `cwd · model ›` (decorative only) with a **bottom toolbar** for context fill / session tokens / turns.
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
-- **Type `@`** for project file paths (git-aware when possible). On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs append a “Referenced files” block for the model.
+- **Type `@`** for file paths. Project-relative names complete from the git-aware index. Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. The model may `read_file` / `list_dir` those attached paths this turn even if they sit outside the workspace. Missing tokens print `[no file at @…]` and are skipped.
 - **Ctrl-C** dismisses an open `/` or `@` completion menu first; with no menu, once shows “Ctrl-C again to exit”, twice exits. Ctrl-D exits immediately.
 - **Post-turn footer** shows a context bar, token breakdown, rounds, and tools.
 - **Colors** for banners/tools when stdout is a TTY; disable with `NO_COLOR=1` or `lmloop config set color false`.

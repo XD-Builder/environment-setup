@@ -4,9 +4,19 @@ import os
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
-AT_REF_RE = re.compile(r"(?<!\w)@([^\s@]+)")
+# Bare @path, @"quoted path", or @'quoted path'. Emails (user@host) are skipped
+# by the leading (?<!\w). Unquoted tokens stop at whitespace or another @.
+AT_REF_RE = re.compile(
+    r"""(?<!\w)@(?:
+        "([^"]+)"
+      | '([^']+)'
+      | ([^\s@]+)
+    )""",
+    re.VERBOSE,
+)
 
 IGNORE_DIRS = frozenset({
     ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
@@ -17,6 +27,34 @@ IGNORE_DIRS = frozenset({
 _CACHE: "dict[str, tuple[float, list[str]]]" = {}
 _CACHE_TTL_S = 2.0
 _MAX_PATHS = 800
+_MAX_FS_COMPLETIONS = 80
+_REF_BLOCK_MARKER = "Referenced files (use read_file"
+_REF_BLOCK_HEADER = (
+    "Referenced files (use read_file / list_dir with the resolved path):"
+)
+
+
+@dataclass(frozen=True)
+class AtRef:
+    """One user @path token that resolved to an existing file or directory."""
+    token: str
+    resolved: Path
+    is_dir: bool
+
+
+@dataclass(frozen=True)
+class AtRefExpansion:
+    """User text plus resolved @refs (and tokens that did not exist)."""
+    text: str
+    refs: tuple = ()
+    missing: tuple = ()
+
+
+def resolve_user_path(path: str, cwd: "Path | None" = None) -> Path:
+    """Resolve ~, absolute, and cwd-relative path strings the same way tools do."""
+    root = (cwd or Path.cwd()).resolve()
+    p = Path(path).expanduser()
+    return p.resolve() if p.is_absolute() else (root / p).resolve()
 
 
 def list_project_paths(cwd: "Path | None" = None, limit: int = _MAX_PATHS) -> "list[str]":
@@ -38,6 +76,61 @@ def list_project_paths(cwd: "Path | None" = None, limit: int = _MAX_PATHS) -> "l
 
 def clear_path_cache() -> None:
     _CACHE.clear()
+
+
+def is_fs_completion_prefix(prefix: str) -> bool:
+    """True when @ completion should scan the filesystem, not the project index."""
+    return (
+        prefix.startswith("~")
+        or prefix.startswith("/")
+        or prefix.startswith("./")
+        or prefix.startswith("../")
+        or prefix in (".", "..")
+    )
+
+
+def list_fs_paths(
+    prefix: str,
+    cwd: "Path | None" = None,
+    limit: int = _MAX_FS_COMPLETIONS,
+) -> "list[str]":
+    """Completion candidates in the typed form (~/, /abs, ./, ../)."""
+    root = (cwd or Path.cwd()).resolve()
+    if prefix in ("~", ".", ".."):
+        prefix = prefix + "/"
+    if "/" not in prefix:
+        return []
+    typed_dir, name = prefix.rsplit("/", 1)
+    typed_dir = typed_dir + "/"
+    try:
+        scan = resolve_user_path(typed_dir, root)
+    except (OSError, RuntimeError, ValueError):
+        return []
+    try:
+        if not scan.is_dir():
+            return []
+        entries = sorted(scan.iterdir(), key=lambda e: e.name.lower())
+    except OSError:
+        return []
+    out: "list[str]" = []
+    name_l = name.lower()
+    show_hidden = name.startswith(".")
+    for entry in entries:
+        if not show_hidden and entry.name.startswith("."):
+            continue
+        if entry.name in IGNORE_DIRS:
+            continue
+        if name_l and not entry.name.lower().startswith(name_l):
+            continue
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            continue
+        suffix = "/" if is_dir else ""
+        out.append(typed_dir + entry.name + suffix)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _git_paths(root: Path) -> "list[str] | None":
@@ -86,29 +179,47 @@ def _walk_paths(root: Path) -> "list[str]":
     return out + dirs_out
 
 
-_REF_BLOCK_MARKER = "Referenced files (use read_file):"
+def _raw_at_token(match: re.Match) -> "tuple[str, bool]":
+    """Return (token, quoted) from an AT_REF_RE match."""
+    quoted = match.group(1) is not None or match.group(2) is not None
+    raw = match.group(1) or match.group(2) or match.group(3) or ""
+    if not quoted:
+        raw = raw.rstrip(",.;:")
+    return raw, quoted
 
 
-def expand_at_refs(text: str, cwd: "Path | None" = None) -> str:
-    """Append a referenced-files block for existing @path tokens under cwd."""
+def collect_at_refs(text: str, cwd: "Path | None" = None) -> AtRefExpansion:
+    """Resolve @path tokens; append a referenced-files block when any exist."""
     if not text or _REF_BLOCK_MARKER in text:
-        return text
+        return AtRefExpansion(text=text or "", refs=(), missing=())
     root = (cwd or Path.cwd()).resolve()
-    found: "list[str]" = []
-    seen = set()
+    refs: "list[AtRef]" = []
+    missing: "list[str]" = []
+    seen: set = set()
     for m in AT_REF_RE.finditer(text):
-        raw = m.group(1).rstrip("/,.;:")
+        raw, _quoted = _raw_at_token(m)
         if not raw or raw in seen:
             continue
         seen.add(raw)
-        path = (root / raw).resolve()
         try:
-            path.relative_to(root)
-        except ValueError:
+            path = resolve_user_path(raw, root)
+            is_dir = path.is_dir()
+            is_file = path.is_file()
+        except (OSError, RuntimeError, ValueError):
+            missing.append(raw)
             continue
-        if path.is_file():
-            found.append(raw)
-    if not found:
-        return text
-    block = _REF_BLOCK_MARKER + "\n" + "\n".join(f"- {p}" for p in found)
-    return text.rstrip() + "\n\n" + block + "\n"
+        if is_dir or is_file:
+            refs.append(AtRef(token=raw, resolved=path, is_dir=is_dir))
+        else:
+            missing.append(raw)
+    if not refs:
+        return AtRefExpansion(text=text, refs=(), missing=tuple(missing))
+    lines = [f"- @{r.token} → {r.resolved.as_posix()}" for r in refs]
+    block = _REF_BLOCK_HEADER + "\n" + "\n".join(lines)
+    new_text = text.rstrip() + "\n\n" + block + "\n"
+    return AtRefExpansion(text=new_text, refs=tuple(refs), missing=tuple(missing))
+
+
+def expand_at_refs(text: str, cwd: "Path | None" = None) -> str:
+    """Append a referenced-files block for existing @path tokens."""
+    return collect_at_refs(text, cwd).text
