@@ -142,6 +142,11 @@ belongs in those modules, not as more private helpers in `agent.py`.
   unfinished: `_halted` is set, reasoning is not promoted to content, and
   `act()` nudges gather to continue (so "let me write the file" cannot end the
   turn). Do not add similarity thresholds for assistant prose.
+- Live markdown must not sit on an unchanged preamble while tool arguments
+  stream. Close the printer when `tool_calls` start; refresh Live only on
+  `feed` (`auto_refresh` off). Do not halt-and-close the SSE body on a short
+  repeated sentence while tools may still follow — that would drop a late
+  `write_file`. Display skip is the paint layer for that case.
 - Cross-round stop is a gather/answer state machine in `act()`, not a fuzzy
   body detector. Gather may call tools for up to `max_rounds` steps. A round
   whose tool set (exact name+args) already ran this turn, or hitting that
