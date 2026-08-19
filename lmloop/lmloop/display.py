@@ -14,6 +14,7 @@ from .ui import terminal_size
 # if Live's cursor-up count fell. Crop to the newest lines only once the
 # render would overflow the screen. The Live console is one column short of
 # the TTY so a full-width rule cannot wrap an extra row and desync Live.
+# Refresh only on new tokens; close Live when tool_calls start.
 
 # Live thinking prints as it streams; erased when tools/answer start.
 # Ctrl+O opens prior-turn thinking (chronological), not a newest-first cycle.
@@ -59,11 +60,11 @@ def _default_echo_delta(piece: str) -> None:
 
 
 class _GeneratingIndicator:
-    """TTY spinner while waiting for the first streamed token.
+    """TTY spinner while waiting for streamed tokens.
 
-    Once cleared (content/reasoning/tools arrived), further ``tick`` calls are
-    no-ops — later SSE chunks (usage, trailing tool deltas) must not resurrect
-    the spinner onto the round/tool lines.
+    ``clear`` stops ticks so a usage chunk cannot paint the spinner onto the
+    round/tool lines. ``resume`` is for the wait after Live closes (tool
+    arguments can stream for minutes with no new content tokens).
     """
 
     _FRAMES = "⠋⠙⠹⠸⠴⠦⠧⠇⠏"
@@ -80,6 +81,10 @@ class _GeneratingIndicator:
         self._n += 1
         _tty_write(f"\r  {frame} generating…")
         self._shown = True
+
+    def resume(self) -> None:
+        """Allow ``tick`` again after ``clear`` (tool-argument wait)."""
+        self._stopped = False
 
     def clear(self) -> None:
         self._stopped = True
@@ -118,6 +123,7 @@ class _StreamPrinter:
         self._leading = ""
         self._trailing_nl = ""
         self._started = False
+        self._emitted = False
 
     @property
     def visible(self) -> bool:
@@ -163,6 +169,8 @@ class _StreamPrinter:
         self._started = False
 
     def finish(self) -> bool:
+        if self._emitted and not self._started:
+            return True
         self._leading = ""
         if not self._started:
             self._trailing_nl = ""
@@ -171,6 +179,7 @@ class _StreamPrinter:
         self._out("\n")
         self._trailing_nl = ""
         started = self._started
+        self._emitted = True
         self.reset()
         return started
 
@@ -235,6 +244,7 @@ class _MarkdownLivePrinter:
         self._parts: list = []
         self._leading = ""
         self._started = False
+        self._emitted = False
         self._live = None
         self._live_rows = 0
         self._color = color
@@ -280,6 +290,9 @@ class _MarkdownLivePrinter:
         # terminal. ellipsis kept the *start* of a tall answer and painted a
         # red "..." while new tokens arrived off-screen. visible overflow
         # stacks frames in scrollback as markdown reflows.
+        # Refresh only on feed — auto_refresh would redraw an unchanged
+        # preamble 12×/s while write_file arguments stream (minutes), and
+        # those frames leak into scrollback if anything else writes.
         # transient on a real TTY: clear the preview so finish() can reprint
         # the full answer with terminal wrap (reflows on resize).
         self._live = Live(
@@ -287,7 +300,7 @@ class _MarkdownLivePrinter:
             console=console,
             refresh_per_second=12,
             vertical_overflow="crop",
-            auto_refresh=self._console_override is None,
+            auto_refresh=False,
             redirect_stdout=False,
             redirect_stderr=False,
             transient=self._console_override is None,
@@ -332,6 +345,8 @@ class _MarkdownLivePrinter:
         self._stop_live()
 
     def finish(self) -> bool:
+        if self._emitted and not self._started:
+            return True
         self._leading = ""
         body = "".join(self._parts)
         if not self._started:
@@ -346,6 +361,7 @@ class _MarkdownLivePrinter:
             from .markdown_view import print_markdown
             print_markdown(body, color=self._color)
         started = self._started
+        self._emitted = True
         self._parts = []
         self._started = False
         self._live_rows = 0
