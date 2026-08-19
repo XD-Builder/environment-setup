@@ -259,6 +259,7 @@ zsh completion for `config set` is generated from these keys.
 | Tools can't read `/etc/...` | File tools are scoped to the workspace directory captured at session start |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
 | "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes. |
+| Same "Let me write it up" line stacking while a tool runs | Live preview used to stay open while tool arguments streamed (minutes for `write_file`). lmloop now closes the live view when tools start and shows the spinner until the tool line. |
 
 ## Safety
 

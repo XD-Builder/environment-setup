@@ -590,6 +590,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     - ``echo_delta=False``: spinner only; ``echo`` once when the round completes
     - callable: custom live writer
     Live modes do not also call ``echo`` (avoids plain+rich doubles).
+    When tool_calls start, Live is closed so a long argument stream cannot
+    redraw the preamble; the spinner resumes until the round finishes.
 
     Optional callbacks:
     - ``echo_status(text)`` for lmloop status lines (defaults to ``echo``)
@@ -686,17 +688,33 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                 if _ind is not None and _mode == "markdown" and _printer.visible and not was:
                     _ind.clear()
 
-            def on_reasoning(piece: str, _think=thinking, _ind=indicator) -> None:
+            def on_reasoning(piece: str, _think=thinking, _ind=indicator,
+                             _printer=printer) -> None:
                 if _think is None:
+                    return
+                # Content Live owns the TTY. Painting thinking alongside it
+                # desyncs Live and stacks the preamble in scrollback.
+                if _printer.visible:
                     return
                 if _ind is not None:
                     _ind.clear()
                 _think.feed(piece)
 
-            def on_tools(_ind=indicator) -> None:
-                if _ind is not None:
-                    _ind.clear()
+            def on_tools(_ind=indicator, _printer=printer) -> None:
+                nonlocal printer_finished
                 _retire_thinking()
+                # Close Live before tool arguments stream (write_file can take
+                # minutes). Leaving Live up redraws the same preamble and
+                # leaks copies into scrollback.
+                if (
+                    live_mode in ("plain", "markdown")
+                    and _printer is not None
+                    and not printer_finished
+                ):
+                    _printer.finish()
+                    printer_finished = True
+                if _ind is not None:
+                    _ind.resume()
 
             try:
                 msg, usage = _chat(
@@ -745,13 +763,14 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                 # (round breadcrumb, tool lines). Printing while rich.Live is
                 # active bypasses its cursor control and corrupts the frame.
                 if content:
-                    _emit_assistant_content(
-                        echo, content, printer if use_stream else None, live_mode,
-                    )
-                    printer_finished = True
+                    if not printer_finished:
+                        _emit_assistant_content(
+                            echo, content, printer if use_stream else None, live_mode,
+                        )
+                        printer_finished = True
                     if session_log:
                         memory.log_event(session_log, "assistant", content)
-                elif use_stream:
+                elif use_stream and not printer_finished:
                     printer.finish()
                     printer_finished = True
 

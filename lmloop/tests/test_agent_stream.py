@@ -63,6 +63,17 @@ class GeneratingIndicatorTests(unittest.TestCase):
             ind.tick()
             out.write.assert_not_called()
 
+    def test_resume_allows_ticks_after_clear(self):
+        ind = display._GeneratingIndicator()
+        with mock.patch("sys.stdout") as out:
+            out.isatty.return_value = True
+            ind.tick()
+            ind.clear()
+            out.write.reset_mock()
+            ind.resume()
+            ind.tick()
+            out.write.assert_called()
+
 
 class StreamPrinterTests(unittest.TestCase):
     def _collect(self):
@@ -170,6 +181,7 @@ class StreamPrinterTests(unittest.TestCase):
             self.assertTrue(Live.called)
             kwargs = Live.call_args.kwargs
             self.assertEqual(kwargs.get("vertical_overflow"), "crop")
+            self.assertFalse(kwargs.get("auto_refresh"))
             self.assertTrue(kwargs.get("transient"))
             self.assertTrue(make_console.call_args.kwargs.get("force_terminal"))
             self.assertEqual(make_console.call_args.kwargs.get("height"), 38)
@@ -775,6 +787,14 @@ class PrinterResetTests(unittest.TestCase):
         self.assertTrue(p.finish())
         self.assertEqual("".join(out), "hi\nagain\n")
 
+    def test_stream_printer_finish_idempotent(self):
+        out = []
+        p = display._StreamPrinter(out.append)
+        p.feed("hi")
+        self.assertTrue(p.finish())
+        self.assertTrue(p.finish())
+        self.assertEqual("".join(out), "hi\n")
+
 
 class ChatStreamTests(unittest.TestCase):
     def test_streams_content_and_usage(self):
@@ -1290,6 +1310,61 @@ class ActIntegrationTests(unittest.TestCase):
                 echo_round=echo_round,
             )
         self.assertEqual(events, ["finish", "echo_round"])
+
+    def test_act_finishes_live_when_tools_start(self):
+        """Content preamble must not stay in Live while tool arguments stream."""
+        round1 = _sse(
+            {"choices": [{"delta": {"content": (
+                "Now I have enough research to compile a comprehensive "
+                "report. Let me write it up."
+            )}}]},
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0, "id": "c1", "type": "function",
+                "function": {"name": "list_dir", "arguments": "{}"},
+            }]}}]},
+            {"choices": [], "usage": {
+                "prompt_tokens": 5, "completion_tokens": 8, "total_tokens": 13,
+            }},
+            None,
+        )
+        round2 = _sse(
+            {"choices": [{"delta": {"content": "done"}}]},
+            None,
+        )
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True, "confirm_shell": False,
+        }
+        events = []
+
+        class TrackingPrinter(display._StreamPrinter):
+            def finish(self):
+                events.append("finish")
+                return super().finish()
+
+        def echo_round(*_a, **_k):
+            events.append("echo_round")
+
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=[FakeResp(round1), FakeResp(round2)],
+        ), \
+             mock.patch.object(
+                 agent, "_open_live_display",
+                 return_value=(TrackingPrinter(lambda *_a: None), "plain"),
+             ), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
+             mock.patch.object(agent.tools, "dispatch", return_value="ok"):
+            agent.act(
+                cfg, "m", [{"role": "user", "content": "write the report"}],
+                echo=lambda *_a: None,
+                echo_tool=lambda *_a, **_k: None,
+                echo_round=echo_round,
+            )
+        self.assertGreaterEqual(events.count("finish"), 1)
+        self.assertEqual(events[0], "finish")
+        self.assertIn("echo_round", events)
+        self.assertLess(events.index("finish"), events.index("echo_round"))
 
     def test_act_clears_spinner_before_echo_round_after_tools(self):
         """Tool-only rounds get a usage chunk after tools — spinner must stay gone."""
