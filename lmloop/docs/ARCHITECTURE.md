@@ -31,6 +31,7 @@ lmloop/
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── config.py               # ~/.lmloop/config.json, project slug resolution
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
+│   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
 │   ├── markdown_view.py        # render assistant markdown to terminal
 │   ├── ui.py                   # Console: ANSI theming, status bars, stats
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
@@ -159,12 +160,12 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | Tool | Purpose | Safety |
 |------|---------|--------|
 | `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. Pipe/redirection syntax is off by default (`confirm_shell_syntax`); set that key to enable. |
-| `read_file` | Read file with line numbers | Scoped to the workspace directory captured at session start, plus paths the user attached with `@` on this turn. Relative `path` resolves there; `~` and absolute paths work. The ⚙ line and result header show the resolved path. Max 400 lines per call. |
+| `read_file` | Read file with line numbers; PDF/Office extract as text; images attach as vision parts when a VLM is loaded; audio transcribes via whisper CLI | Scoped to the workspace directory captured at session start, plus paths the user attached with `@` on this turn. Relative `path` resolves there; `~` and absolute paths work. The ⚙ line and result header show the resolved path. Max 400 lines per call. |
 | `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. Creates parent dirs. Result cites the resolved path. `@` attachments do not grant write access outside the workspace. |
 | `list_dir` | List directory entries | Scoped to the session workspace, plus directories the user attached with `@` this turn. Includes dotfiles. |
 | `search_files` | Regex search (ripgrep or grep fallback) | Scoped to the session workspace. Max 50 matches. |
 | `web_search` | `ddgs` metasearch (no key), then DuckDuckGo HTML/Lite, Instant Answer, Wikipedia | Optional `ddgs` dep. Content fenced as untrusted. All backends failing → ERROR (do not paraphrase-retry). |
-| `fetch_url` | HTTP(S) fetch with HTML→text + on-page links | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
+| `fetch_url` | HTTP(S) fetch: HTML→text + links; PDF/Office extract; images attach on VLMs | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
 | `remember` | Save a learning to project memory | Writes `~/.lmloop/projects/<slug>/learnings.jsonl`; tool result cites that path |
 | `log_decision` | Record a durable decision | Writes `~/.lmloop/projects/<slug>/decisions.jsonl`; tool result cites that path |
 | `recall_memory` | Keyword-search learnings + decisions | Read-only view. When `use_graph` is on, includes 1-hop graph neighbors. |

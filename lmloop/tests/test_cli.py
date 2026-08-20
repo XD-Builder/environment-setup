@@ -287,6 +287,44 @@ class AtRefTurnTests(unittest.TestCase):
             self.assertIn("[no file at @nope.py]", out.getvalue())
             self.assertNotIn("Referenced files", state.messages[-1]["content"])
 
+    def test_run_turn_attaches_png_when_vision(self):
+        from lmloop.repl import SessionState, _run_turn
+        from lmloop.ui import Console, fresh_stats
+        from tests.test_extract import PNG_1X1
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "shot.png").write_bytes(PNG_1X1)
+            log = root / "session.jsonl"
+            log.write_text("")
+            state = SessionState(
+                cfg={"vision": "true"},
+                model="qwen3.6-35b-a3b",
+                messages=[{"role": "system", "content": "s"}],
+                session_log=log,
+                stats=fresh_stats(),
+                console=Console(color=False),
+                workspace_root=root.resolve(),
+            )
+            captured = {}
+
+            def fake_act(cfg, model, messages, **kwargs):
+                captured["content"] = messages[-1]["content"]
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 patch("lmloop.repl.agent.model_has_vision", return_value=True), \
+                 redirect_stdout(io.StringIO()):
+                _run_turn(state, "read @shot.png", lambda _: False)
+
+            content = captured["content"]
+            self.assertIsInstance(content, list)
+            self.assertEqual(content[0]["type"], "text")
+            self.assertEqual(content[-1]["type"], "image_url")
+            logged = log.read_text()
+            self.assertNotIn("base64", logged)
+            self.assertIn("[image]", logged)
+
     def test_compact_expands_focus_at_refs(self):
         from lmloop.repl import SessionState, _cmd_compact
         from lmloop.ui import Console, fresh_stats

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import agent, loop as loop_mod, memory
+from . import agent, extract, loop as loop_mod, memory
 from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
@@ -121,6 +121,18 @@ def _echo_assistant(console: Console):
     return echo
 
 
+def _turn_user_content(state: SessionState, expansion: AtRefExpansion):
+    """Referenced-files text, plus image_url parts when the model is a VLM."""
+    extra_readable = [ref.resolved for ref in expansion.refs]
+    content = expansion.text
+    if agent.model_has_vision(state.model, state.cfg):
+        files = [ref.resolved for ref in expansion.refs if not ref.is_dir]
+        content = extract.image_user_content(
+            expansion.text, extract.media_from_paths(files),
+        )
+    return content, extra_readable
+
+
 def _echo_at_refs(state: SessionState, expansion: AtRefExpansion) -> None:
     """Tell the user which @paths resolved (or did not)."""
     for ref in expansion.refs:
@@ -133,11 +145,10 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
     """Run one user turn. Returns True if act() completed."""
     # Expand @path refs for every turn (freeform, /skill, /continue, …).
     expansion = collect_at_refs(user_text, cwd=state.workspace_root)
-    user_text = expansion.text
-    extra_readable = [ref.resolved for ref in expansion.refs]
+    user_content, extra_readable = _turn_user_content(state, expansion)
     _echo_at_refs(state, expansion)
-    memory.log_event(state.session_log, "user", user_text)
-    state.messages.append({"role": "user", "content": user_text})
+    memory.log_event(state.session_log, "user", extract.flatten_content(user_content))
+    state.messages.append({"role": "user", "content": user_content})
     try:
         agent.act(
             state.cfg, state.model, state.messages,
@@ -603,7 +614,9 @@ def _adopt_thread(state: SessionState, messages: list, *, log: "Path | None",
         for m in messages:
             if m.get("role") == "system":
                 continue
-            memory.log_event(state.session_log, m["role"], m.get("content") or "")
+            memory.log_event(
+                state.session_log, m["role"], extract.flatten_content(m.get("content")),
+            )
 
 
 def _cmd_restore(state: SessionState, arg: str) -> bool:

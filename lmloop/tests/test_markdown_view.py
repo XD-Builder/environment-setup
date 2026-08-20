@@ -19,6 +19,18 @@ class MarkdownViewTests(unittest.TestCase):
         self.assertIn("# Title", md)
         self.assertNotIn("secret", md)
 
+    def test_messages_to_markdown_flattens_images(self):
+        md = messages_to_markdown([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "see shot"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,SECRET"}},
+            ],
+        }])
+        self.assertIn("see shot", md)
+        self.assertIn("[image]", md)
+        self.assertNotIn("SECRET", md)
+
     def test_render_markdown_ansi_produces_output(self):
         out = render_markdown_ansi("# Hello\n\n**bold**", width=80)
         self.assertTrue(out.strip())

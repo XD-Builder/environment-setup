@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import memory, steer, tools
+from . import extract, memory, steer, tools
 from .commands import RESERVED_SKILL_NAMES
 from .config import STATE_ROOT
 from . import status as status_mod
@@ -86,30 +86,84 @@ def _model_matches(entry: dict, model: str) -> bool:
     return False
 
 
-def get_context_limit(model: str, cfg: dict) -> int:
-    """Return loaded context window size in tokens. 0 if unknown."""
-    manual = int(cfg.get("context_length") or 0)
-    if manual > 0:
-        return manual
-
-    base = _native_base(cfg["base_url"])
+def _native_model_entries(cfg: dict) -> list:
+    """LM Studio native model records, or empty if the API is unreachable."""
+    base_url = cfg.get("base_url") or ""
+    if not base_url:
+        return []
+    base = _native_base(base_url)
     for path in NATIVE_MODELS_PATHS:
         try:
             data = _get_json(base + path)
         except (OSError, json.JSONDecodeError):
             continue
         models = data.get("data") or data.get("models") or []
-        for entry in models:
-            if not _model_matches(entry, model):
-                continue
-            for inst in entry.get("loaded_instances") or []:
-                loaded = (inst.get("config") or {}).get("context_length")
-                if loaded:
-                    return int(loaded)
-            max_ctx = entry.get("max_context_length")
-            if max_ctx:
-                return int(max_ctx)
+        if models:
+            return models
+    return []
+
+
+def get_context_limit(model: str, cfg: dict) -> int:
+    """Return loaded context window size in tokens. 0 if unknown."""
+    manual = int(cfg.get("context_length") or 0)
+    if manual > 0:
+        return manual
+
+    for entry in _native_model_entries(cfg):
+        if not _model_matches(entry, model):
+            continue
+        for inst in entry.get("loaded_instances") or []:
+            loaded = (inst.get("config") or {}).get("context_length")
+            if loaded:
+                return int(loaded)
+        max_ctx = entry.get("max_context_length")
+        if max_ctx:
+            return int(max_ctx)
     return 0
+
+
+_VISION_CACHE: "dict[tuple, bool]" = {}
+
+
+def _entry_has_vision(entry: dict) -> bool:
+    """True when a native models API record looks like a VLM."""
+    kind = str(entry.get("type") or entry.get("model_type") or "").lower()
+    if kind in ("vlm", "vision"):
+        return True
+    if entry.get("vision") is True:
+        return True
+    caps = entry.get("capabilities")
+    if isinstance(caps, dict) and caps.get("vision"):
+        return True
+    if isinstance(caps, (list, tuple)):
+        if any(str(c).lower() in ("vision", "vlm") for c in caps):
+            return True
+    for inst in entry.get("loaded_instances") or []:
+        inst_cfg = inst.get("config") or {}
+        if inst_cfg.get("vision") is True:
+            return True
+        if str(inst_cfg.get("type") or "").lower() in ("vlm", "vision"):
+            return True
+    return False
+
+
+def model_has_vision(model: str, cfg: dict) -> bool:
+    """Whether to attach image_url parts. Config vision: auto|true|false."""
+    mode = str(cfg.get("vision") or "auto").strip().lower()
+    if mode == "true":
+        return True
+    if mode == "false":
+        return False
+    key = (cfg.get("base_url") or "", model or "")
+    if key in _VISION_CACHE:
+        return _VISION_CACHE[key]
+    found = False
+    for entry in _native_model_entries(cfg):
+        if _model_matches(entry, model):
+            found = _entry_has_vision(entry)
+            break
+    _VISION_CACHE[key] = found
+    return found
 
 
 def _run_lms(args: list, echo=print, timeout: int = 60) -> bool:
@@ -824,6 +878,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     continue
 
                 seen_fps.add(fp)
+                round_media = []
                 for call_idx, call in enumerate(tool_calls):
                     turn_tools += 1
                     fn = call.get("function", {})
@@ -832,7 +887,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                         name, args, workspace_root=workspace_root,
                     )
                     echo_tool(name, arg_preview, stats)
-                    result = tools.dispatch(impls, name, args)
+                    raw_result = tools.dispatch(impls, name, args)
+                    result, attachments = tools.unwrap_tool_result(raw_result)
                     if session_log:
                         memory.log_event(
                             session_log, "tool",
@@ -842,6 +898,15 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                         "role": "tool",
                         "tool_call_id": call.get("id") or f"call_{round_idx}_{call_idx}",
                         "content": result,
+                    })
+                    round_media.extend(attachments)
+                if round_media and model_has_vision(model, cfg):
+                    messages.append({
+                        "role": "user",
+                        "content": extract.image_user_content(
+                            "[lmloop] Image from tool result",
+                            round_media,
+                        ),
                     })
                 if round_idx + 1 >= max_gather:
                     echo_status(status_mod.msg_gather_budget())

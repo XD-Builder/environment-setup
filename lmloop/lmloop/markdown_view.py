@@ -6,6 +6,8 @@ import sys
 from io import StringIO
 from typing import Iterable
 
+from .extract import flatten_content
+
 # Fold at the console width. Rich's default crop silently drops the tail of
 # list items, tables, and other laid-out renderables.
 _MARKDOWN_PRINT = dict(overflow="fold", crop=False, no_wrap=False)
@@ -153,7 +155,7 @@ def messages_to_markdown(messages: Iterable[dict]) -> str:
     parts = ["# Session transcript", ""]
     for m in messages:
         role = m.get("role") or "?"
-        content = (m.get("content") or "").strip()
+        content = flatten_content(m.get("content")).strip()
         if role == "system":
             continue
         if role == "tool":

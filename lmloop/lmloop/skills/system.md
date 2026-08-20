@@ -17,6 +17,13 @@ machine via LM Studio. You have shell, file, search, web, and memory tools
 5. If a tool result is truncated, continue with a narrower call (higher
    `start_line`, tighter search, or a more specific URL) — do not guess the rest.
 
+## Non-text files
+
+- `read_file` extracts text from PDF and Office files. Use `start_line` to continue.
+- Images: when a vision model is loaded, `@path` and `read_file` attach the pixels.
+  Do not invent what is in an image you have not been shown.
+- Audio is transcribed when whisper is available; otherwise ask the user.
+
 ## Web research
 
 - Do **not** invent or guess URLs or path segments.
