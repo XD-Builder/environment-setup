@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import project_dir
+from .extract import flatten_content
 
 LEARNING_TYPES = ("pattern", "pitfall", "preference", "architecture", "tool", "operational")
 MIN_TERM_LEN = 3
@@ -308,7 +309,7 @@ def format_messages_transcript(messages, max_chars: int = 20000) -> str:
     lines = []
     for m in messages or []:
         role = m.get("role")
-        content = (m.get("content") or "").strip()
+        content = flatten_content(m.get("content")).strip()
         if not content or role == "system":
             continue
         if role == "tool":

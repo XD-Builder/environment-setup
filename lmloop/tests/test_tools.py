@@ -22,8 +22,10 @@ from lmloop.tools import (
     read_file,
     run_shell,
     tool_names,
+    unwrap_tool_result,
     web_search,
     write_file,
+    ToolResult,
 )
 
 
@@ -236,6 +238,33 @@ class ToolSafetyTests(unittest.TestCase):
             self.assertIn("line1", result)
             self.assertIn(str(Path(d).resolve() / "hello.txt"), result)
             self.assertNotIn("ERROR", result)
+
+    def test_read_file_png_is_not_mojibake(self):
+        from tests.test_extract import PNG_1X1
+        with tempfile.TemporaryDirectory() as d:
+            os.chdir(d)
+            Path("shot.png").write_bytes(PNG_1X1)
+            result = read_file("shot.png")
+            self.assertIsInstance(result, ToolResult)
+            self.assertNotIn("\x89", result.text)
+            self.assertIn("image/png", result.text)
+            self.assertTrue(result.attachments)
+            _, impls = build_tools({"confirm_shell": False}, workspace_root=Path(d))
+            dispatched = dispatch(impls, "read_file", '{"path": "shot.png"}')
+            self.assertIsInstance(dispatched, ToolResult)
+            text, atts = unwrap_tool_result(dispatched)
+            self.assertEqual(text, result.text)
+            self.assertEqual(len(atts), 1)
+
+    def test_read_file_docx_paginates(self):
+        from tests.test_extract import _docx_bytes
+        with tempfile.TemporaryDirectory() as d:
+            os.chdir(d)
+            Path("n.docx").write_bytes(_docx_bytes([f"para{i}" for i in range(1, 8)]))
+            result = read_file("n.docx", start_line=3, max_lines=2)
+            self.assertIn("para2", result)
+            self.assertIn("para3", result)
+            self.assertNotIn("para4", result)
 
     def test_format_tool_preview_resolves_relative_path(self):
         with tempfile.TemporaryDirectory() as d:
@@ -569,6 +598,30 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("https://www.example.gov/programs/preschool", out)
         self.assertIn("https://example.com/external", out)
         self.assertNotIn("#top", out)
+        self.assertIn("<<<untrusted>>>", out)
+
+    def test_fetch_url_png_attaches(self):
+        from tests.test_extract import PNG_1X1
+        resp = _FakeResp("x", url="https://example.com/a.png", content_type="image/png")
+        resp._body = PNG_1X1
+        with mock.patch("lmloop.tools.urllib.request.urlopen", return_value=resp):
+            out = fetch_url("https://example.com/a.png")
+        self.assertIsInstance(out, ToolResult)
+        self.assertIn("image/png", out.text)
+        self.assertIn("<<<untrusted>>>", out.text)
+        self.assertNotIn("\x89PNG", out.text)
+        self.assertEqual(len(out.attachments), 1)
+
+    def test_fetch_url_pdf_extracts(self):
+        resp = _FakeResp("x", url="https://example.com/a.pdf", content_type="application/pdf")
+        resp._body = b"%PDF-1.4\nfake"
+        proc = mock.Mock(returncode=0, stdout=b"Hello from PDF\n", stderr=b"")
+        with mock.patch("lmloop.tools.urllib.request.urlopen", return_value=resp), \
+             mock.patch("lmloop.extract.shutil.which", return_value="/usr/bin/pdftotext"), \
+             mock.patch("lmloop.extract.subprocess.run", return_value=proc):
+            out = fetch_url("https://example.com/a.pdf")
+        self.assertIsInstance(out, str)
+        self.assertIn("Hello from PDF", out)
         self.assertIn("<<<untrusted>>>", out)
 
 

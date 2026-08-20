@@ -134,7 +134,7 @@ REPL UX (prompt_toolkit + rich):
 - **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL.
 - **Prompt** shows `cwd · model ›` (decorative only) with a **bottom toolbar** for context fill / session tokens / turns.
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
-- **Type `@`** for file paths. Project-relative names complete from the git-aware index. Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. The model may `read_file` / `list_dir` those attached paths this turn even if they sit outside the workspace. Missing tokens print `[no file at @…]` and are skipped.
+- **Type `@`** for file paths. Project-relative names complete from the git-aware index. Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. The model may `read_file` / `list_dir` those attached paths this turn even if they sit outside the workspace. Missing tokens print `[no file at @…]` and are skipped. Image `@path`s are attached as native vision input when the loaded model is a VLM (`vision: auto` in config).
 - **Ctrl-C** dismisses an open `/` or `@` completion menu first; with no menu, once shows “Ctrl-C again to exit”, twice exits. Ctrl-D exits immediately.
 - **Post-turn footer** shows a context bar, token breakdown, rounds, and tools.
 - **Colors** for banners/tools when stdout is a TTY; disable with `NO_COLOR=1` or `lmloop config set color false`.
@@ -246,6 +246,7 @@ zsh completion for `config set` is generated from these keys.
 | `graph_max_steps` | `24` | Skill/until node entries per `graph` invocation before pause (`/continue` or `lmloop graph` with no name resumes). Mine and HITL gate do not count. |
 | `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
 | `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |
+| `vision` | `auto` | Attach images to chat when the loaded model is a VLM. `auto` uses LM Studio’s native models API (not the model name). `true` / `false` override. |
 
 ## Troubleshooting
 
@@ -256,7 +257,7 @@ zsh completion for `config set` is generated from these keys.
 | Zsh completion missing | Ensure `lmloop` is on `PATH`, then re-source `~/.zshrc` (or run `lmloop completion zsh`) |
 | `lmloop --skill …` fails | `--skill` was replaced by the subcommand: `lmloop skill <name> [task]` |
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
-| Tools can't read `/etc/...` | File tools are scoped to the workspace directory captured at session start |
+| Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
 | "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes. |
 | Same "Let me write it up" line stacking while a tool runs | Live preview used to stay open while tool arguments streamed (minutes for `write_file`). lmloop now closes the live view when tools start and shows the spinner until the tool line. |
@@ -266,6 +267,9 @@ zsh completion for `config set` is generated from these keys.
 File tools (`read_file`, `write_file`, `list_dir`, `search_files`) are constrained
 to the workspace directory captured at session start. Relative paths are resolved
 against that directory (not `$HOME`); the ⚙ tool line shows the resolved path.
+Paths the user `@`-attached this turn are readable even outside the workspace;
+writes stay workspace-scoped. Images from `@` / `read_file` attach as vision
+input when `vision` is `auto` (LM Studio VLM flag) or `true`.
 Shell commands without pipes
 run via `exec` (no shell) with that directory as `cwd`. Destructive patterns
 require explicit user confirmation; pipes/redirection do not unless you set

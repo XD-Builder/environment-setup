@@ -1958,5 +1958,75 @@ class MalformedToolDeltaTests(unittest.TestCase):
         self.assertEqual(msgs[-1]["content"], "ok")
 
 
+class VisionCapabilityTests(unittest.TestCase):
+    def tearDown(self):
+        agent._VISION_CACHE.clear()
+
+    def test_config_true_false(self):
+        self.assertTrue(agent.model_has_vision("m", {"vision": "true"}))
+        self.assertFalse(agent.model_has_vision("m", {"vision": "false"}))
+
+    def test_auto_uses_native_type_not_name(self):
+        entries = [{"id": "qwen3.6-35b-a3b", "type": "vlm"}]
+        cfg = {"vision": "auto", "base_url": "http://127.0.0.1:1234/v1"}
+        with mock.patch("lmloop.agent._native_model_entries", return_value=entries):
+            agent._VISION_CACHE.clear()
+            self.assertTrue(agent.model_has_vision("qwen3.6-35b-a3b", cfg))
+            agent._VISION_CACHE.clear()
+            self.assertFalse(agent.model_has_vision("text-only", cfg))
+
+
+class ActVisionInjectTests(unittest.TestCase):
+    def _sse_text_and_tool(self, content, name, args, call_id="c1"):
+        return _sse(
+            {"choices": [{"delta": {"content": content}}]},
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0, "id": call_id, "type": "function",
+                "function": {"name": name, "arguments": args},
+            }]}}]},
+            None,
+        )
+
+    def test_act_appends_image_user_message(self):
+        from lmloop.extract import extract_bytes
+        from lmloop.tools import ToolResult
+        from tests.test_extract import PNG_1X1
+
+        media = extract_bytes(PNG_1X1, name="a.png", label="a.png").media
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False, "vision": "true",
+        }
+        bodies = [
+            FakeResp(self._sse_text_and_tool(
+                "Reading shot.", "read_file", '{"path":"a.png"}', "c1",
+            )),
+            FakeResp(_sse(
+                {"choices": [{"delta": {"content": "I see the form."}}]},
+                None,
+            )),
+        ]
+        messages = [{"role": "user", "content": "look"}]
+        with mock.patch("urllib.request.urlopen", side_effect=bodies), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
+             mock.patch.object(agent.tools, "dispatch") as disp, \
+             mock.patch.object(agent, "model_has_vision", return_value=True):
+            disp.return_value = ToolResult("caption", [media])
+            agent.act(
+                cfg, "m", messages,
+                echo=lambda *a, **k: None, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        image_msgs = [
+            m for m in messages
+            if m.get("role") == "user" and isinstance(m.get("content"), list)
+        ]
+        self.assertEqual(len(image_msgs), 1)
+        self.assertEqual(image_msgs[0]["content"][-1]["type"], "image_url")
+        self.assertEqual(messages[-1]["content"], "I see the form.")
+
+
 if __name__ == "__main__":
     unittest.main()

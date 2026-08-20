@@ -99,6 +99,18 @@ class UiTests(unittest.TestCase):
         ])
         self.assertGreaterEqual(n, 1)
 
+    def test_estimate_skips_image_base64(self):
+        from lmloop.ui import IMAGE_TOKEN_ESTIMATE, estimate_context_tokens
+        n = estimate_context_tokens([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "ab"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 10000}},
+            ],
+        }])
+        self.assertGreaterEqual(n, IMAGE_TOKEN_ESTIMATE)
+        self.assertLess(n, IMAGE_TOKEN_ESTIMATE + 500)
+
 
 if __name__ == "__main__":
     unittest.main()

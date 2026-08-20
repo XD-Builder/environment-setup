@@ -97,6 +97,7 @@ find yourself updating two lists, you have already added debt.
 | argparse routing, non-REPL subcommands | `cli.py` |
 | Paths, `DEFAULTS`, project slug | `config.py` |
 | `@path` completion + ref expansion | `files_index.py` |
+| PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers | `repl.py` |
 | prompt_toolkit session, completers, key bindings | `prompt.py` |
 | ANSI chrome, status bar, `drain_tty_input` | `ui.py` |
@@ -117,6 +118,7 @@ belongs in those modules, not as more private helpers in `agent.py`.
 - `loop.py` may import `agent.act`, `memory`, `status`, and `tools.run_shell` for the check command.
 - `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`.
 - `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
+- `extract.py` is a leaf: stdlib + optional CLIs (`pdftotext`, `whisper`). It must not import `agent`, `tools`, `loop`, or `graph`. `tools.py`, `agent.py`, `repl.py`, `memory.py`, and `markdown_view.py` may import it.
 - `agent.py` and `tools.py` may import `steer`.
 - `loop.py` must not import `graph`.
 - `agent.py` / `stream.py` / `display.py` must not import `loop` or `graph`.

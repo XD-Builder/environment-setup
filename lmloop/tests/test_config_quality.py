@@ -53,6 +53,12 @@ class ConfigQualityTests(unittest.TestCase):
         self.assertNotIn("unknown", out)
         self.assertNotIn("timeout_s", out)
 
+    def test_vision_coerces(self):
+        self.assertEqual(coerce_config_value("vision", "auto"), "auto")
+        self.assertEqual(coerce_config_value("vision", True), "true")
+        self.assertEqual(coerce_config_value("vision", "false"), "false")
+        self.assertIsNone(coerce_config_value("vision", "maybe"))
+
 
 class MemoryResolveTests(unittest.TestCase):
     def test_ambiguous_stem_returns_none(self):

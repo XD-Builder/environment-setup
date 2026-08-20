@@ -54,6 +54,7 @@ DEFAULTS = {
     "graph_max_steps": 24,  # node entries per graph invocation before pause
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings
     "use_graph": False,  # opt-in knowledge-graph memory (JSONL nodes/edges)
+    "vision": "auto",  # auto = LM Studio VLM flag; true/false override
 }
 
 _CONFIG_WARNED = False
@@ -68,6 +69,18 @@ def coerce_config_value(key: str, value):
     back to DEFAULTS). Unknown keys return None.
     """
     if key not in DEFAULTS:
+        return None
+    if key == "vision":
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, str):
+            low = value.strip().lower()
+            if low == "auto":
+                return "auto"
+            if low in _BOOL_TRUE:
+                return "true"
+            if low in _BOOL_FALSE:
+                return "false"
         return None
     default = DEFAULTS[key]
     if isinstance(default, bool):

@@ -142,6 +142,19 @@ class SessionRestoreTests(unittest.TestCase):
         self.assertIn("[tool] run_shell(ls)", text)
         self.assertLess(len([ln for ln in text.splitlines() if ln.startswith("[tool]")][0]), 520)
 
+    def test_format_messages_transcript_flattens_images(self):
+        text = format_messages_transcript([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "see shot"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        }])
+        self.assertIn("see shot", text)
+        self.assertIn("[image]", text)
+        self.assertNotIn("base64", text)
+        self.assertNotIn("AAAA", text)
+
     def test_new_session_log_avoids_same_second_collision(self):
         from unittest.mock import patch
 

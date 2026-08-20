@@ -70,16 +70,32 @@ def format_tokens(n: int) -> str:
 
 
 CHARS_PER_TOKEN_ESTIMATE = 4
+IMAGE_TOKEN_ESTIMATE = 1600
+
+
+def _content_token_estimate(content) -> int:
+    if isinstance(content, list):
+        tokens = 0
+        for part in content:
+            if not isinstance(part, dict):
+                tokens += len(str(part)) // CHARS_PER_TOKEN_ESTIMATE
+                continue
+            if part.get("type") == "image_url":
+                tokens += IMAGE_TOKEN_ESTIMATE
+            else:
+                tokens += len(str(part.get("text") or "")) // CHARS_PER_TOKEN_ESTIMATE
+        return tokens
+    return len(str(content or "")) // CHARS_PER_TOKEN_ESTIMATE
 
 
 def estimate_context_tokens(messages: list) -> int:
-    """Rough token estimate (chars / CHARS_PER_TOKEN_ESTIMATE) when usage missing."""
-    chars = 0
+    """Rough token estimate (chars / 4, plus a fixed cost per attached image)."""
+    tokens = 0
     for m in messages:
-        chars += len(str(m.get("content") or ""))
+        tokens += _content_token_estimate(m.get("content"))
         if m.get("tool_calls"):
-            chars += len(json.dumps(m["tool_calls"]))
-    return max(0, chars // CHARS_PER_TOKEN_ESTIMATE)
+            tokens += len(json.dumps(m["tool_calls"])) // CHARS_PER_TOKEN_ESTIMATE
+    return max(0, tokens)
 
 
 def strip_ansi(text: str) -> str:
