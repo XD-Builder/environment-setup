@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import memory
+from .files_index import resolve_user_path
 from .steer import format_current_time
 
 # --- Limits (module defaults; some overridable via config in build_tools) ---
@@ -219,9 +220,7 @@ def _in_workspace(path: Path, root: Path) -> bool:
 
 
 def _resolve_path(path: str, root: "Path | None" = None) -> Path:
-    root = (root or Path.cwd()).resolve()
-    p = Path(path).expanduser()
-    return p.resolve() if p.is_absolute() else (root / p).resolve()
+    return resolve_user_path(path, root)
 
 
 _TOOL_PREVIEW_LIMIT = 160
@@ -253,13 +252,31 @@ def _workspace_root() -> Path:
     return Path.cwd().resolve()
 
 
-def _check_workspace(path: str, root: "Path | None" = None) -> "tuple[Path | None, str | None]":
+def _is_extra_readable(path: Path, extra_readable: "list[Path] | None") -> bool:
+    """True when path is a user-@ attached file or under an attached directory."""
+    for extra in extra_readable or ():
+        extra_p = Path(extra).resolve()
+        if path == extra_p:
+            return True
+        try:
+            if extra_p.is_dir() and _in_workspace(path, extra_p):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _check_workspace(
+    path: str,
+    root: "Path | None" = None,
+    extra_readable: "list[Path] | None" = None,
+) -> "tuple[Path | None, str | None]":
     """Return (resolved_path, error_message). error_message is set when outside workspace."""
     root = root or _workspace_root()
     p = _resolve_path(path, root)
-    if not _in_workspace(p, root):
-        return None, f"ERROR: {path} is outside workspace {root}"
-    return p, None
+    if _in_workspace(p, root) or _is_extra_readable(p, extra_readable):
+        return p, None
+    return None, f"ERROR: {path} is outside workspace {root}"
 
 
 # ------------------------------------------------------------------ impls
@@ -319,8 +336,9 @@ def run_shell(
 
 
 def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES,
-              workspace_root: "Path | None" = None) -> str:
-    p, err = _check_workspace(path, workspace_root)
+              workspace_root: "Path | None" = None,
+              extra_readable: "list[Path] | None" = None) -> str:
+    p, err = _check_workspace(path, workspace_root, extra_readable=extra_readable)
     if err:
         return err
     if not p.exists():
@@ -352,8 +370,9 @@ def write_file(path: str, content: str, workspace_root: "Path | None" = None) ->
     return f"Wrote {len(content)} chars to {p}"
 
 
-def list_dir(path: str = ".", workspace_root: "Path | None" = None) -> str:
-    p, err = _check_workspace(path or ".", workspace_root)
+def list_dir(path: str = ".", workspace_root: "Path | None" = None,
+             extra_readable: "list[Path] | None" = None) -> str:
+    p, err = _check_workspace(path or ".", workspace_root, extra_readable=extra_readable)
     if err:
         return err
     if not p.is_dir():
@@ -947,7 +966,8 @@ def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
 
 def build_tools(cfg: dict, confirm_gate=None,
                 workspace_root: "Path | None" = None,
-                readonly: bool = False) -> "tuple[list[dict], dict]":
+                readonly: bool = False,
+                extra_readable: "list[Path] | None" = None) -> "tuple[list[dict], dict]":
     """Returns (openai tool specs, name -> callable) derived from ToolDef list.
 
     ``readonly=True`` omits write_file / remember / log_decision /
@@ -965,6 +985,7 @@ def build_tools(cfg: dict, confirm_gate=None,
     confirm_destructive, confirm_shell_syntax = shell_confirm_flags(cfg)
     gate = confirm_gate  # may be None when confirms disabled
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
+    extra: "list[Path]" = [Path(p).resolve() for p in (extra_readable or [])]
 
     def _remember(insight: str, type: str = "pattern", key: str = "", confidence: int = 7) -> str:
         row = memory.add_learning(
@@ -1006,12 +1027,15 @@ def build_tools(cfg: dict, confirm_gate=None,
         ),
         ToolDef(
             "read_file",
-            "Read a file under the session workspace (cwd at start) with line numbers. "
-            "path is relative to that workspace unless it is absolute.",
+            "Read a file with line numbers. path is relative to the session "
+            "workspace unless it is absolute or a ~ path. User-@ attached paths "
+            "listed in this turn's Referenced files block are readable even "
+            "outside the workspace.",
             {"path": s, "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}},
             ["path"],
             lambda path, start_line=1, max_lines=MAX_READ_LINES: read_file(
                 path, start_line, max_lines, workspace_root=root,
+                extra_readable=extra,
             ),
             int_fields=("start_line", "max_lines"),
         ),
@@ -1025,10 +1049,11 @@ def build_tools(cfg: dict, confirm_gate=None,
         ),
         ToolDef(
             "list_dir",
-            "List entries in a directory under the working directory "
-            "(dirs end with /; includes dotfiles).",
+            "List entries in a directory (dirs end with /; includes dotfiles). "
+            "Scoped to the session workspace, plus directories the user attached "
+            "with @ this turn.",
             {"path": s}, [],
-            lambda path=".": list_dir(path, workspace_root=root),
+            lambda path=".": list_dir(path, workspace_root=root, extra_readable=extra),
         ),
         ToolDef(
             "search_files",

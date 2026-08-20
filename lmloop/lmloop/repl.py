@@ -10,7 +10,7 @@ from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
-from .files_index import expand_at_refs
+from .files_index import AtRefExpansion, collect_at_refs
 from .status import MSG_RESUME, msg_graph_continue, msg_until_continue, status as status_line
 from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate
 
@@ -121,10 +121,21 @@ def _echo_assistant(console: Console):
     return echo
 
 
+def _echo_at_refs(state: SessionState, expansion: AtRefExpansion) -> None:
+    """Tell the user which @paths resolved (or did not)."""
+    for ref in expansion.refs:
+        state.console.hint(f"[referenced {ref.token} → {ref.resolved}]")
+    for token in expansion.missing:
+        state.console.hint(f"[no file at @{token}]")
+
+
 def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
     """Run one user turn. Returns True if act() completed."""
     # Expand @path refs for every turn (freeform, /skill, /continue, …).
-    user_text = expand_at_refs(user_text)
+    expansion = collect_at_refs(user_text, cwd=state.workspace_root)
+    user_text = expansion.text
+    extra_readable = [ref.resolved for ref in expansion.refs]
+    _echo_at_refs(state, expansion)
     memory.log_event(state.session_log, "user", user_text)
     state.messages.append({"role": "user", "content": user_text})
     try:
@@ -141,6 +152,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
             context_limit=state.context_limit,
             context_reserve=state.context_reserve,
             workspace_root=state.workspace_root,
+            extra_readable=extra_readable,
         )
         footer = state.console.stats_footer(
             state.stats, state.context_limit, state.messages, state.context_reserve,
@@ -419,11 +431,17 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
     except FileNotFoundError as e:
         state.console.error(str(e))
         return True
+    extra_readable = []
     if arg:
-        prompt += "\n\nFocus: " + arg
-    prompt = expand_at_refs(prompt)
+        expansion = collect_at_refs(arg, cwd=state.workspace_root)
+        prompt += "\n\nFocus: " + expansion.text
+        extra_readable = [ref.resolved for ref in expansion.refs]
+        _echo_at_refs(state, expansion)
     state.console.hint("[compact · current conversation unchanged until you replace it]")
-    result = _isolated_act(state, prompt, confirm_gate, log_label="/compact")
+    result = _isolated_act(
+        state, prompt, confirm_gate, log_label="/compact",
+        extra_readable=extra_readable,
+    )
     if result is None:
         return True
     summary = loop_mod.last_assistant(result)
@@ -454,7 +472,7 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
 
 
 def _isolated_act(state: SessionState, user_text: str, confirm_gate,
-                  *, log_label: str) -> "list | None":
+                  *, log_label: str, extra_readable=None) -> "list | None":
     """Run act() on a fresh thread. Returns messages, or None on failure."""
     try:
         result = loop_mod.isolated_act(
@@ -469,6 +487,7 @@ def _isolated_act(state: SessionState, user_text: str, confirm_gate,
             context_reserve=state.context_reserve,
             workspace_root=state.workspace_root,
             log_label=log_label,
+            extra_readable=extra_readable,
         )
     except KeyboardInterrupt:
         return None

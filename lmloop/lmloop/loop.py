@@ -147,6 +147,7 @@ def isolated_act(
     context_reserve: int = 2048, workspace_root: "Path | None" = None,
     log_label: str = "",
     readonly: bool = False,
+    extra_readable: "list | None" = None,
 ) -> "tuple[list, Path] | None":
     """Run act() on a fresh thread. Returns (messages, session_log), or None.
 
@@ -173,6 +174,7 @@ def isolated_act(
             context_reserve=context_reserve,
             workspace_root=workspace_root,
             readonly=readonly,
+            extra_readable=extra_readable,
         )
     except agent.ServerError as e:
         memory.log_event(session_log, "system", f"error: {e}")

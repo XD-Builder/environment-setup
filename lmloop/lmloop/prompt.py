@@ -1,5 +1,6 @@
 """Interactive prompt built on prompt_toolkit (REPL input only)."""
 
+from pathlib import Path
 from typing import Callable, Iterator, List, Tuple
 
 from prompt_toolkit import PromptSession
@@ -16,7 +17,12 @@ from prompt_toolkit.styles import Style
 
 from . import agent
 from .config import STATE_ROOT
-from .files_index import list_project_paths
+from .files_index import (
+    is_fs_completion_prefix,
+    list_fs_paths,
+    list_project_paths,
+    resolve_user_path,
+)
 from .ui import Console, drain_tty_input, format_input_prompt, short_model_name, short_path, strip_ansi, terminal_size
 
 
@@ -88,8 +94,13 @@ def _filter_names(names: List[str], prefix: str) -> List[str]:
 class LmloopCompleter(Completer):
     """Complete /slash commands (with blurbs) and @filepath tokens."""
 
-    def __init__(self, commands_provider: Callable[[], list]):
+    def __init__(
+        self,
+        commands_provider: Callable[[], list],
+        cwd_provider: "Callable[[], Path | None] | None" = None,
+    ):
         self._commands_provider = commands_provider
+        self._cwd_provider = cwd_provider or (lambda: Path.cwd())
 
     def get_completions(self, document: Document, complete_event) -> Iterator[Completion]:
         text_before = document.text_before_cursor
@@ -126,16 +137,27 @@ class LmloopCompleter(Completer):
 
         if word.startswith("@"):
             prefix = word[1:]
-            paths = _filter_names(list_project_paths(), prefix)
+            cwd = self._cwd_provider()
+            if cwd is not None:
+                cwd = Path(cwd)
+            if is_fs_completion_prefix(prefix):
+                paths = list_fs_paths(prefix, cwd)
+            else:
+                paths = _filter_names(list_project_paths(cwd), prefix)
             for path in paths:
                 is_dir = path.endswith("/")
-                kind = "dir" if is_dir else "file"
                 style = "class:at-dir" if is_dir else "class:at-file"
+                meta = "dir" if is_dir else "file"
+                if is_fs_completion_prefix(prefix):
+                    try:
+                        meta = str(resolve_user_path(path, cwd))
+                    except (OSError, RuntimeError, ValueError):
+                        pass
                 yield Completion(
                     "@" + path,
                     start_position=-len(word),
                     display="@" + path,
-                    display_meta=kind,
+                    display_meta=meta,
                     style=style,
                 )
 
@@ -279,7 +301,10 @@ def build_prompt_session(
 
     session = PromptSession(
         message=message,
-        completer=LmloopCompleter(commands_provider),
+        completer=LmloopCompleter(
+            commands_provider,
+            cwd_provider=lambda: getattr(state_getter(), "workspace_root", None),
+        ),
         # Must be True for / and @ menus to open as you type (no Tab).
         # Incompatible with enable_history_search — keep that False.
         complete_while_typing=True,

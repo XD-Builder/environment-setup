@@ -231,7 +231,7 @@ the behavior on the type.
   `SlashCommand`, `SessionState`). Frozen when the row is a constant
   (`CommandMeta`).
 - **Plain functions** for stateless transforms (`format_tokens`,
-  `context_block`, `expand_at_refs`, `load_steering`, `clock_block`). A class
+  `context_block`, `expand_at_refs`, `collect_at_refs`, `load_steering`, `clock_block`). A class
   with one method and no state should be a function.
 - **Factories** only at boundaries (`build_tools`, `make_console`,
   `make_confirm_gate`, `_open_live_display`). They assemble; they do not
@@ -308,7 +308,7 @@ Regex is a last resort. It is the usual way this codebase would rot.
 - charset validators (`SKILL_NAME_RE`)
 - ANSI CSI strip (`strip_ansi`)
 - slug / key sanitizing (`re.sub` of illegal filename chars)
-- simple `@path` tokens in user text (`AT_REF_RE`)
+- simple `@path` tokens in user text (`AT_REF_RE`: bare, `"quoted"`, `'quoted'`)
 
 Those patterns live as **named compiled constants** next to the function that
 owns them, with a test for the boundary cases. Do not inline a new `re.search`
