@@ -12,7 +12,8 @@ _CONTROL_META = frozenset({META_NUDGE, META_ANSWER})
 NUDGE_CONTINUE_TEXT = (
     f"{STATUS_PREFIX} You described a next step but did not call any tools and did not "
     "finish the user's request. Continue now: either call the tools you need, "
-    "or give the final answer."
+    "or give the final answer. Do not restart or repeat what you already wrote; "
+    "continue from the last line."
 )
 
 ANSWER_TEXT = (

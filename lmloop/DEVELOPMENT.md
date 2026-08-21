@@ -135,15 +135,18 @@ belongs in those modules, not as more private helpers in `agent.py`.
 - `echo_tool` is `(name, preview, stats)`. `on_thinking(text)` stores prior-turn
   thinking for Ctrl+O — no unused `kind` argument.
 - Thinking-repeat has two layers on purpose: `stream.py` stops ingesting a loop
-  (`_looping_text`: char-window, identical lines, paraphrases, and multi-line
-  plan blocks); `_ThinkingLive` skips painting near-duplicate lines that still
-  arrived. Share `_think_line_similar` for thinking lines; do not copy that
-  predicate. After halt, `_read_sse` drains a short window for a late
-  tool/answer, then closes — there is no `max_tokens`, so a thinking loop can
-  otherwise fill the context window. A halted stream with no `tool_calls` is
-  unfinished: `_halted` is set, reasoning is not promoted to content, and
-  `act()` nudges gather to continue (so "let me write the file" cannot end the
-  turn). Do not add similarity thresholds for assistant prose.
+  (`_looping_text`: char-window, identical lines, and multi-line plan blocks on
+  content and reasoning; paraphrase/`_think_line_similar` on reasoning only —
+  similar table rows in an answer are not a retry loop); `_ThinkingLive` skips
+  painting near-duplicate lines that still arrived. Share `_think_line_similar`
+  for thinking lines; do not copy that predicate. After halt, `_read_sse`
+  drains a short window for a late tool/answer, then closes — there is no
+  `max_tokens`, so a thinking loop can otherwise fill the context window. A
+  halted stream with no `tool_calls` is unfinished: `_halted` is set, reasoning
+  is not promoted to content. `act()` nudges gather only when content is empty
+  or still narrates a next step (so "let me write the file" cannot end the
+  turn). A halted long draft is kept; do not ask the model to regenerate it.
+  Do not add similarity thresholds for assistant prose.
 - Live markdown must not sit on an unchanged preamble while tool arguments
   stream. Close the printer when `tool_calls` start; refresh Live only on
   `feed` (`auto_refresh` off). Do not halt-and-close the SSE body on a short

@@ -259,7 +259,8 @@ zsh completion for `config set` is generated from these keys.
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
 | Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
-| "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes. |
+| "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes, unless a long draft is already on screen (`model stopped without finishing`). |
+| Same report prints twice with `thinking loop — continuing…` | Similar table rows used to look like a thinking loop, then gather asked the model to start over. Content now halts on exact repeats only; a halted draft is kept unless the last line still says "let me…". |
 | Same "Let me write it up" line stacking while a tool runs | Live preview used to stay open while tool arguments streamed (minutes for `write_file`). lmloop now closes the live view when tools start and shows the spinner until the tool line. |
 
 ## Safety
