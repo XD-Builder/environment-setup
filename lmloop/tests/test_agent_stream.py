@@ -22,14 +22,14 @@ def _sse(*chunks) -> bytes:
     return b"".join(parts)
 
 
-_POOREST_COUNTIES_TABLE = (
-    "Top 10 Poorest Counties (2023 Census ACS, Wikipedia)\n"
-    " Rank  County            State         Median Household Income\n"
-    " 1     Claiborne County  Mississippi   $28,579\n"
-    " 2     Holmes County     Mississippi   $30,542\n"
-    " 3     Humphreys County  Mississippi   $31,538\n"
-    " 4     Buffalo County    South Dakota  $32,803 (Pine Ridge Reservation)\n"
-    " 5     Leflore County    Mississippi   $33,945\n"
+_SIMILAR_SCORE_TABLE = (
+    "Top 10 results by score\n"
+    " Rank  Item              Group         Score\n"
+    " 1     Helios result     Group North   28,579\n"
+    " 2     Selene result     Group North   30,542\n"
+    " 3     Atlas result      Group North   31,538\n"
+    " 4     Vega result       Group South   32,803 (holdout set)\n"
+    " 5     Orion result      Group North   33,945\n"
 )
 
 
@@ -634,14 +634,7 @@ class ContinueNudgeTests(unittest.TestCase):
             "temperature": 0.7, "timeout_s": 5, "stream": True,
             "confirm_shell": False, "max_continue_nudges": 2,
         }
-        report = (
-            "PART 2: TOP 10 POOREST COUNTIES\n"
-            "1     Claiborne County  Mississippi   $28,579\n"
-            "2     Holmes County     Mississippi   $30,542\n"
-            "3     Humphreys County  Mississippi   $31,538\n"
-            "4     Buffalo County    South Dakota  $32,803\n"
-            "5     Leflore County    Mississippi   $33,945\n"
-        )
+        report = "PART 2: RESULTS\n" + _SIMILAR_SCORE_TABLE
         messages = [{"role": "user", "content": "write the report"}]
         echoed = []
         calls = {"n": 0}
@@ -675,8 +668,8 @@ class ContinueNudgeTests(unittest.TestCase):
             "Let me write the file now.", nudges=0, max_nudges=2,
         ))
         draft = (
-            "1     Claiborne County  Mississippi   $28,579\n"
-            "5     Leflore County    Mississippi   $33,945\n"
+            "1     Helios result     Group North   28,579\n"
+            "5     Orion result      Group North   33,945\n"
         )
         self.assertFalse(agent._should_nudge_halt(draft, nudges=0, max_nudges=2))
         self.assertFalse(agent._should_nudge_halt("", nudges=2, max_nudges=2))
@@ -831,8 +824,8 @@ class IngestTextDeltaTests(unittest.TestCase):
         self.assertFalse(stream_mod._dropped_piece_is_loop(block, "1. Reuters Business\n"))
 
     def test_similar_table_rows_are_not_a_content_loop(self):
-        """Paraphrase halt is for thinking. County-table rows must not cut a report."""
-        table = _POOREST_COUNTIES_TABLE
+        """Paraphrase halt is for thinking. Similar table rows must not cut a report."""
+        table = _SIMILAR_SCORE_TABLE
         self.assertTrue(stream_mod._repeated_near_trailing_lines(table))
         self.assertTrue(stream_mod._looping_text(table, paraphrased=True))
         self.assertFalse(stream_mod._looping_text(table))
@@ -1106,10 +1099,10 @@ class ChatStreamTests(unittest.TestCase):
         self.assertNotIn("SHOULD_NOT_APPEAR", msg["content"])
 
     def test_content_similar_table_rows_do_not_halt(self):
-        """A unique report table must keep streaming past similar county rows."""
-        tail = "Fairfax County median household income is $127,866.\n"
+        """A unique report table must keep streaming past similar scored rows."""
+        tail = "Helios also leads on latency in the follow-up run.\n"
         body = _sse(
-            {"choices": [{"delta": {"content": _POOREST_COUNTIES_TABLE}}]},
+            {"choices": [{"delta": {"content": _SIMILAR_SCORE_TABLE}}]},
             {"choices": [{"delta": {"content": tail}}]},
             None,
         )
