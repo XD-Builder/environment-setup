@@ -1,7 +1,10 @@
 """SSE assembly: cumulative snapshots, overlap, and repeat-halt.
 
-Display code imports the think-line helpers so live thinking and the stream
-halt share one similarity predicate. This module must not import agent or display.
+Content halt is exact repeats (char-window, identical lines, identical
+blocks). Reasoning halt also matches paraphrased plan lines via
+``_think_line_similar``. Display code imports that helper so live thinking
+and the stream halt share one predicate. This module must not import agent
+or display.
 """
 
 import json
@@ -260,17 +263,25 @@ def _repeated_trailing_block(
     return False
 
 
-def _looping_text(text: str) -> bool:
-    """True when assembled stream text is stuck repeating."""
-    return (
+def _looping_text(text: str, *, paraphrased: bool = False) -> bool:
+    """True when assembled stream text is stuck repeating.
+
+    Exact detectors (char-window, identical lines, identical blocks) apply to
+    both content and reasoning. Paraphrase matching is thinking-only: similar
+    table rows in an answer are not a retry loop.
+    """
+    if (
         _tail_repeats(text)
         or _repeated_trailing_lines(text)
-        or _repeated_near_trailing_lines(text)
         or _repeated_trailing_block(text)
-    )
+    ):
+        return True
+    return paraphrased and _repeated_near_trailing_lines(text)
 
 
-def _dropped_piece_is_loop(assembled: str, piece: str) -> bool:
+def _dropped_piece_is_loop(
+    assembled: str, piece: str, *, paraphrased: bool = False,
+) -> bool:
     """True when ingest dropped ``piece`` as a snapshot, but it is a repeated block.
 
     Cumulative servers re-send the text so far (or its tail). Incremental
@@ -281,7 +292,7 @@ def _dropped_piece_is_loop(assembled: str, piece: str) -> bool:
         return False
     if piece != assembled and not assembled.endswith(piece):
         return False
-    return _looping_text(assembled + piece)
+    return _looping_text(assembled + piece, paraphrased=paraphrased)
 
 
 def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
@@ -351,9 +362,11 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
                 if incr_r:
                     if on_reasoning:
                         on_reasoning(incr_r)
-                    if _looping_text(assembled_r):
+                    if _looping_text(assembled_r, paraphrased=True):
                         reasoning_halted = True
-                elif _dropped_piece_is_loop(assembled_r, reasoning):
+                elif _dropped_piece_is_loop(
+                    assembled_r, reasoning, paraphrased=True,
+                ):
                     reasoning_halted = True
         tc_deltas = delta.get("tool_calls")
         if tc_deltas:

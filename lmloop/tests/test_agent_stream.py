@@ -22,6 +22,17 @@ def _sse(*chunks) -> bytes:
     return b"".join(parts)
 
 
+_SIMILAR_SCORE_TABLE = (
+    "Top 10 results by score\n"
+    " Rank  Item              Group         Score\n"
+    " 1     Helios result     Group North   28,579\n"
+    " 2     Selene result     Group North   30,542\n"
+    " 3     Atlas result      Group North   31,538\n"
+    " 4     Vega result       Group South   32,803 (holdout set)\n"
+    " 5     Orion result      Group North   33,945\n"
+)
+
+
 class FakeResp:
     def __init__(self, body: bytes):
         self._buf = io.BytesIO(body)
@@ -616,6 +627,53 @@ class ContinueNudgeTests(unittest.TestCase):
         self.assertTrue(any("thinking loop" in str(x) for x in echoed))
         self.assertEqual(messages[-1].get("content"), "File written.")
 
+    def test_act_halted_partial_report_is_kept(self):
+        """A halted long answer is the draft — do not ask the model to rewrite it."""
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False, "max_continue_nudges": 2,
+        }
+        report = "PART 2: RESULTS\n" + _SIMILAR_SCORE_TABLE
+        messages = [{"role": "user", "content": "write the report"}]
+        echoed = []
+        calls = {"n": 0}
+
+        def fake_chat(*_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return (
+                    {"role": "assistant", "content": report, "_halted": True},
+                    {},
+                )
+            return ({"role": "assistant", "content": "RESTARTED REPORT"}, {})
+
+        with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
+            agent.act(
+                cfg, "m", messages,
+                echo=echoed.append, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(messages[-1].get("content"), report.strip())
+        self.assertFalse(any(m.get("content") == NUDGE_CONTINUE_TEXT for m in messages))
+        self.assertTrue(any("stopped without finishing" in str(x) for x in echoed))
+        self.assertFalse(any("thinking loop" in str(x) for x in echoed))
+
+    def test_should_nudge_halt_empty_vs_draft(self):
+        self.assertTrue(agent._should_nudge_halt("", nudges=0, max_nudges=2))
+        self.assertTrue(agent._should_nudge_halt(
+            "Let me write the file now.", nudges=0, max_nudges=2,
+        ))
+        draft = (
+            "1     Helios result     Group North   28,579\n"
+            "5     Orion result      Group North   33,945\n"
+        )
+        self.assertFalse(agent._should_nudge_halt(draft, nudges=0, max_nudges=2))
+        self.assertFalse(agent._should_nudge_halt("", nudges=2, max_nudges=2))
+
 
 class MergeToolCallDeltaTests(unittest.TestCase):
     def test_accumulates_arguments_by_index(self):
@@ -764,6 +822,14 @@ class IngestTextDeltaTests(unittest.TestCase):
         # Whole-block chunk matching the tail is a loop, not a snapshot no-op.
         self.assertTrue(stream_mod._dropped_piece_is_loop(block, block))
         self.assertFalse(stream_mod._dropped_piece_is_loop(block, "1. Reuters Business\n"))
+
+    def test_similar_table_rows_are_not_a_content_loop(self):
+        """Paraphrase halt is for thinking. Similar table rows must not cut a report."""
+        table = _SIMILAR_SCORE_TABLE
+        self.assertTrue(stream_mod._repeated_near_trailing_lines(table))
+        self.assertTrue(stream_mod._looping_text(table, paraphrased=True))
+        self.assertFalse(stream_mod._looping_text(table))
+        self.assertFalse(stream_mod._looping_text(table, paraphrased=False))
 
 
 class PrinterResetTests(unittest.TestCase):
@@ -1031,6 +1097,20 @@ class ChatStreamTests(unittest.TestCase):
             )
         self.assertNotIn("SHOULD_NOT_APPEAR", "".join(deltas))
         self.assertNotIn("SHOULD_NOT_APPEAR", msg["content"])
+
+    def test_content_similar_table_rows_do_not_halt(self):
+        """A unique report table must keep streaming past similar scored rows."""
+        tail = "Helios also leads on latency in the follow-up run.\n"
+        body = _sse(
+            {"choices": [{"delta": {"content": _SIMILAR_SCORE_TABLE}}]},
+            {"choices": [{"delta": {"content": tail}}]},
+            None,
+        )
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertIn(tail.strip(), msg["content"])
+        self.assertFalse(msg.get("_halted"))
 
     def test_halt_aborts_sse_after_drain_without_tools(self):
         block = (

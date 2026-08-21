@@ -506,16 +506,28 @@ def _line_has_intent(line: str) -> bool:
     return any(s.startswith(p) for p in _INTENT_STARTS)
 
 
+def _ends_with_continue_intent(text: str) -> bool:
+    """True when the last line or last sentence still narrates a next step."""
+    s = (text or "").strip()
+    if not s:
+        return False
+    last_line = s.rsplit("\n", 1)[-1]
+    if len(last_line) <= CONTINUE_NUDGE_MAX_CHARS and _line_has_intent(last_line):
+        return True
+    sentences = [p.strip() for p in s.split(".") if p.strip()]
+    if not sentences:
+        return False
+    last = sentences[-1]
+    return len(last) <= CONTINUE_NUDGE_MAX_CHARS and _line_has_intent(last)
+
+
 def _has_continue_intent(text: str) -> bool:
     s = (text or "").strip()
     if not s:
         return False
     if _line_has_intent(s):
         return True
-    last_line = s.rsplit("\n", 1)[-1]
-    if _line_has_intent(last_line):
-        return True
-    return _line_has_intent(s.rsplit(".", 1)[-1])
+    return _ends_with_continue_intent(s)
 
 
 def _looks_grounded(text: str) -> bool:
@@ -557,6 +569,21 @@ def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
         return False
     # After tools, or first-round plan-only (no tools yet).
     return True
+
+
+def _should_nudge_halt(content: str, nudges: int, max_nudges: int) -> bool:
+    """True when a halted stream has not yet produced the user's answer.
+
+    Empty content is the CoT-only hang — nudge so gather can still write a
+    file. A long draft with no next-step at the end is already the answer;
+    regenerating it from the top is worse than keeping the truncated copy.
+    """
+    if nudges >= max_nudges:
+        return False
+    text = (content or "").strip()
+    if not text:
+        return True
+    return _ends_with_continue_intent(text)
 
 
 def _named_tool_calls(tool_calls: list) -> list:
@@ -843,12 +870,14 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     can_nudge = (
                         nudge_count < max_nudges and round_idx + 1 < max_gather
                     )
-                    if halted and can_nudge:
-                        nudge_count += 1
-                        echo_status(status_mod.msg_halted_continuing())
-                        messages.append(status_mod.nudge_message())
-                        continue
                     if halted:
+                        if can_nudge and _should_nudge_halt(
+                            content, nudge_count, max_nudges,
+                        ):
+                            nudge_count += 1
+                            echo_status(status_mod.msg_halted_continuing())
+                            messages.append(status_mod.nudge_message())
+                            continue
                         echo_status(status_mod.msg_stopped_unfinished())
                         return _finish_turn()
                     soft_stop = _should_nudge_continue(
