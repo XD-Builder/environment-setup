@@ -10,10 +10,18 @@ from lmloop.files_index import (
     collect_at_refs,
     clear_path_cache,
     expand_at_refs,
+    join_typed_path,
     list_fs_paths,
     list_project_paths,
+    normalize_typed_path,
 )
-from lmloop.prompt import LmloopCompleter, _current_token, _in_skill_arg, _short_blurb
+from lmloop.prompt import (
+    LmloopCompleter,
+    _current_token,
+    _in_skill_arg,
+    _lex_prompt_line,
+    _short_blurb,
+)
 from lmloop.repl import SlashCommand
 from prompt_toolkit.document import Document
 
@@ -169,6 +177,38 @@ class FilesIndexTests(unittest.TestCase):
             self.assertIn("~/notes.md", home_hits)
             self.assertIn("../sib.py", parent_hits)
 
+    def test_normalize_collapses_duplicate_slashes(self):
+        self.assertEqual(
+            normalize_typed_path("~//Downloads//etc//z.zip"),
+            "~/Downloads/etc/z.zip",
+        )
+        self.assertEqual(normalize_typed_path("~/Downloads/etc/z.zip"), "~/Downloads/etc/z.zip")
+        self.assertEqual(normalize_typed_path("//host/share"), "//host/share")
+        self.assertEqual(normalize_typed_path("file:///tmp//a"), "file:///tmp/a")
+
+    def test_join_typed_path_does_not_double_slashes(self):
+        self.assertEqual(join_typed_path("~/", "/Downloads", True), "~/Downloads/")
+        self.assertEqual(join_typed_path("~/", "Downloads", True), "~/Downloads/")
+        self.assertEqual(join_typed_path("~/Downloads/", "etc", True), "~/Downloads/etc/")
+        self.assertEqual(join_typed_path("~/Downloads/etc/", "z.zip", False), "~/Downloads/etc/z.zip")
+
+    def test_expand_collapses_doubled_home_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d) / "home"
+            home.mkdir()
+            nested = home / "Downloads" / "etc"
+            nested.mkdir(parents=True)
+            target = nested / "z.zip"
+            target.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+            cwd = Path(d) / "proj"
+            cwd.mkdir()
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                expansion = collect_at_refs("see @~//Downloads//etc//z.zip", cwd=cwd)
+            self.assertEqual(len(expansion.refs), 1)
+            self.assertEqual(expansion.refs[0].token, "~/Downloads/etc/z.zip")
+            self.assertIn("@~/Downloads/etc/z.zip →", expansion.text)
+            self.assertNotIn("~//", expansion.text)
+
 
 class CompleterTests(unittest.TestCase):
     def test_in_skill_arg(self):
@@ -246,6 +286,24 @@ class CompleterTests(unittest.TestCase):
             self.assertIn("@../other.py", texts)
             meta = {m.text: m.display_meta_text for m in matches}
             self.assertEqual(meta["@../other.py"], str(target.resolve()))
+
+    def test_lex_at_path_is_colored_without_doubling_slashes(self):
+        text = "see @~/Downloads/etc/z.zip please"
+        frags = _lex_prompt_line(text)
+        self.assertEqual("".join(t for _, t in frags), text)
+        at = [(s, t) for s, t in frags if t.startswith("@")]
+        self.assertEqual(len(at), 1)
+        self.assertEqual(at[0][1], "@~/Downloads/etc/z.zip")
+        self.assertEqual(at[0][0], "class:at-file")
+        self.assertNotIn("//", "".join(t for _, t in frags))
+
+    def test_lex_slash_and_at_dir(self):
+        frags = _lex_prompt_line("/skill look @src/")
+        joined = "".join(t for _, t in frags)
+        self.assertEqual(joined, "/skill look @src/")
+        styles = {t: s for s, t in frags}
+        self.assertEqual(styles.get("/skill"), "class:slash")
+        self.assertEqual(styles.get("@src/"), "class:at-dir")
 
 
 if __name__ == "__main__":

@@ -99,7 +99,7 @@ find yourself updating two lists, you have already added debt.
 | `@path` completion + ref expansion | `files_index.py` |
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers | `repl.py` |
-| prompt_toolkit session, completers, key bindings | `prompt.py` |
+| prompt_toolkit session, completers, key bindings, input lexer | `prompt.py` |
 | ANSI chrome, status bar, `drain_tty_input` | `ui.py` |
 | rich Console / markdown / pager | `markdown_view.py` |
 
@@ -314,6 +314,7 @@ Regex is a last resort. It is the usual way this codebase would rot.
 - ANSI CSI strip (`strip_ansi`)
 - slug / key sanitizing (`re.sub` of illegal filename chars)
 - simple `@path` tokens in user text (`AT_REF_RE`: bare, `"quoted"`, `'quoted'`)
+- duplicate-slash collapse in typed `@path` (`DUP_SLASH_RE`)
 
 Those patterns live as **named compiled constants** next to the function that
 owns them, with a test for the boundary cases. Do not inline a new `re.search`

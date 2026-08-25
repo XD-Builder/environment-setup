@@ -17,6 +17,9 @@ AT_REF_RE = re.compile(
     )""",
     re.VERBOSE,
 )
+# Collapse accidental // from completion (~/ + /Downloads → ~//Downloads).
+# Keep a leading // (UNC) and the // after a URI scheme.
+DUP_SLASH_RE = re.compile(r"/{2,}")
 
 IGNORE_DIRS = frozenset({
     ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
@@ -30,7 +33,8 @@ _MAX_PATHS = 800
 _MAX_FS_COMPLETIONS = 80
 _REF_BLOCK_MARKER = "Referenced files (use read_file"
 _REF_BLOCK_HEADER = (
-    "Referenced files (use read_file / list_dir with the resolved path):"
+    "Referenced files (use read_file / list_dir with the resolved path "
+    "in place; do not copy into the workspace):"
 )
 
 
@@ -53,8 +57,29 @@ class AtRefExpansion:
 def resolve_user_path(path: str, cwd: "Path | None" = None) -> Path:
     """Resolve ~, absolute, and cwd-relative path strings the same way tools do."""
     root = (cwd or Path.cwd()).resolve()
-    p = Path(path).expanduser()
+    p = Path(normalize_typed_path(path)).expanduser()
     return p.resolve() if p.is_absolute() else (root / p).resolve()
+
+
+def normalize_typed_path(path: str) -> str:
+    """Collapse duplicate slashes in a user-typed path, keeping ~/ and UNC/URI."""
+    raw = path or ""
+    if "://" in raw:
+        scheme, rest = raw.split("://", 1)
+        return scheme + "://" + DUP_SLASH_RE.sub("/", rest)
+    if raw.startswith("//"):
+        return "//" + DUP_SLASH_RE.sub("/", raw[2:])
+    return DUP_SLASH_RE.sub("/", raw)
+
+
+def join_typed_path(typed_dir: str, name: str, is_dir: bool = False) -> str:
+    """Join a typed prefix (~/, /abs, ./) to a basename without producing //."""
+    parent = normalize_typed_path(typed_dir)
+    if parent != "/" and not parent.endswith("/"):
+        parent += "/"
+    child = (name or "").lstrip("/")
+    suffix = "/" if is_dir else ""
+    return parent + child + suffix
 
 
 def list_project_paths(cwd: "Path | None" = None, limit: int = _MAX_PATHS) -> "list[str]":
@@ -126,8 +151,7 @@ def list_fs_paths(
             is_dir = entry.is_dir()
         except OSError:
             continue
-        suffix = "/" if is_dir else ""
-        out.append(typed_dir + entry.name + suffix)
+        out.append(join_typed_path(typed_dir, entry.name, is_dir))
         if len(out) >= limit:
             break
     return out
@@ -188,6 +212,17 @@ def _raw_at_token(match: re.Match) -> "tuple[str, bool]":
     return raw, quoted
 
 
+def _rewrite_at_token(match: re.Match, normalized: str) -> str:
+    """Rebuild an @path match with collapsed slashes; keep quotes and trailing punct."""
+    if match.group(1) is not None:
+        return '@"' + normalized + '"'
+    if match.group(2) is not None:
+        return "@'" + normalized + "'"
+    orig = match.group(3) or ""
+    punct = orig[len(orig.rstrip(",.;:")):]
+    return "@" + normalized + punct
+
+
 def collect_at_refs(text: str, cwd: "Path | None" = None) -> AtRefExpansion:
     """Resolve @path tokens; append a referenced-files block when any exist."""
     if not text or _REF_BLOCK_MARKER in text:
@@ -196,8 +231,14 @@ def collect_at_refs(text: str, cwd: "Path | None" = None) -> AtRefExpansion:
     refs: "list[AtRef]" = []
     missing: "list[str]" = []
     seen: set = set()
+    parts: "list[str]" = []
+    last = 0
     for m in AT_REF_RE.finditer(text):
         raw, _quoted = _raw_at_token(m)
+        raw = normalize_typed_path(raw)
+        parts.append(text[last:m.start()])
+        parts.append(_rewrite_at_token(m, raw) if raw else m.group(0))
+        last = m.end()
         if not raw or raw in seen:
             continue
         seen.add(raw)
@@ -212,11 +253,12 @@ def collect_at_refs(text: str, cwd: "Path | None" = None) -> AtRefExpansion:
             refs.append(AtRef(token=raw, resolved=path, is_dir=is_dir))
         else:
             missing.append(raw)
+    rewritten = "".join(parts) + text[last:]
     if not refs:
-        return AtRefExpansion(text=text, refs=(), missing=tuple(missing))
+        return AtRefExpansion(text=rewritten, refs=(), missing=tuple(missing))
     lines = [f"- @{r.token} → {r.resolved.as_posix()}" for r in refs]
     block = _REF_BLOCK_HEADER + "\n" + "\n".join(lines)
-    new_text = text.rstrip() + "\n\n" + block + "\n"
+    new_text = rewritten.rstrip() + "\n\n" + block + "\n"
     return AtRefExpansion(text=new_text, refs=tuple(refs), missing=tuple(missing))
 
 

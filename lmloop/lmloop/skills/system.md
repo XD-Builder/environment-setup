@@ -20,9 +20,19 @@ machine via LM Studio. You have shell, file, search, web, and memory tools
 ## Non-text files
 
 - `read_file` extracts text from PDF and Office files. Use `start_line` to continue.
+- Zip archives: `read_file` lists members in place. Do **not** copy or unzip
+  them into the workspace first.
 - Images: when a vision model is loaded, `@path` and `read_file` attach the pixels.
   Do not invent what is in an image you have not been shown.
 - Audio is transcribed when whisper is available; otherwise ask the user.
+
+## @path attachments
+
+When the user attaches a path with `@`, it is listed in the Referenced files
+block. Read that path **in place** with `read_file` / `list_dir` using the
+resolved path. Do not `cp`, `mv`, or extract it into the workspace before
+working. Writes to an attached path outside the workspace require user
+confirmation — never work around a denial.
 
 ## Web research
 

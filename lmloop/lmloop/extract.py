@@ -28,6 +28,7 @@ KIND_XLSX = "xlsx"
 KIND_PPTX = "pptx"
 KIND_IMAGE = "image"
 KIND_AUDIO = "audio"
+KIND_ZIP = "zip"
 KIND_BINARY = "binary"
 
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
@@ -134,7 +135,7 @@ def detect_kind(data: bytes, name: str = "", content_type: str = "") -> str:
     if magic == KIND_IMAGE or magic == KIND_AUDIO or magic == KIND_PDF:
         return magic
     if magic == "zip":
-        return _kind_from_zip(data, suffix) or KIND_BINARY
+        return _kind_from_zip(data, suffix) or KIND_ZIP
     if suffix in IMAGE_SUFFIXES or ctype.startswith("image/"):
         return KIND_IMAGE
     if suffix in AUDIO_SUFFIXES or ctype.startswith("audio/"):
@@ -186,6 +187,8 @@ def extract_bytes(
         return _extract_pptx(data, label=label)
     if kind == KIND_AUDIO:
         return _extract_audio(data, name=name, label=label)
+    if kind == KIND_ZIP:
+        return _extract_zip(data, label=label)
     suffix = Path(name).suffix.lower()
     if suffix in OLE_SUFFIXES:
         return Extracted(
@@ -520,6 +523,24 @@ def _extract_pptx(data: bytes, label: str) -> Extracted:
     zf.close()
     body = "\n\n".join(blocks).strip() or "(empty presentation)"
     return Extracted(KIND_PPTX, f"[pptx {label}]\n" + _clip(body))
+
+
+def _extract_zip(data: bytes, label: str) -> Extracted:
+    """List archive members in memory. Never copies files to the workspace."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        return Extracted(KIND_ZIP, f"ERROR: invalid zip ({e})")
+    rows = []
+    with zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                rows.append(f"  {info.filename}")
+            else:
+                rows.append(f"  {info.filename}  ({info.file_size} bytes)")
+    body = "\n".join(rows) or "  (empty archive)"
+    header = f"[zip {label}: {len(rows)} entries — listing only; do not copy into the workspace]"
+    return Extracted(KIND_ZIP, header + "\n" + _clip(body))
 
 
 def _extract_audio(data: bytes, name: str, label: str) -> Extracted:

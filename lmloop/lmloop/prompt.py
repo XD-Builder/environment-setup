@@ -11,6 +11,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.search import stop_search
 from prompt_toolkit.shortcuts.prompt import CompleteStyle
 from prompt_toolkit.styles import Style
@@ -18,9 +19,11 @@ from prompt_toolkit.styles import Style
 from . import agent
 from .config import STATE_ROOT
 from .files_index import (
+    AT_REF_RE,
     is_fs_completion_prefix,
     list_fs_paths,
     list_project_paths,
+    normalize_typed_path,
     resolve_user_path,
 )
 from .ui import Console, drain_tty_input, format_input_prompt, short_model_name, short_path, strip_ansi, terminal_size
@@ -91,6 +94,57 @@ def _filter_names(names: List[str], prefix: str) -> List[str]:
     return [n for _, n in ranked]
 
 
+def _lex_prompt_line(text: str) -> "list[tuple[str, str]]":
+    """Style /commands and @paths. Fragments concatenate to ``text`` exactly."""
+    out: "list[tuple[str, str]]" = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in " \t":
+            j = i + 1
+            while j < n and text[j] in " \t":
+                j += 1
+            out.append(("", text[i:j]))
+            i = j
+            continue
+        if ch == "@":
+            m = AT_REF_RE.match(text, i)
+            if m:
+                token = text[i:m.end()]
+                style = "class:at-dir" if token.endswith("/") else "class:at-file"
+                out.append((style, token))
+                i = m.end()
+                continue
+        if ch == "/":
+            j = i + 1
+            while j < n and text[j] not in " \t":
+                j += 1
+            out.append(("class:slash", text[i:j]))
+            i = j
+            continue
+        j = i + 1
+        while j < n and text[j] not in " \t":
+            j += 1
+        out.append(("", text[i:j]))
+        i = j
+    return out
+
+
+class LmloopPromptLexer(Lexer):
+    """Color @path and /command tokens in the input buffer (not the menu)."""
+
+    def lex_document(self, document: Document):
+        lines = document.lines
+
+        def get_line(lineno: int):
+            if lineno < 0 or lineno >= len(lines):
+                return []
+            return _lex_prompt_line(lines[lineno])
+
+        return get_line
+
+
 class LmloopCompleter(Completer):
     """Complete /slash commands (with blurbs) and @filepath tokens."""
 
@@ -145,6 +199,7 @@ class LmloopCompleter(Completer):
             else:
                 paths = _filter_names(list_project_paths(cwd), prefix)
             for path in paths:
+                path = normalize_typed_path(path)
                 is_dir = path.endswith("/")
                 style = "class:at-dir" if is_dir else "class:at-file"
                 meta = "dir" if is_dir else "file"
@@ -317,6 +372,7 @@ def build_prompt_session(
         key_bindings=kb,
         bottom_toolbar=bottom_toolbar,
         style=PROMPT_STYLE if color else None,
+        lexer=LmloopPromptLexer() if color else None,
     )
     session.lmloop_clear_exit = clear_exit_hint  # type: ignore[attr-defined]
 

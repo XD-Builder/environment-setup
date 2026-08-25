@@ -258,7 +258,7 @@ class AtRefTurnTests(unittest.TestCase):
             self.assertIn("Referenced files (use read_file / list_dir", captured["content"])
             self.assertIn(f"- @a.py → {resolved.as_posix()}", captured["content"])
             self.assertEqual(captured["extra"], [resolved])
-            self.assertIn(f"[referenced a.py → {resolved}]", out.getvalue())
+            self.assertIn(f"[referenced @a.py → {resolved}]", out.getvalue())
 
     def test_run_turn_warns_on_missing_at_ref(self):
         from lmloop.repl import SessionState, _run_turn

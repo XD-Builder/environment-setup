@@ -136,7 +136,7 @@ def _turn_user_content(state: SessionState, expansion: AtRefExpansion):
 def _echo_at_refs(state: SessionState, expansion: AtRefExpansion) -> None:
     """Tell the user which @paths resolved (or did not)."""
     for ref in expansion.refs:
-        state.console.hint(f"[referenced {ref.token} → {ref.resolved}]")
+        state.console.referenced_at(ref.token, ref.resolved)
     for token in expansion.missing:
         state.console.hint(f"[no file at @{token}]")
 

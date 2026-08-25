@@ -99,6 +99,16 @@ class UiTests(unittest.TestCase):
         ])
         self.assertGreaterEqual(n, 1)
 
+    def test_referenced_at_colors_path(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        console = Console(color=False)
+        with redirect_stdout(StringIO()) as out:
+            console.referenced_at("~/Downloads/etc/z.zip", "/tmp/z.zip")
+        text = out.getvalue()
+        self.assertIn("[referenced @~/Downloads/etc/z.zip → /tmp/z.zip]", text)
+        self.assertNotIn("~//", text)
+
     def test_estimate_skips_image_base64(self):
         from lmloop.ui import IMAGE_TOKEN_ESTIMATE, estimate_context_tokens
         n = estimate_context_tokens([{

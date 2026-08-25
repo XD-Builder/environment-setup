@@ -448,6 +448,18 @@ class Console:
     def hint(self, msg: str) -> None:
         print(self.t.c(msg, self.t.dim))
 
+    def referenced_at(self, token: str, resolved) -> None:
+        """Color the @path; keep brackets dim. Do not wrap pre-colored text in hint()."""
+        t = self.t
+        shown = token if token.startswith("@") else "@" + token
+        print(
+            t.c("[referenced ", t.dim)
+            + t.c(shown, t.green)
+            + t.c(" → ", t.dim)
+            + str(resolved)
+            + t.c("]", t.dim)
+        )
+
     def info(self, msg: str) -> None:
         print(msg)
 
@@ -554,9 +566,15 @@ def ask_until_gate(message: str) -> bool:
 def make_confirm_gate(console: "Console"):
     """y/N gate for destructive / shell-syntax commands (plain input)."""
     def confirm_gate(command: str) -> bool:
-        label = "potentially destructive"
-        if tools.needs_shell(command) and not tools.is_destructive(command):
+        parsed = tools.ShellCommand(command)
+        if command.startswith("write_file "):
+            label = "write outside the workspace"
+        elif parsed.copies_or_extracts() and not parsed.is_destructive():
+            label = "copy/extract into the workspace"
+        elif parsed.needs_shell() and not parsed.is_destructive():
             label = "shell-syntax (pipes/redirections)"
+        else:
+            label = "potentially destructive"
         console.warn(f"\n⚠ {label} command requested:\n    {command}")
         return ask_yes_no(console.confirm_prompt(command))
     return confirm_gate
