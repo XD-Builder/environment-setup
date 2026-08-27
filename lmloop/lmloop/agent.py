@@ -667,7 +667,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
     ``extra_readable`` is a turn-scoped list of paths the user attached with
     ``@``; ``read_file`` / ``list_dir`` may open those even outside the
-    workspace. Writes stay workspace-scoped.
+    workspace. Writes to those outside paths require confirmation. Do not
+    copy attached files into the workspace.
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
     is SSE and tokens are shown live:

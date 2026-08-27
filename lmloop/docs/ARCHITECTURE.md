@@ -159,9 +159,9 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 
 | Tool | Purpose | Safety |
 |------|---------|--------|
-| `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. Pipe/redirection syntax is off by default (`confirm_shell_syntax`); set that key to enable. |
-| `read_file` | Read file with line numbers; PDF/Office extract as text; images attach as vision parts when a VLM is loaded; audio transcribes via whisper CLI | Scoped to the workspace directory captured at session start, plus paths the user attached with `@` on this turn. Relative `path` resolves there; `~` and absolute paths work. The ⚙ line and result header show the resolved path. Max 400 lines per call. |
-| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. Creates parent dirs. Result cites the resolved path. `@` attachments do not grant write access outside the workspace. |
+| `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. `cp`/`mv`/`unzip` (extract) of a path outside the workspace also confirms. Pipe/redirection syntax is off by default (`confirm_shell_syntax`); set that key to enable. |
+| `read_file` | Read file with line numbers; PDF/Office extract as text (and `@path` of those types inlines the extract); zip lists members in place; images attach as vision parts when a VLM is loaded; audio transcribes via whisper CLI | Scoped to the workspace directory captured at session start, plus paths the user attached with `@` on this turn. Relative `path` resolves there; `~` and absolute paths work. The ⚙ line and result header show the resolved path. Max 400 lines per call. |
+| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. `@` attachments outside the workspace may be written only after y/N confirmation. Creates parent dirs. Result cites the resolved path. |
 | `list_dir` | List directory entries | Scoped to the session workspace, plus directories the user attached with `@` this turn. Includes dotfiles. |
 | `search_files` | Regex search (ripgrep or grep fallback) | Scoped to the session workspace. Max 50 matches. |
 | `web_search` | `ddgs` metasearch (no key), then DuckDuckGo HTML/Lite, Instant Answer, Wikipedia | Optional `ddgs` dep. Content fenced as untrusted. All backends failing → ERROR (do not paraphrase-retry). |
@@ -267,11 +267,11 @@ This keeps the system prompt small for local models with limited context windows
 
 The interactive mode uses `prompt_toolkit` for:
 
-- **As-you-type completion** for `/` slash commands (with blurbs) and `@` file paths (git-aware project index, plus filesystem completion for `~/`, `/`, `./`, `../`). Filesystem matches show the resolved path in the menu.
+- **As-you-type completion** for `/` slash commands (with blurbs) and `@` file paths (git-aware project index plus the current directory, plus filesystem completion for `~/`, `/`, `./`, `../`). Filesystem matches show the resolved path in the menu. A unique exact directory lists its contents (no extra `/`); `/` on a highlighted `@dir/` opens that directory instead of inserting `//`. Names with spaces complete quoted and resolve unquoted on submit. The input lexer colors `@path` and `/command` tokens (the path itself, without doubling slashes).
 - **Decorative prompt** showing `cwd · model ›`.
 - **Bottom toolbar** showing context fill bar, session tokens, and turn count.
 - **Double Ctrl-C to exit** (first dismisses completion menu, second exits).
-- **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Missing tokens warn; existing ones are readable this turn even outside the workspace.
+- **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted or unquoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Duplicate slashes in the typed token are collapsed. Missing tokens warn; existing ones are readable this turn **in place** even outside the workspace. PDF/Office/zip/audio attachments inline extracted text in the user message. Copy/extract of those files into the workspace, and writes to them, require confirmation.
 
 Slash commands (`/help`, `/stats`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately.
 
@@ -315,7 +315,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 2. **File-only memory, computed views.** Append-only JSONL means no corruption, no migrations. You can `cat`, `grep`, or hand-edit every piece of agent memory.
 3. **Bounded context injection.** Local models have small contexts — the budget is respected. Only top-N learnings and active decisions injected at start; model pulls more on demand.
 4. **Self-learning is curated, not automatic.** The `remember` tool has a quality bar (enforced by `skills/retro.md`). Noisy memory is worse than none.
-5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Pipe/redirection confirms are opt-in (`confirm_shell_syntax`). Web content is fenced as untrusted data.
+5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Copy/extract of paths outside the workspace also confirms. Pipe/redirection confirms are opt-in (`confirm_shell_syntax`). Web content is fenced as untrusted data.
 6. **Skills as markdown playbooks.** Numbered steps, English conditionals, explicit report format. User skills override packaged ones with the same name.
 
 ---

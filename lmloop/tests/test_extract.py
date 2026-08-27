@@ -17,6 +17,7 @@ from lmloop.extract import (
     KIND_PPTX,
     KIND_TEXT,
     KIND_XLSX,
+    KIND_ZIP,
     MAX_IMAGE_BYTES,
     detect_kind,
     extract_bytes,
@@ -169,6 +170,19 @@ class OfficeTests(unittest.TestCase):
         self.assertIn("Hello", extracted.text)
         self.assertIn("World", extracted.text)
 
+    def test_attachment_excerpt_inlines_docx(self):
+        from lmloop.extract import attachment_excerpt
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "note.docx"
+            path.write_bytes(_docx_bytes(["Hello", "World"]))
+            excerpt = attachment_excerpt(path)
+            self.assertIsNotNone(excerpt)
+            self.assertIn("Hello", excerpt)
+            self.assertIn("World", excerpt)
+            txt = Path(d) / "a.py"
+            txt.write_text("print(1)\n")
+            self.assertIsNone(attachment_excerpt(txt))
+
     def test_xlsx_cells(self):
         data = _xlsx_bytes([["Name", "Qty"], ["apples", "3"]])
         extracted = extract_bytes(data, name="t.xlsx")
@@ -188,6 +202,22 @@ class OfficeTests(unittest.TestCase):
         self.assertEqual(extracted.kind, KIND_BINARY)
         self.assertIn("ERROR", extracted.text)
         self.assertIn(".doc", extracted.text)
+
+
+class ZipTests(unittest.TestCase):
+    def test_zip_lists_members_in_place(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("readme.txt", "hello")
+            zf.writestr("nested/a.py", "x = 1\n")
+        data = buf.getvalue()
+        self.assertEqual(detect_kind(data, "z.zip"), KIND_ZIP)
+        extracted = extract_bytes(data, name="z.zip", label="/tmp/z.zip")
+        self.assertEqual(extracted.kind, KIND_ZIP)
+        self.assertIn("readme.txt", extracted.text)
+        self.assertIn("nested/a.py", extracted.text)
+        self.assertIn("do not copy", extracted.text)
+        self.assertNotIn("hello", extracted.text)
 
 
 class PdfWhisperTests(unittest.TestCase):

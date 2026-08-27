@@ -28,7 +28,13 @@ KIND_XLSX = "xlsx"
 KIND_PPTX = "pptx"
 KIND_IMAGE = "image"
 KIND_AUDIO = "audio"
+KIND_ZIP = "zip"
 KIND_BINARY = "binary"
+# @path attachments inline these (text files stay path-only; images use vision).
+INLINE_KINDS = frozenset({
+    KIND_PDF, KIND_DOCX, KIND_XLSX, KIND_PPTX, KIND_AUDIO, KIND_ZIP,
+})
+EXCERPT_MAX_LINES = 400
 
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 AUDIO_SUFFIXES = frozenset({".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"})
@@ -134,7 +140,7 @@ def detect_kind(data: bytes, name: str = "", content_type: str = "") -> str:
     if magic == KIND_IMAGE or magic == KIND_AUDIO or magic == KIND_PDF:
         return magic
     if magic == "zip":
-        return _kind_from_zip(data, suffix) or KIND_BINARY
+        return _kind_from_zip(data, suffix) or KIND_ZIP
     if suffix in IMAGE_SUFFIXES or ctype.startswith("image/"):
         return KIND_IMAGE
     if suffix in AUDIO_SUFFIXES or ctype.startswith("audio/"):
@@ -163,6 +169,29 @@ def extract_path(path: Path) -> Extracted:
     return extract_bytes(data, name=path.name, label=str(path))
 
 
+def attachment_excerpt(
+    path: Path, max_lines: int = EXCERPT_MAX_LINES,
+) -> "str | None":
+    """Extracted text to inline for an @path, or None for text/images/dirs."""
+    try:
+        if not path.is_file():
+            return None
+    except OSError:
+        return None
+    extracted = extract_path(path)
+    if extracted.kind not in INLINE_KINDS:
+        return None
+    lines = extracted.text.splitlines()
+    limit = max(1, int(max_lines))
+    body = "\n".join(lines[:limit])
+    if len(lines) > limit:
+        body += (
+            f"\n... [{len(lines)} lines total; "
+            "use read_file with start_line= to continue]"
+        )
+    return body
+
+
 def extract_bytes(
     data: bytes,
     name: str = "",
@@ -186,6 +215,8 @@ def extract_bytes(
         return _extract_pptx(data, label=label)
     if kind == KIND_AUDIO:
         return _extract_audio(data, name=name, label=label)
+    if kind == KIND_ZIP:
+        return _extract_zip(data, label=label)
     suffix = Path(name).suffix.lower()
     if suffix in OLE_SUFFIXES:
         return Extracted(
@@ -520,6 +551,24 @@ def _extract_pptx(data: bytes, label: str) -> Extracted:
     zf.close()
     body = "\n\n".join(blocks).strip() or "(empty presentation)"
     return Extracted(KIND_PPTX, f"[pptx {label}]\n" + _clip(body))
+
+
+def _extract_zip(data: bytes, label: str) -> Extracted:
+    """List archive members in memory. Never copies files to the workspace."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        return Extracted(KIND_ZIP, f"ERROR: invalid zip ({e})")
+    rows = []
+    with zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                rows.append(f"  {info.filename}")
+            else:
+                rows.append(f"  {info.filename}  ({info.file_size} bytes)")
+    body = "\n".join(rows) or "  (empty archive)"
+    header = f"[zip {label}: {len(rows)} entries — listing only; do not copy into the workspace]"
+    return Extracted(KIND_ZIP, header + "\n" + _clip(body))
 
 
 def _extract_audio(data: bytes, name: str, label: str) -> Extracted:

@@ -144,6 +144,8 @@ class ShellCommand:
     _META = frozenset("|;&<>`")
     _INTERP = frozenset({"sh", "bash", "zsh", "dash"})
     _ALWAYS = frozenset({"sudo", "mkfs", "shutdown", "reboot", "truncate"})
+    _COPY = frozenset({"cp", "mv", "ditto", "rsync", "install", "ln"})
+    _TAR = frozenset({"tar", "gtar", "bsdtar"})
 
     def __init__(self, command: str):
         self.raw = command or ""
@@ -178,6 +180,67 @@ class ShellCommand:
             if tok in ("chmod", "chown") and self._short_flags(rest, "r"):
                 return True
             if tok == "kill" and rest[:2] == ["-9", "1"]:
+                return True
+        return False
+
+    def copies_or_extracts(self) -> bool:
+        """True for cp/mv/rsync and archive extract (not list/test/stdout)."""
+        if not self.argv:
+            return False
+        cmd = Path(self.argv[0]).name.lower()
+        if cmd in self._COPY:
+            return True
+        if cmd == "unzip":
+            return not self._unzip_readonly()
+        if cmd in self._TAR:
+            return self._tar_extracts()
+        return False
+
+    def copies_from_outside(self, workspace_root: "Path | None" = None) -> bool:
+        """True when a copy/extract command names a path outside the workspace."""
+        if not self.copies_or_extracts():
+            return False
+        root = Path(workspace_root).resolve() if workspace_root else _workspace_root()
+        tokens = self.argv[1:]
+        cmd = Path(self.argv[0]).name.lower() if self.argv else ""
+        if cmd in self._TAR and tokens and not tokens[0].startswith("-") and tokens[0].isalpha():
+            tokens = tokens[1:]
+        for tok in tokens:
+            if tok.startswith("-"):
+                continue
+            try:
+                p = resolve_user_path(tok, root)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if not _in_workspace(p, root):
+                return True
+        return False
+
+    def _unzip_readonly(self) -> bool:
+        """unzip -l/-v/-t/-p/-z lists or writes to stdout; it does not extract."""
+        letters = set()
+        for a in self.argv[1:]:
+            if a == "--":
+                break
+            if a.startswith("--"):
+                name = a[2:].split("=", 1)[0]
+                if name in ("list", "verbose", "test", "pipe", "comment"):
+                    return True
+                continue
+            if a.startswith("-") and len(a) > 1:
+                letters.update(a[1:])
+        return bool(letters & set("lvtpz"))
+
+    def _tar_extracts(self) -> bool:
+        rest = self.argv[1:]
+        if rest and not rest[0].startswith("-") and rest[0].isalpha() and "x" in rest[0]:
+            return True
+        for a in rest:
+            if a in ("-x", "--extract", "--get"):
+                return True
+            if a.startswith("--"):
+                continue
+            if a.startswith("-") and "x" in a[1:]:
                 return True
         return False
 
@@ -306,17 +369,23 @@ def run_shell(
     confirm_shell_syntax: bool = False,
     workspace_root: "Path | None" = None,
 ) -> str:
-    destructive = is_destructive(command)
-    shell_syntax = needs_shell(command)
+    parsed = ShellCommand(command)
+    destructive = parsed.is_destructive()
+    shell_syntax = parsed.needs_shell()
+    root = (workspace_root or Path.cwd()).resolve()
+    copy_outside = parsed.copies_from_outside(root)
     need_confirm = (
         (destructive and confirm_destructive)
         or (shell_syntax and confirm_shell_syntax)
+        or (copy_outside and confirm_destructive)
     )
     if confirm_gate and need_confirm:
         if not confirm_gate(command):
-            reason = "destructive" if destructive else "shell-syntax"
+            if copy_outside and not destructive:
+                reason = "copy/extract"
+            else:
+                reason = "destructive" if destructive else "shell-syntax"
             return f"DENIED: the user declined to run this {reason} command."
-    root = (workspace_root or Path.cwd()).resolve()
     try:
         argv = command if shell_syntax else shlex.split(command)
     except ValueError as e:
@@ -384,11 +453,18 @@ def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES,
     return _numbered_chunk(extracted.text, str(p), start_line, max_lines)
 
 
-def write_file(path: str, content: str, workspace_root: "Path | None" = None) -> str:
+def write_file(path: str, content: str, workspace_root: "Path | None" = None,
+               extra_readable: "list[Path] | None" = None,
+               confirm_gate=None) -> str:
     root = workspace_root or _workspace_root()
-    p, err = _check_workspace(path, root)
+    p, err = _check_workspace(path, root, extra_readable=extra_readable)
     if err:
         return err
+    if not _in_workspace(p, root):
+        if not confirm_gate:
+            return f"ERROR: {path} is outside workspace {root}"
+        if not confirm_gate(f"write_file {p}"):
+            return "DENIED: the user declined to write outside the workspace."
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
@@ -1052,7 +1128,8 @@ def build_tools(cfg: dict, confirm_gate=None,
             "run_shell",
             "Run a shell command and return stdout/stderr/exit code. "
             "Simple commands run without a shell; pipes/redirections use /bin/sh. "
-            "Destructive commands require user confirmation when enabled.",
+            "Destructive commands, and copy/extract of paths outside the "
+            "workspace, require user confirmation when enabled.",
             {"command": s}, ["command"],
             lambda command: run_shell(
                 command,
@@ -1065,12 +1142,13 @@ def build_tools(cfg: dict, confirm_gate=None,
         ),
         ToolDef(
             "read_file",
-            "Read a file. Text, PDF, and Office files return numbered lines. "
-            "Images attach natively when the loaded model is a VLM; otherwise "
-            "only size/format metadata is returned. Audio is transcribed when "
-            "whisper-cli or whisper is on PATH. path is relative to the session "
-            "workspace unless it is absolute or a ~ path. User-@ attached paths "
-            "listed in this turn's Referenced files block are readable even "
+            "Read a file in place. Text, PDF, Office, and zip archives return "
+            "numbered lines (zips list members; do not copy them into the "
+            "workspace). Images attach natively when the loaded model is a VLM; "
+            "otherwise only size/format metadata is returned. Audio is transcribed "
+            "when whisper-cli or whisper is on PATH. path is relative to the "
+            "session workspace unless it is absolute or a ~ path. User-@ attached "
+            "paths listed in this turn's Referenced files block are readable even "
             "outside the workspace.",
             {"path": s, "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}},
             ["path"],
@@ -1083,9 +1161,14 @@ def build_tools(cfg: dict, confirm_gate=None,
         ToolDef(
             "write_file",
             "Write (overwrite) a file under the session workspace (cwd at start). "
-            "path is relative to that workspace unless it is absolute.",
+            "path is relative to that workspace unless it is absolute. User-@ "
+            "attached paths outside the workspace may be written only after "
+            "explicit user confirmation.",
             {"path": s, "content": s}, ["path", "content"],
-            lambda path, content: write_file(path, content, workspace_root=root),
+            lambda path, content: write_file(
+                path, content, workspace_root=root,
+                extra_readable=extra, confirm_gate=gate,
+            ),
             allow_empty=("content",),
         ),
         ToolDef(

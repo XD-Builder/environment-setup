@@ -11,6 +11,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.search import stop_search
 from prompt_toolkit.shortcuts.prompt import CompleteStyle
 from prompt_toolkit.styles import Style
@@ -18,10 +19,14 @@ from prompt_toolkit.styles import Style
 from . import agent
 from .config import STATE_ROOT
 from .files_index import (
+    at_completion_token,
+    at_token_end,
     is_fs_completion_prefix,
     list_fs_paths,
     list_project_paths,
+    normalize_typed_path,
     resolve_user_path,
+    strip_at_quotes,
 )
 from .ui import Console, drain_tty_input, format_input_prompt, short_model_name, short_path, strip_ansi, terminal_size
 
@@ -91,6 +96,72 @@ def _filter_names(names: List[str], prefix: str) -> List[str]:
     return [n for _, n in ranked]
 
 
+def _at_insert_text(path: str) -> str:
+    """Completion insert text; quote paths that contain whitespace."""
+    if any(ch.isspace() for ch in path):
+        return '@"' + path + '"'
+    return "@" + path
+
+
+def _lex_prompt_line(
+    text: str, cwd: "Path | None" = None,
+) -> "list[tuple[str, str]]":
+    """Style /commands and @paths. Fragments concatenate to ``text`` exactly."""
+    out: "list[tuple[str, str]]" = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in " \t":
+            j = i + 1
+            while j < n and text[j] in " \t":
+                j += 1
+            out.append(("", text[i:j]))
+            i = j
+            continue
+        if ch == "@":
+            end = at_token_end(text, i, cwd)
+            if end:
+                token = text[i:end]
+                style = "class:at-dir" if token.endswith("/") else "class:at-file"
+                out.append((style, token))
+                i = end
+                continue
+        if ch == "/":
+            j = i + 1
+            while j < n and text[j] not in " \t":
+                j += 1
+            out.append(("class:slash", text[i:j]))
+            i = j
+            continue
+        j = i + 1
+        while j < n and text[j] not in " \t":
+            j += 1
+        out.append(("", text[i:j]))
+        i = j
+    return out
+
+
+class LmloopPromptLexer(Lexer):
+    """Color @path and /command tokens in the input buffer (not the menu)."""
+
+    def __init__(self, cwd_provider: "Callable[[], Path | None] | None" = None):
+        self._cwd_provider = cwd_provider or (lambda: None)
+
+    def lex_document(self, document: Document):
+        lines = document.lines
+        cwd = self._cwd_provider()
+        if cwd is not None:
+            cwd = Path(cwd)
+
+        def get_line(lineno: int):
+            if lineno < 0 or lineno >= len(lines):
+                return []
+            return _lex_prompt_line(lines[lineno], cwd)
+
+        return get_line
+
+
 class LmloopCompleter(Completer):
     """Complete /slash commands (with blurbs) and @filepath tokens."""
 
@@ -104,7 +175,10 @@ class LmloopCompleter(Completer):
 
     def get_completions(self, document: Document, complete_event) -> Iterator[Completion]:
         text_before = document.text_before_cursor
-        word = _current_token(text_before)
+        cwd = self._cwd_provider()
+        if cwd is not None:
+            cwd = Path(cwd)
+        word = _current_token(text_before, cwd)
 
         if _in_skill_arg(text_before, word):
             prefix = "" if word.startswith("/") else word
@@ -136,15 +210,21 @@ class LmloopCompleter(Completer):
             return
 
         if word.startswith("@"):
-            prefix = word[1:]
-            cwd = self._cwd_provider()
-            if cwd is not None:
-                cwd = Path(cwd)
+            prefix = strip_at_quotes(word[1:])
             if is_fs_completion_prefix(prefix):
                 paths = list_fs_paths(prefix, cwd)
             else:
                 paths = _filter_names(list_project_paths(cwd), prefix)
+                seen = set(paths)
+                fs_prefix = "./" + prefix if prefix else "./"
+                for rel in list_fs_paths(fs_prefix, cwd):
+                    if rel.startswith("./"):
+                        rel = rel[2:]
+                    if rel and rel not in seen:
+                        seen.add(rel)
+                        paths.append(rel)
             for path in paths:
+                path = normalize_typed_path(path)
                 is_dir = path.endswith("/")
                 style = "class:at-dir" if is_dir else "class:at-file"
                 meta = "dir" if is_dir else "file"
@@ -153,8 +233,9 @@ class LmloopCompleter(Completer):
                         meta = str(resolve_user_path(path, cwd))
                     except (OSError, RuntimeError, ValueError):
                         pass
+                insert = _at_insert_text(path)
                 yield Completion(
-                    "@" + path,
+                    insert,
                     start_position=-len(word),
                     display="@" + path,
                     display_meta=meta,
@@ -162,14 +243,19 @@ class LmloopCompleter(Completer):
                 )
 
 
-def _current_token(text_before: str) -> str:
-    """Token before cursor, treating whitespace as the only delimiter."""
-    if not text_before:
-        return ""
-    i = len(text_before)
-    while i > 0 and text_before[i - 1] not in " \t\n":
-        i -= 1
-    return text_before[i:]
+def _current_token(text_before: str, cwd: "Path | None" = None) -> str:
+    """Token before cursor. @paths may include spaces while they match a file."""
+    return at_completion_token(text_before, cwd)
+
+
+def _at_slash_action(word: str, selected: "str | None") -> str:
+    """How ``/`` should behave: apply a dir completion, refresh, or insert."""
+    if word.startswith("@"):
+        if selected and selected.startswith("@") and selected.endswith("/"):
+            return "apply"
+        if word.endswith("/"):
+            return "refresh"
+    return "insert"
 
 
 def _in_skill_arg(text_before: str, word: str) -> bool:
@@ -235,6 +321,27 @@ def build_prompt_session(
             b.complete_next()
         else:
             b.start_completion(select_first=False)
+
+    # In an @path token, '/' opens the highlighted (or current) directory
+    # listing instead of inserting another slash (@~/Downloads/ + / → //).
+    @kb.add("/", eager=True)
+    def _slash_open_at_dir(event):
+        b = event.current_buffer
+        st = state_getter()
+        cwd = getattr(st, "workspace_root", None) if st is not None else None
+        word = _current_token(b.document.text_before_cursor, cwd)
+        selected = None
+        if b.complete_state and b.complete_state.current_completion:
+            selected = b.complete_state.current_completion.text
+        action = _at_slash_action(word, selected)
+        if action == "apply":
+            b.apply_completion(b.complete_state.current_completion)
+            return
+        if action == "refresh":
+            b.complete_state = None
+            b.start_completion(select_first=False)
+            return
+        b.insert_text("/")
 
     # Ctrl-O opens prior-turn thinking (oldest first, one pager). No cycle.
     # Mid-stream keys are drained before the prompt so they cannot steal the TTY.
@@ -317,6 +424,9 @@ def build_prompt_session(
         key_bindings=kb,
         bottom_toolbar=bottom_toolbar,
         style=PROMPT_STYLE if color else None,
+        lexer=LmloopPromptLexer(
+            cwd_provider=lambda: getattr(state_getter(), "workspace_root", None),
+        ) if color else None,
     )
     session.lmloop_clear_exit = clear_exit_hint  # type: ignore[attr-defined]
 

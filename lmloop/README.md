@@ -134,7 +134,7 @@ REPL UX (prompt_toolkit + rich):
 - **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL.
 - **Prompt** shows `cwd · model ›` (decorative only) with a **bottom toolbar** for context fill / session tokens / turns.
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
-- **Type `@`** for file paths. Project-relative names complete from the git-aware index. Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. The model may `read_file` / `list_dir` those attached paths this turn even if they sit outside the workspace. Missing tokens print `[no file at @…]` and are skipped. Image `@path`s are attached as native vision input when the loaded model is a VLM (`vision: auto` in config).
+- **Type `@`** for file paths. Project-relative names complete from the git-aware index (plus the current directory, including files git ignores). Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. A unique directory (`@~/Downloads`) lists that directory’s contents — you do not have to type `/` to open it. `/` on a highlighted `@dir/` opens that listing and does not insert another slash. Names with spaces complete quoted (`@"Module 2.docx"`) and also resolve unquoted on submit when the file exists (`@~/Downloads/Module 2 Team.docx`). Typed `@path` tokens (including `~/…` and spaces) are colored in the input; duplicate slashes from completion (`@~//Downloads//file`) are collapsed. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted or unquoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. PDF, Office (`.docx`/`.xlsx`/`.pptx`), zip, and audio attachments inline extracted text in the message so the model does not need to `read_file` first. The model may still `read_file` / `list_dir` those attached paths **in place** this turn even if they sit outside the workspace — it must not copy them into the project first. Zip `@path`s list archive members. Missing tokens print `[no file at @…]` and are skipped. Image `@path`s are attached as native vision input when the loaded model is a VLM (`vision: auto` in config). Writing an attached outside path, or `cp`/`unzip` of an outside path into the workspace, asks for confirmation.
 - **Ctrl-C** dismisses an open `/` or `@` completion menu first; with no menu, once shows “Ctrl-C again to exit”, twice exits. Ctrl-D exits immediately.
 - **Post-turn footer** shows a context bar, token breakdown, rounds, and tools.
 - **Colors** for banners/tools when stdout is a TTY; disable with `NO_COLOR=1` or `lmloop config set color false`.
@@ -269,7 +269,9 @@ File tools (`read_file`, `write_file`, `list_dir`, `search_files`) are constrain
 to the workspace directory captured at session start. Relative paths are resolved
 against that directory (not `$HOME`); the ⚙ tool line shows the resolved path.
 Paths the user `@`-attached this turn are readable even outside the workspace;
-writes stay workspace-scoped. Images from `@` / `read_file` attach as vision
+read them in place (zips list members). Writes to those outside paths, and
+copy/extract of outside files into the workspace, require confirmation.
+Images from `@` / `read_file` attach as vision
 input when `vision` is `auto` (LM Studio VLM flag) or `true`.
 Shell commands without pipes
 run via `exec` (no shell) with that directory as `cwd`. Destructive patterns

@@ -17,6 +17,9 @@ from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_g
 _THINKING_HISTORY_MAX = 30
 _UNTIL_FOLLOWUP = "Ready to continue from this until-run. Ask a follow-up."
 _GRAPH_FOLLOWUP = "Ready to continue from this graph-run. Ask a follow-up."
+_REF_CONTENTS_HEADER = (
+    "Attached file contents (extracted in place; do not copy into the workspace):"
+)
 
 
 @dataclass
@@ -121,14 +124,34 @@ def _echo_assistant(console: Console):
     return echo
 
 
+def _with_ref_excerpts(text: str, refs: tuple) -> str:
+    """Append extracted Office/PDF/zip/audio text for attached files."""
+    blocks = []
+    for ref in refs:
+        if ref.is_dir:
+            continue
+        excerpt = extract.attachment_excerpt(ref.resolved)
+        if not excerpt:
+            continue
+        blocks.append(
+            f"--- @{ref.token} → {ref.resolved.as_posix()} ---\n{excerpt}"
+        )
+    if not blocks:
+        return text
+    return (
+        text.rstrip() + "\n\n" + _REF_CONTENTS_HEADER + "\n\n"
+        + "\n\n".join(blocks) + "\n"
+    )
+
+
 def _turn_user_content(state: SessionState, expansion: AtRefExpansion):
     """Referenced-files text, plus image_url parts when the model is a VLM."""
     extra_readable = [ref.resolved for ref in expansion.refs]
-    content = expansion.text
+    content = _with_ref_excerpts(expansion.text, expansion.refs)
     if agent.model_has_vision(state.model, state.cfg):
         files = [ref.resolved for ref in expansion.refs if not ref.is_dir]
         content = extract.image_user_content(
-            expansion.text, extract.media_from_paths(files),
+            content, extract.media_from_paths(files),
         )
     return content, extra_readable
 
@@ -136,7 +159,7 @@ def _turn_user_content(state: SessionState, expansion: AtRefExpansion):
 def _echo_at_refs(state: SessionState, expansion: AtRefExpansion) -> None:
     """Tell the user which @paths resolved (or did not)."""
     for ref in expansion.refs:
-        state.console.hint(f"[referenced {ref.token} → {ref.resolved}]")
+        state.console.referenced_at(ref.token, ref.resolved)
     for token in expansion.missing:
         state.console.hint(f"[no file at @{token}]")
 

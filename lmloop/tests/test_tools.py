@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 import urllib.error
+import zipfile
 from unittest import mock
 
 from pathlib import Path
@@ -25,6 +26,7 @@ from lmloop.tools import (
     unwrap_tool_result,
     web_search,
     write_file,
+    ShellCommand,
     ToolResult,
 )
 
@@ -149,6 +151,51 @@ class ToolSafetyTests(unittest.TestCase):
         self.assertFalse(is_destructive("git push origin main"))
         self.assertFalse(is_destructive("cat a | grep b"))
 
+    def test_copies_from_outside(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ws"
+            root.mkdir()
+            outside = Path(d) / "z.zip"
+            outside.write_text("x")
+            inside = root / "a.txt"
+            inside.write_text("y")
+            self.assertTrue(
+                ShellCommand(f"cp {outside} .").copies_from_outside(root)
+            )
+            self.assertTrue(
+                ShellCommand(f"unzip {outside}").copies_from_outside(root)
+            )
+            self.assertFalse(
+                ShellCommand(f"unzip -l {outside}").copies_from_outside(root)
+            )
+            self.assertFalse(
+                ShellCommand(f"cp {inside} {root / 'b.txt'}").copies_from_outside(root)
+            )
+            self.assertTrue(ShellCommand("tar xf /tmp/a.tar").copies_or_extracts())
+            self.assertFalse(ShellCommand("tar tf /tmp/a.tar").copies_or_extracts())
+
+    def test_run_shell_confirms_copy_from_outside(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ws"
+            root.mkdir()
+            src = Path(d) / "a.txt"
+            src.write_text("x\n")
+            asked = []
+
+            def gate(cmd):
+                asked.append(cmd)
+                return False
+
+            result = run_shell(
+                f"cp {src} .",
+                confirm_gate=gate,
+                workspace_root=root,
+            )
+            self.assertTrue(asked)
+            self.assertIn("DENIED", result)
+            self.assertIn("copy/extract", result)
+            self.assertFalse((root / "a.txt").exists())
+
     def test_write_file_outside_workspace(self):
         with tempfile.TemporaryDirectory() as d:
             os.chdir(d)
@@ -227,6 +274,42 @@ class ToolSafetyTests(unittest.TestCase):
             result = impls["read_file"](str(outside))
             self.assertIn("hello", result)
             self.assertIn("outside workspace", impls["write_file"](str(outside), "x"))
+
+    def test_write_file_extra_readable_requires_confirm(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ws"
+            root.mkdir()
+            outside = Path(d) / "secret.txt"
+            outside.write_text("hello\n")
+            denied = write_file(
+                str(outside), "nope", workspace_root=root,
+                extra_readable=[outside.resolve()],
+                confirm_gate=lambda _: False,
+            )
+            self.assertIn("DENIED", denied)
+            self.assertEqual(outside.read_text(), "hello\n")
+            ok = write_file(
+                str(outside), "yes\n", workspace_root=root,
+                extra_readable=[outside.resolve()],
+                confirm_gate=lambda _: True,
+            )
+            self.assertIn("Wrote", ok)
+            self.assertEqual(outside.read_text(), "yes\n")
+
+    def test_read_file_zip_lists_in_place(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ws"
+            root.mkdir()
+            outside = Path(d) / "z.zip"
+            with zipfile.ZipFile(outside, "w") as zf:
+                zf.writestr("inner.txt", "secret-body")
+            result = read_file(
+                str(outside), workspace_root=root,
+                extra_readable=[outside.resolve()],
+            )
+            self.assertIn("inner.txt", result)
+            self.assertNotIn("secret-body", result)
+            self.assertNotIn("ERROR", result)
 
     def test_read_file_inside_workspace(self):
         with tempfile.TemporaryDirectory() as d:
