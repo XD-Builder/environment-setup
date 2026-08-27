@@ -30,6 +30,11 @@ KIND_IMAGE = "image"
 KIND_AUDIO = "audio"
 KIND_ZIP = "zip"
 KIND_BINARY = "binary"
+# @path attachments inline these (text files stay path-only; images use vision).
+INLINE_KINDS = frozenset({
+    KIND_PDF, KIND_DOCX, KIND_XLSX, KIND_PPTX, KIND_AUDIO, KIND_ZIP,
+})
+EXCERPT_MAX_LINES = 400
 
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 AUDIO_SUFFIXES = frozenset({".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"})
@@ -162,6 +167,29 @@ def extract_path(path: Path) -> Extracted:
     except OSError as e:
         return Extracted(KIND_BINARY, f"ERROR: {e}")
     return extract_bytes(data, name=path.name, label=str(path))
+
+
+def attachment_excerpt(
+    path: Path, max_lines: int = EXCERPT_MAX_LINES,
+) -> "str | None":
+    """Extracted text to inline for an @path, or None for text/images/dirs."""
+    try:
+        if not path.is_file():
+            return None
+    except OSError:
+        return None
+    extracted = extract_path(path)
+    if extracted.kind not in INLINE_KINDS:
+        return None
+    lines = extracted.text.splitlines()
+    limit = max(1, int(max_lines))
+    body = "\n".join(lines[:limit])
+    if len(lines) > limit:
+        body += (
+            f"\n... [{len(lines)} lines total; "
+            "use read_file with start_line= to continue]"
+        )
+    return body
 
 
 def extract_bytes(

@@ -313,7 +313,7 @@ Regex is a last resort. It is the usual way this codebase would rot.
 - charset validators (`SKILL_NAME_RE`)
 - ANSI CSI strip (`strip_ansi`)
 - slug / key sanitizing (`re.sub` of illegal filename chars)
-- simple `@path` tokens in user text (`AT_REF_RE`: bare, `"quoted"`, `'quoted'`)
+- simple `@path` tokens in user text (`AT_REF_RE`: bare, `"quoted"`, `'quoted'`; unquoted names with spaces are extended by a pathlib directory scan, not more regex)
 - duplicate-slash collapse in typed `@path` (`DUP_SLASH_RE`)
 
 Those patterns live as **named compiled constants** next to the function that

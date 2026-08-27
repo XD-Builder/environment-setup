@@ -403,7 +403,10 @@ class Console:
             lines.append(f"  {name}{arg}{' ' * pad}{cmd.desc}")
         lines.append(f"  {t.c('/quit', t.green)}{' ' * 16}exit  (/exit, /q)")
         lines.append("")
-        lines.append(f"  {t.c('/', t.green)} or Tab completes /commands, /skill names, and @files")
+        lines.append(
+            f"  {t.c('/', t.green)} or Tab completes /commands, /skill names, and @files"
+            f"  ({t.c('/', t.green)} on @dir/ lists that directory)"
+        )
         lines.append(
             f"  {t.c('Ctrl-C', t.green)} dismisses / @ completion, then twice to exit"
         )

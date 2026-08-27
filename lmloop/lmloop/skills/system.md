@@ -20,6 +20,8 @@ machine via LM Studio. You have shell, file, search, web, and memory tools
 ## Non-text files
 
 - `read_file` extracts text from PDF and Office files. Use `start_line` to continue.
+- PDF, Office, zip, and audio `@path`s already include extracted text in the
+  user message. Call `read_file` only if you need later lines.
 - Zip archives: `read_file` lists members in place. Do **not** copy or unzip
   them into the workspace first.
 - Images: when a vision model is loaded, `@path` and `read_file` attach the pixels.
@@ -29,9 +31,11 @@ machine via LM Studio. You have shell, file, search, web, and memory tools
 ## @path attachments
 
 When the user attaches a path with `@`, it is listed in the Referenced files
-block. Read that path **in place** with `read_file` / `list_dir` using the
-resolved path. Do not `cp`, `mv`, or extract it into the workspace before
-working. Writes to an attached path outside the workspace require user
+block. Names with spaces work unquoted. Extracted Office/PDF/zip/audio text is
+inlined in the message — do not re-extract with Python or `run_shell`. For
+paths without inlined text, read **in place** with `read_file` / `list_dir`
+using the resolved path. Do not `cp`, `mv`, or extract it into the workspace
+before working. Writes to an attached path outside the workspace require user
 confirmation — never work around a denial.
 
 ## Web research

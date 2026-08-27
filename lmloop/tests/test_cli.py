@@ -260,6 +260,47 @@ class AtRefTurnTests(unittest.TestCase):
             self.assertEqual(captured["extra"], [resolved])
             self.assertIn(f"[referenced @a.py → {resolved}]", out.getvalue())
 
+    def test_run_turn_inlines_docx_and_resolves_spaces(self):
+        from lmloop.repl import SessionState, _run_turn
+        from lmloop.ui import Console, fresh_stats
+        from tests.test_extract import _docx_bytes
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            name = "Module 2 Team Assignment Proposal(1).docx"
+            (root / name).write_bytes(_docx_bytes(["Positioning statement required"]))
+            state = SessionState(
+                cfg={},
+                model="m",
+                messages=[{"role": "system", "content": "s"}],
+                session_log=root / "session.jsonl",
+                stats=fresh_stats(),
+                console=Console(color=False),
+                workspace_root=root.resolve(),
+            )
+            state.session_log.write_text("")
+            captured = {}
+
+            def fake_act(cfg, model, messages, **kwargs):
+                captured["content"] = messages[-1]["content"]
+                captured["extra"] = kwargs.get("extra_readable")
+                return messages
+
+            with patch("lmloop.repl.agent.act", side_effect=fake_act), \
+                 redirect_stdout(io.StringIO()) as out:
+                _run_turn(
+                    state,
+                    f"Read @{name} and write a positioning statement",
+                    lambda _: False,
+                )
+
+            resolved = (root / name).resolve()
+            self.assertEqual(captured["extra"], [resolved])
+            self.assertIn("Attached file contents", captured["content"])
+            self.assertIn("Positioning statement required", captured["content"])
+            self.assertIn(f"[referenced @{name} → {resolved}]", out.getvalue())
+            self.assertNotIn("[no file at", out.getvalue())
+
     def test_run_turn_warns_on_missing_at_ref(self):
         from lmloop.repl import SessionState, _run_turn
         from lmloop.ui import Console, fresh_stats

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lmloop.files_index import (
+    at_completion_token,
     collect_at_refs,
     clear_path_cache,
     expand_at_refs,
@@ -14,9 +15,11 @@ from lmloop.files_index import (
     list_fs_paths,
     list_project_paths,
     normalize_typed_path,
+    strip_at_quotes,
 )
 from lmloop.prompt import (
     LmloopCompleter,
+    _at_slash_action,
     _current_token,
     _in_skill_arg,
     _lex_prompt_line,
@@ -104,6 +107,62 @@ class FilesIndexTests(unittest.TestCase):
             self.assertIn("@my file.txt →", out)
             self.assertIn(target.resolve().as_posix(), out)
 
+    def test_expand_unquoted_spaces_cwd(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            target = root / "Module 2 Team Assignment Proposal(1).docx"
+            target.write_bytes(b"PK")
+            expansion = collect_at_refs(
+                "Read @Module 2 Team Assignment Proposal(1).docx and summarize",
+                cwd=root,
+            )
+            self.assertEqual(expansion.missing, ())
+            self.assertEqual(len(expansion.refs), 1)
+            self.assertEqual(expansion.refs[0].resolved, target.resolve())
+            self.assertIn("@Module 2 Team Assignment Proposal(1).docx →", expansion.text)
+            self.assertIn("and summarize", expansion.text)
+            self.assertNotIn("@Module →", expansion.text)
+
+    def test_expand_unquoted_spaces_home(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d) / "home"
+            down = home / "Downloads"
+            down.mkdir(parents=True)
+            target = down / "Module 2 Team Assignment Proposal(1).docx"
+            target.write_bytes(b"PK")
+            cwd = Path(d) / "proj"
+            cwd.mkdir()
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                expansion = collect_at_refs(
+                    "Read @~/Downloads/Module 2 Team Assignment Proposal(1).docx "
+                    "and Come up with a positioning statement.",
+                    cwd=cwd,
+                )
+            self.assertEqual(expansion.missing, ())
+            self.assertEqual(len(expansion.refs), 1)
+            self.assertEqual(expansion.refs[0].token, "~/Downloads/Module 2 Team Assignment Proposal(1).docx")
+            self.assertEqual(expansion.refs[0].resolved, target.resolve())
+            self.assertIn("positioning statement", expansion.text)
+
+    def test_expand_unquoted_spaces_does_not_eat_sentence(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Module").write_text("x\n")
+            expansion = collect_at_refs("see @Module 2 please", cwd=root)
+            self.assertEqual(len(expansion.refs), 1)
+            self.assertEqual(expansion.refs[0].token, "Module")
+            self.assertIn("2 please", expansion.text)
+
+    def test_expand_unquoted_spaces_longest_match(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Module 2.docx").write_bytes(b"PK")
+            longer = root / "Module 2 extra.docx"
+            longer.write_bytes(b"PK")
+            expansion = collect_at_refs("see @Module 2 extra.docx please", cwd=root)
+            self.assertEqual(len(expansion.refs), 1)
+            self.assertEqual(expansion.refs[0].resolved, longer.resolve())
+
     def test_expand_directory(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -186,6 +245,40 @@ class FilesIndexTests(unittest.TestCase):
         self.assertEqual(normalize_typed_path("//host/share"), "//host/share")
         self.assertEqual(normalize_typed_path("file:///tmp//a"), "file:///tmp/a")
 
+    def test_list_fs_paths_unique_dir_lists_children(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d) / "home"
+            nested = home / "Downloads" / "etc"
+            nested.mkdir(parents=True)
+            (nested / "z.zip").write_bytes(b"PK")
+            (home / "notes.md").write_text("x\n")
+            cwd = Path(d) / "proj"
+            cwd.mkdir()
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                partial = list_fs_paths("~/Down", cwd)
+                exact = list_fs_paths("~/Downloads", cwd)
+                slashed = list_fs_paths("~/Downloads/", cwd)
+                deeper = list_fs_paths("~/Downloads/etc", cwd)
+            self.assertEqual(partial, ["~/Downloads/"])
+            self.assertIn("~/Downloads/etc/", exact)
+            self.assertNotIn("~/Downloads/", exact)
+            self.assertEqual(exact, slashed)
+            self.assertIn("~/Downloads/etc/z.zip", deeper)
+
+    def test_list_fs_paths_ambiguous_dir_does_not_auto_enter(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d) / "home"
+            home.mkdir()
+            (home / "Documents").mkdir()
+            (home / "Documents.txt").write_text("x\n")
+            cwd = Path(d) / "proj"
+            cwd.mkdir()
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                hits = list_fs_paths("~/Documents", cwd)
+            self.assertIn("~/Documents/", hits)
+            self.assertIn("~/Documents.txt", hits)
+            self.assertEqual(len(hits), 2)
+
     def test_join_typed_path_does_not_double_slashes(self):
         self.assertEqual(join_typed_path("~/", "/Downloads", True), "~/Downloads/")
         self.assertEqual(join_typed_path("~/", "Downloads", True), "~/Downloads/")
@@ -232,6 +325,43 @@ class CompleterTests(unittest.TestCase):
             "strategy and plan review",
         )
 
+    def test_bare_at_does_not_crash(self):
+        """Typing @ (as-you-type complete) must not IndexError on an empty path."""
+        self.assertEqual(at_completion_token("@"), "@")
+        self.assertEqual(at_completion_token("@\""), "@\"")
+        self.assertEqual(at_completion_token("@'"), "@'")
+        self.assertEqual(_current_token("@"), "@")
+        self.assertEqual(strip_at_quotes(""), "")
+        self.assertEqual(strip_at_quotes("\""), "")
+        self.assertEqual(strip_at_quotes("'"), "")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "TRAVEL_GUIDE.md").write_text("x\n")
+            c = LmloopCompleter(lambda: [], cwd_provider=lambda: root)
+            docs = Document("@", cursor_position=1)
+            matches = list(c.get_completions(docs, None))
+        texts = [m.text for m in matches]
+        self.assertIn("@TRAVEL_GUIDE.md", texts)
+
+    def test_current_token_spaced_at_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Module 2 Team.docx").write_bytes(b"PK")
+            self.assertEqual(
+                _current_token("Read @Module 2 Team", root),
+                "@Module 2 Team",
+            )
+            self.assertEqual(
+                _current_token("Read @Module 2 Team.docx and", root),
+                "and",
+            )
+            self.assertEqual(
+                at_completion_token('Read @"Module 2 Te', root),
+                '@"Module 2 Te',
+            )
+            self.assertEqual(strip_at_quotes('"foo bar"'), "foo bar")
+            self.assertEqual(strip_at_quotes('"foo bar'), "foo bar")
+
     def test_slash_completions_include_meta(self):
         cmds = [
             SlashCommand("/ceo", "strategy review", lambda *_: True),
@@ -256,6 +386,17 @@ class CompleterTests(unittest.TestCase):
             texts = [m.text for m in matches]
             self.assertIn("@readme.md", texts)
 
+    def test_at_slash_opens_selected_dir(self):
+        self.assertEqual(
+            _at_slash_action("@~/Downloads", "@~/Downloads/"),
+            "apply",
+        )
+        self.assertEqual(_at_slash_action("@~/Downloads/", None), "refresh")
+        self.assertEqual(_at_slash_action("@~/Downloads/", "@~/Downloads/etc/"), "apply")
+        self.assertEqual(_at_slash_action("@~/Down", None), "insert")
+        self.assertEqual(_at_slash_action("/help", "/help"), "insert")
+        self.assertEqual(_at_slash_action("", None), "insert")
+
     def test_at_home_completions_show_resolved(self):
         with tempfile.TemporaryDirectory() as d:
             home = Path(d) / "home"
@@ -272,6 +413,52 @@ class CompleterTests(unittest.TestCase):
             self.assertIn("@~/notes.md", texts)
             meta = {m.text: m.display_meta_text for m in matches}
             self.assertEqual(meta["@~/notes.md"], str(target.resolve()))
+
+    def test_at_unique_dir_completions_list_children(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d) / "home"
+            (home / "Downloads" / "etc").mkdir(parents=True)
+            (home / "Downloads" / "z.zip").write_bytes(b"PK")
+            cwd = Path(d) / "proj"
+            cwd.mkdir()
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                c = LmloopCompleter(lambda: [], cwd_provider=lambda: cwd)
+                docs = Document("@~/Downloads", cursor_position=12)
+                matches = list(c.get_completions(docs, None))
+            texts = [m.text for m in matches]
+            self.assertIn("@~/Downloads/etc/", texts)
+            self.assertIn("@~/Downloads/z.zip", texts)
+            self.assertNotIn("@~/Downloads/", texts)
+
+    def test_at_completes_spaced_name_quoted(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d) / "home"
+            down = home / "Downloads"
+            down.mkdir(parents=True)
+            name = "Module 2 Team Assignment Proposal(1).docx"
+            (down / name).write_bytes(b"PK")
+            cwd = Path(d) / "proj"
+            cwd.mkdir()
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                c = LmloopCompleter(lambda: [], cwd_provider=lambda: cwd)
+                typed = "@~/Downloads/Module 2 Te"
+                docs = Document(typed, cursor_position=len(typed))
+                matches = list(c.get_completions(docs, None))
+            texts = [m.text for m in matches]
+            self.assertIn('@"~/Downloads/' + name + '"', texts)
+
+    def test_at_completes_cwd_file_with_spaces(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            name = "Module 2 Team.docx"
+            (root / name).write_bytes(b"PK")
+            clear_path_cache()
+            c = LmloopCompleter(lambda: [], cwd_provider=lambda: root)
+            typed = "@Module 2 Te"
+            docs = Document(typed, cursor_position=len(typed))
+            matches = list(c.get_completions(docs, None))
+            texts = [m.text for m in matches]
+            self.assertIn('@"' + name + '"', texts)
 
     def test_at_parent_completions(self):
         with tempfile.TemporaryDirectory() as d:
@@ -296,6 +483,19 @@ class CompleterTests(unittest.TestCase):
         self.assertEqual(at[0][1], "@~/Downloads/etc/z.zip")
         self.assertEqual(at[0][0], "class:at-file")
         self.assertNotIn("//", "".join(t for _, t in frags))
+
+    def test_lex_unquoted_spaced_at_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            name = "Module 2 Team.docx"
+            (root / name).write_text("x\n")
+            text = f"Read @{name} and summarize"
+            frags = _lex_prompt_line(text, cwd=root)
+            self.assertEqual("".join(t for _, t in frags), text)
+            at = [(s, t) for s, t in frags if t.startswith("@")]
+            self.assertEqual(len(at), 1)
+            self.assertEqual(at[0][1], "@" + name)
+            self.assertEqual(at[0][0], "class:at-file")
 
     def test_lex_slash_and_at_dir(self):
         frags = _lex_prompt_line("/skill look @src/")

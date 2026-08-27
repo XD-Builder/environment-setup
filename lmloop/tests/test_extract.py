@@ -170,6 +170,19 @@ class OfficeTests(unittest.TestCase):
         self.assertIn("Hello", extracted.text)
         self.assertIn("World", extracted.text)
 
+    def test_attachment_excerpt_inlines_docx(self):
+        from lmloop.extract import attachment_excerpt
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "note.docx"
+            path.write_bytes(_docx_bytes(["Hello", "World"]))
+            excerpt = attachment_excerpt(path)
+            self.assertIsNotNone(excerpt)
+            self.assertIn("Hello", excerpt)
+            self.assertIn("World", excerpt)
+            txt = Path(d) / "a.py"
+            txt.write_text("print(1)\n")
+            self.assertIsNone(attachment_excerpt(txt))
+
     def test_xlsx_cells(self):
         data = _xlsx_bytes([["Name", "Qty"], ["apples", "3"]])
         extracted = extract_bytes(data, name="t.xlsx")
