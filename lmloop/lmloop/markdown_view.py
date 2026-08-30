@@ -12,6 +12,9 @@ from .extract import flatten_content
 # list items, tables, and other laid-out renderables.
 _MARKDOWN_PRINT = dict(overflow="fold", crop=False, no_wrap=False)
 
+# Cached Markdown subclass (no ▌ quote gutter), or False if rich is missing.
+_MARKDOWN_CLS = None
+
 
 def _rich_available() -> bool:
     try:
@@ -57,9 +60,40 @@ def make_console(
     return Console(**kwargs)
 
 
+def _markdown_cls():
+    """Rich Markdown whose block quotes are body text (no ▌ gutter).
+
+    Rich's default BlockQuote paints ``▌ `` on every line. Selecting that
+    in the TTY or in ``less -R`` copies the bar. Quotes stay quotes in the
+    source; only the gutter is omitted.
+    """
+    global _MARKDOWN_CLS
+    if _MARKDOWN_CLS is not None:
+        return _MARKDOWN_CLS
+    try:
+        from rich.markdown import BlockQuote, Markdown
+    except ImportError:
+        _MARKDOWN_CLS = False
+        return _MARKDOWN_CLS
+
+    class PlainQuote(BlockQuote):
+        def __rich_console__(self, console, options):
+            yield from console.render(self.elements, options)
+
+    class View(Markdown):
+        elements = {**Markdown.elements, "blockquote_open": PlainQuote}
+
+    _MARKDOWN_CLS = View
+    return _MARKDOWN_CLS
+
+
+def _markdown(text: str):
+    cls = _markdown_cls()
+    return cls(text) if cls else text
+
+
 def _print_markdown(console, text: str) -> None:
-    from rich.markdown import Markdown
-    console.print(Markdown(text), **_MARKDOWN_PRINT)
+    console.print(_markdown(text), **_MARKDOWN_PRINT)
 
 
 def _fold_overwide_lines(lines, max_width: int) -> list:
@@ -85,10 +119,9 @@ def render_markdown_lines(console, text: str, options) -> list:
     Do not use ``Console.render_lines``: this Rich version always crops via
     ``Segment.split_and_crop_lines``.
     """
-    from rich.markdown import Markdown
     from rich.segment import Segment
     render_options = options.update(height=None, overflow="fold", no_wrap=False)
-    rendered = console.render(Markdown(text), render_options)
+    rendered = console.render(_markdown(text), render_options)
     lines = list(Segment.split_lines(rendered))
     width = options.max_width or (options.size.width if options.size else 0)
     return _fold_overwide_lines(lines, width)
@@ -179,10 +212,18 @@ def messages_to_markdown(messages: Iterable[dict]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def session_transcript(messages: list) -> "str | None":
+    """Session markdown for paging or clipboard, or None when empty."""
+    md = messages_to_markdown(messages)
+    if md.strip() == "# Session transcript":
+        return None
+    return md
+
+
 def page_transcript(messages: list, color: bool = True) -> int:
     """Render the session as markdown and open it in less."""
-    md = messages_to_markdown(messages)
-    if md.strip() in ("# Session transcript", "# Session transcript\n"):
+    md = session_transcript(messages)
+    if md is None:
         print("(empty transcript)")
         return 0
     return page_ansi(render_markdown_ansi(md, color=color))

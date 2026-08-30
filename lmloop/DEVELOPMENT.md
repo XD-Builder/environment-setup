@@ -100,7 +100,7 @@ find yourself updating two lists, you have already added debt.
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers | `repl.py` |
 | prompt_toolkit session, completers, key bindings, input lexer | `prompt.py` |
-| ANSI chrome, status bar, `drain_tty_input` | `ui.py` |
+| ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui.py` |
 | rich Console / markdown / pager | `markdown_view.py` |
 
 `agent.py` imports display/stream helpers that `act()` calls. Tests patch

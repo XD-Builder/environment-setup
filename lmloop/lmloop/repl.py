@@ -12,7 +12,7 @@ from .commands import slash_command_metas
 from .config import project_slug
 from .files_index import AtRefExpansion, collect_at_refs
 from .status import MSG_RESUME, msg_graph_continue, msg_until_continue, status as status_line
-from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate
+from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate, write_clipboard
 
 _THINKING_HISTORY_MAX = 30
 _UNTIL_FOLLOWUP = "Ready to continue from this until-run. Ask a follow-up."
@@ -880,8 +880,35 @@ def _cmd_context(state: SessionState, _arg: str) -> bool:
 def _cmd_transcript(state: SessionState, _arg: str) -> bool:
     """Open the rendered session transcript in less (q to return)."""
     from .markdown_view import page_transcript
-    state.console.hint("[opening transcript in less — press q to return]")
+    state.console.hint("[opening transcript in less — press q to return · /copy for last answer]")
     page_transcript(state.messages, color=state.console.t._on)
+    return True
+
+
+def _cmd_copy(state: SessionState, arg: str) -> bool:
+    """Copy the last assistant answer, or the full session, to the clipboard."""
+    from .markdown_view import session_transcript
+    key = (arg or "").strip().lower()
+    if not key:
+        text = loop_mod.last_assistant(state.messages)
+        if not text:
+            state.console.info("(no assistant reply to copy)")
+            return True
+        label = "answer"
+    elif key == "transcript":
+        text = session_transcript(state.messages)
+        if text is None:
+            state.console.info("(empty transcript)")
+            return True
+        label = "transcript"
+    else:
+        state.console.error("usage: /copy [transcript]")
+        return True
+    err = write_clipboard(text)
+    if err:
+        state.console.error(f"copy failed: {err}")
+        return True
+    state.console.hint(f"[copied {label} · {len(text)} chars]")
     return True
 
 
@@ -891,6 +918,7 @@ def _build_slash_commands(confirm_gate) -> list:
         "help": _cmd_help,
         "stats": _cmd_stats,
         "transcript": _cmd_transcript,
+        "copy": _cmd_copy,
         "skills": lambda s, a: _cmd_skills(s, a, confirm_gate),
         "history": _cmd_history,
         "checkpoints": _cmd_checkpoints,

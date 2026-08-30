@@ -2,9 +2,9 @@
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from lmloop.ui import Console, context_bar, context_fill, fresh_stats
+from lmloop.ui import Console, context_bar, context_fill, fresh_stats, write_clipboard
 
 
 class UiTests(unittest.TestCase):
@@ -120,6 +120,29 @@ class UiTests(unittest.TestCase):
         }])
         self.assertGreaterEqual(n, IMAGE_TOKEN_ESTIMATE)
         self.assertLess(n, IMAGE_TOKEN_ESTIMATE + 500)
+
+
+class ClipboardTests(unittest.TestCase):
+    def test_write_clipboard_uses_first_available_tool(self):
+        proc = Mock(returncode=0, stdout="", stderr="")
+        with patch("lmloop.ui.shutil.which", side_effect=lambda n: "/bin/" + n if n == "pbcopy" else None), \
+             patch("lmloop.ui.subprocess.run", return_value=proc) as run:
+            self.assertIsNone(write_clipboard("hello"))
+        run.assert_called_once()
+        args, kwargs = run.call_args
+        self.assertEqual(args[0], ["/bin/pbcopy"])
+        self.assertEqual(kwargs["input"], "hello")
+
+    def test_write_clipboard_reports_missing_tool(self):
+        with patch("lmloop.ui.shutil.which", return_value=None):
+            err = write_clipboard("hello")
+        self.assertIn("no clipboard tool", err)
+
+    def test_write_clipboard_reports_nonzero_exit(self):
+        proc = Mock(returncode=1, stdout="", stderr="denied")
+        with patch("lmloop.ui.shutil.which", return_value="/usr/bin/pbcopy"), \
+             patch("lmloop.ui.subprocess.run", return_value=proc):
+            self.assertEqual(write_clipboard("hello"), "denied")
 
 
 if __name__ == "__main__":
