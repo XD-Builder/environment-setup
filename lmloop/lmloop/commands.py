@@ -25,6 +25,8 @@ COMMANDS: tuple = (
     CommandMeta("help", "show available commands"),
     CommandMeta("stats", "show token usage and session activity"),
     CommandMeta("transcript", "view rendered session in less (q to quit)"),
+    CommandMeta("copy", "copy last answer to the clipboard (plain text, no live bar)",
+                accepts_arg=True, arg_hint="[transcript]"),
     CommandMeta("skills", "list skills, or: new <name> [brief] to author one",
                 accepts_arg=True, arg_hint="[new <name> brief]", cli=True),
     CommandMeta("skill", "run any skill prompt by name",

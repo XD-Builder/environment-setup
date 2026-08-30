@@ -2,22 +2,30 @@
 
 import unittest
 
-from lmloop.markdown_view import make_console, messages_to_markdown, render_markdown_ansi
+from lmloop.markdown_view import (
+    make_console,
+    messages_to_markdown,
+    render_markdown_ansi,
+    session_transcript,
+)
 
 
 class MarkdownViewTests(unittest.TestCase):
     def test_messages_to_markdown_skips_system(self):
-        md = messages_to_markdown([
+        messages = [
             {"role": "system", "content": "secret"},
             {"role": "user", "content": "hello **world**"},
             {"role": "assistant", "content": "# Title\n\n- one"},
-        ])
+        ]
+        md = messages_to_markdown(messages)
         self.assertIn("# Session transcript", md)
         self.assertIn("## User", md)
         self.assertIn("hello **world**", md)
         self.assertIn("## Assistant", md)
         self.assertIn("# Title", md)
         self.assertNotIn("secret", md)
+        self.assertEqual(session_transcript(messages), md)
+        self.assertIsNone(session_transcript([{"role": "system", "content": "secret"}]))
 
     def test_messages_to_markdown_flattens_images(self):
         md = messages_to_markdown([{
@@ -79,6 +87,23 @@ class MarkdownViewTests(unittest.TestCase):
         )
         out = " ".join(render_markdown_ansi(text, width=40, color=False).split())
         self.assertIn("reservation held", out)
+
+    def test_blockquote_has_no_gutter_bar(self):
+        from lmloop.markdown_view import _rich_available
+        if not _rich_available():
+            self.skipTest("rich not installed")
+        text = (
+            "Intro sentence.\n\n"
+            "> By integrating Burt's Bees into Greenworks, Clorox "
+            "resolves the brand identity conflict by unifying both "
+            "under a single coherent natural brand.\n\n"
+            "Summary of changes:\n"
+        )
+        out = render_markdown_ansi(text, width=60, color=False)
+        self.assertIn("Burt's Bees", out)
+        self.assertIn("Summary of changes", out)
+        self.assertNotIn("▌", out)
+        self.assertNotRegex(out, r"(?m)^[|┃│]")
 
     def test_make_console_soft_wrap_default_off_for_live(self):
         from io import StringIO

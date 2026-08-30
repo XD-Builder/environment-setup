@@ -123,6 +123,7 @@ Inside the REPL:
 | `/stats` | show token usage and session activity |
 | `/new` | reset conversation (memory context re-injected) |
 | `/transcript` | view rendered session in less (`q` to quit) |
+| `/copy [transcript]` | copy last assistant answer to the clipboard (plain text, no live bar); `transcript` copies the full session as markdown |
 | `/help` | show available commands |
 | `/quit` | exit (`/exit` and `/q` also work) |
 
@@ -130,8 +131,9 @@ Every file in `skills/` (except `system.md`) is also available as `/name` automa
 
 REPL UX (prompt_toolkit + rich):
 
-- **Assistant replies** are rendered as markdown. Live preview grows with the answer up to the terminal and never shrinks; it only tails if it would overflow. When the stream ends, the preview is cleared and the full answer is printed once, wrapped at the terminal width (list items included, never cropped).
-- **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL.
+- **Assistant replies** are rendered as markdown. Live preview grows with the answer up to the terminal and never shrinks; it only tails if it would overflow. When the stream ends, the preview is cleared and the full answer is printed once, wrapped at the terminal width (list items included, never cropped). Block quotes are body text (no `▌` gutter) so a mouse selection does not pick up a bar.
+- **`/transcript`** pages the full session (rendered) through `less -R`; press `q` to return to the REPL. Block quotes render as body text (no `▌` gutter), so you can select-copy from the pager.
+- **`/copy`** puts the last assistant answer on the clipboard as stored text. **`/copy transcript`** copies the full session as markdown source.
 - **Prompt** shows `cwd · model ›` (decorative only) with a **bottom toolbar** for context fill / session tokens / turns.
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
 - **Type `@`** for file paths. Project-relative names complete from the git-aware index (plus the current directory, including files git ignores). Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. A unique directory (`@~/Downloads`) lists that directory’s contents — you do not have to type `/` to open it. `/` on a highlighted `@dir/` opens that listing and does not insert another slash. Names with spaces complete quoted (`@"Module 2.docx"`) and also resolve unquoted on submit when the file exists (`@~/Downloads/Module 2 Team.docx`). Typed `@path` tokens (including `~/…` and spaces) are colored in the input; duplicate slashes from completion (`@~//Downloads//file`) are collapsed. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted or unquoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. PDF, Office (`.docx`/`.xlsx`/`.pptx`), zip, and audio attachments inline extracted text in the message so the model does not need to `read_file` first. The model may still `read_file` / `list_dir` those attached paths **in place** this turn even if they sit outside the workspace — it must not copy them into the project first. Zip `@path`s list archive members. Missing tokens print `[no file at @…]` and are skipped. Image `@path`s are attached as native vision input when the loaded model is a VLM (`vision: auto` in config). Writing an attached outside path, or `cp`/`unzip` of an outside path into the workspace, asks for confirmation.

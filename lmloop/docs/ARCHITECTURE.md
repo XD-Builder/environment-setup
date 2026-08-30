@@ -32,8 +32,8 @@ lmloop/
 │   ├── config.py               # ~/.lmloop/config.json, project slug resolution
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
-│   ├── markdown_view.py        # render assistant markdown to terminal
-│   ├── ui.py                   # Console: ANSI theming, status bars, stats
+│   ├── markdown_view.py        # render assistant markdown (no quote gutter)
+│   ├── ui.py                   # Console: ANSI theming, status bars, clipboard
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
 │   ├── status.py               # status/resume copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
@@ -273,7 +273,7 @@ The interactive mode uses `prompt_toolkit` for:
 - **Double Ctrl-C to exit** (first dismisses completion menu, second exits).
 - **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted or unquoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Duplicate slashes in the typed token are collapsed. Missing tokens warn; existing ones are readable this turn **in place** even outside the workspace. PDF/Office/zip/audio attachments inline extracted text in the user message. Copy/extract of those files into the workspace, and writes to them, require confirmation.
 
-Slash commands (`/help`, `/stats`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately.
+Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable.
 
 Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input()` without completions.
 

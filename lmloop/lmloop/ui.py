@@ -8,10 +8,18 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from . import tools
+
+# macOS first (this repo's usual host), then Wayland / X11.
+_CLIPBOARD_CMDS = (
+    ("pbcopy", ()),
+    ("wl-copy", ()),
+    ("xclip", ("-selection", "clipboard")),
+)
 
 
 def _supports_color(enabled: bool = True) -> bool:
@@ -200,6 +208,29 @@ def context_bar(used: int, limit: int, ratio: float, width: int = 16,
     return f"[{bar}]{suffix}"
 
 
+def write_clipboard(text: str) -> "str | None":
+    """Copy ``text`` to the OS clipboard. Returns an error, or None on success."""
+    for name, extra in _CLIPBOARD_CMDS:
+        path = shutil.which(name)
+        if not path:
+            continue
+        try:
+            proc = subprocess.run(
+                [path, *extra],
+                input=text,
+                text=True,
+                check=False,
+                capture_output=True,
+            )
+        except OSError as e:
+            return str(e)
+        if proc.returncode == 0:
+            return None
+        err = (proc.stderr or proc.stdout or "").strip()
+        return err or f"{name} exited {proc.returncode}"
+    return "no clipboard tool (need pbcopy, wl-copy, or xclip)"
+
+
 class Console:
     """Unified human-facing output for REPL and CLI subcommands."""
 
@@ -213,7 +244,8 @@ class Console:
             f"{t.c('/help', t.green)} for commands · "
             f"{t.c('/', t.green)} cmds · "
             f"{t.c('@file', t.green)} · "
-            f"{t.c('/transcript', t.green)}"
+            f"{t.c('/transcript', t.green)} · "
+            f"{t.c('/copy', t.green)}"
         )
 
     def print_markdown(self, text: str) -> None:

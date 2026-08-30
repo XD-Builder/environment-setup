@@ -46,6 +46,7 @@ class SkillsDiscoveryTests(unittest.TestCase):
         self.assertIsNotNone(agent.validate_skill_name("new"))
         self.assertIsNotNone(agent.validate_skill_name("_hidden"))
         self.assertIsNotNone(agent.validate_skill_name("transcript"))
+        self.assertIsNotNone(agent.validate_skill_name("copy"))
         self.assertIsNotNone(agent.validate_skill_name("q"))
 
     def test_load_skill_public_only_hides_private(self):
@@ -222,6 +223,9 @@ class AutoSlashTests(unittest.TestCase):
         self.assertIn("/memory", help_text)
         self.assertIn("mine", help_text)
         self.assertNotIn("/retro", help_text)
+        self.assertIn("/copy", names)
+        self.assertIn("/copy", help_text)
+        self.assertIn("transcript", help_text)
 
 
 class AtRefTurnTests(unittest.TestCase):
@@ -440,6 +444,102 @@ class AtRefTurnTests(unittest.TestCase):
             code = main(["skill", "_author"])
         self.assertEqual(code, 1)
         self.assertIn("No skill", err.getvalue())
+
+
+class CopyCommandTests(unittest.TestCase):
+    def _state(self, messages):
+        from lmloop.repl import SessionState
+        from lmloop.ui import Console, fresh_stats
+        return SessionState(
+            cfg={},
+            model="m",
+            messages=messages,
+            session_log=Path("/tmp/unused.jsonl"),
+            stats=fresh_stats(),
+            console=Console(color=False),
+        )
+
+    def test_copy_last_answer_omits_live_bar(self):
+        from lmloop.repl import _cmd_copy
+        answer = (
+            "By integrating Burt's Bees into the Greenworks line, Clorox "
+            "resolves the brand identity conflict."
+        )
+        state = self._state([
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "recommend an option"},
+            {"role": "assistant", "content": answer},
+        ])
+        with patch("lmloop.repl.write_clipboard", return_value=None) as clip, \
+             redirect_stdout(io.StringIO()) as buf:
+            self.assertTrue(_cmd_copy(state, ""))
+        clip.assert_called_once_with(answer)
+        self.assertFalse(clip.call_args[0][0].startswith("▌"))
+        self.assertNotIn("▌ ", clip.call_args[0][0])
+        self.assertIn("copied answer", buf.getvalue())
+
+    def test_copy_skips_empty_assistant_and_tool_only_turns(self):
+        from lmloop.repl import _cmd_copy
+        state = self._state([
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "keep this"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+        ])
+        with patch("lmloop.repl.write_clipboard", return_value=None) as clip, \
+             redirect_stdout(io.StringIO()):
+            self.assertTrue(_cmd_copy(state, ""))
+        clip.assert_called_once_with("keep this")
+
+    def test_copy_no_assistant(self):
+        from lmloop.repl import _cmd_copy
+        state = self._state([{"role": "system", "content": "sys"}])
+        with patch("lmloop.repl.write_clipboard") as clip, \
+             redirect_stdout(io.StringIO()) as buf:
+            self.assertTrue(_cmd_copy(state, ""))
+        clip.assert_not_called()
+        self.assertIn("no assistant reply", buf.getvalue())
+
+    def test_copy_transcript(self):
+        from lmloop.markdown_view import messages_to_markdown
+        from lmloop.repl import _cmd_copy
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ]
+        state = self._state(messages)
+        with patch("lmloop.repl.write_clipboard", return_value=None) as clip, \
+             redirect_stdout(io.StringIO()) as buf:
+            self.assertTrue(_cmd_copy(state, "transcript"))
+        clip.assert_called_once_with(messages_to_markdown(messages))
+        self.assertIn("copied transcript", buf.getvalue())
+        self.assertNotIn("▌ ", clip.call_args[0][0])
+
+    def test_copy_empty_transcript(self):
+        from lmloop.repl import _cmd_copy
+        state = self._state([{"role": "system", "content": "sys"}])
+        with patch("lmloop.repl.write_clipboard") as clip, \
+             redirect_stdout(io.StringIO()) as buf:
+            self.assertTrue(_cmd_copy(state, "transcript"))
+        clip.assert_not_called()
+        self.assertIn("empty transcript", buf.getvalue())
+
+    def test_copy_unknown_arg(self):
+        from lmloop.repl import _cmd_copy
+        state = self._state([{"role": "assistant", "content": "a"}])
+        with patch("lmloop.repl.write_clipboard") as clip, \
+             redirect_stderr(io.StringIO()) as buf:
+            self.assertTrue(_cmd_copy(state, "tools"))
+        clip.assert_not_called()
+        self.assertIn("usage: /copy", buf.getvalue())
+
+    def test_copy_clipboard_error(self):
+        from lmloop.repl import _cmd_copy
+        state = self._state([{"role": "assistant", "content": "a"}])
+        with patch("lmloop.repl.write_clipboard", return_value="no clipboard tool"), \
+             redirect_stderr(io.StringIO()) as buf:
+            self.assertTrue(_cmd_copy(state, ""))
+        self.assertIn("copy failed", buf.getvalue())
 
 
 class RestoreArgTests(unittest.TestCase):
