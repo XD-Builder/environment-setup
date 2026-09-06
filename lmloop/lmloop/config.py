@@ -24,10 +24,17 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 STATE_ROOT = Path(os.environ.get("LMLOOP_HOME", str(Path.home() / ".lmloop")))
 CONFIG_PATH = STATE_ROOT / "config.json"
+
+
+def utc_now() -> str:
+    """UTC timestamp as ``YYYY-MM-DDTHH:MM:SSZ``."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 DEFAULTS = {
     "base_url": "http://127.0.0.1:1234/v1",
@@ -49,7 +56,7 @@ DEFAULTS = {
     "color": True,
     "context_length": 0,  # 0 = auto-detect from LM Studio; manual override in tokens
     "context_reserve": 2048,  # tokens reserved for model reply when showing fill bar
-    "until_max_steps": 12,  # maker cycles per until invocation before pause
+    "eval_max_rounds": 8,  # gather rounds for until/graph eval act(); maker keeps max_rounds
     "until_mine": True,  # after until pass, mine learnings from the run
     "graph_max_steps": 24,  # node entries per graph invocation before pause
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings

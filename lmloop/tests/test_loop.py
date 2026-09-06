@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop.agent import ServerError
+from lmloop.server import ServerError
 from lmloop.loop import (
     UntilRun,
     check_status_from_output,
@@ -169,7 +169,7 @@ class UntilRunnerTests(unittest.TestCase):
         with patch("lmloop.loop.project_dir", return_value=root), \
              patch("lmloop.memory.project_dir", return_value=root), \
              patch("lmloop.loop.agent.act", side_effect=fake_act), \
-             patch("lmloop.loop.agent.system_prompt", return_value="sys"):
+             patch("lmloop.loop.skills.system_prompt", return_value="sys"):
             run = UntilRun.create(kwargs.pop("goal", "make it work"),
                                   check_cmd=kwargs.pop("check_cmd", None))
             return run_until(
@@ -288,6 +288,59 @@ class UntilRunnerTests(unittest.TestCase):
             self._run(Path(d), _cfg(), fake_act)
         self.assertEqual(seen, [False, True])
 
+    def test_eval_uses_eval_max_rounds(self):
+        seen = []
+
+        def fake_act(cfg, model, messages, **kwargs):
+            seen.append(kwargs.get("max_rounds"))
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({
+                    "role": "assistant",
+                    "content": "ok\nSTATUS: pass",
+                })
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            self._run(Path(d), _cfg(eval_max_rounds=5), fake_act)
+        self.assertEqual(seen, [None, 5])
+
+    def test_until_freezes_clock_across_maker_and_eval(self):
+        clocks = []
+
+        def fake_prompt(cfg, workspace_root=None, clock_now=None):
+            clocks.append(clock_now)
+            return "sys"
+
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({
+                    "role": "assistant",
+                    "content": "ok\nSTATUS: pass",
+                })
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            echo_status = lambda *_a, **_k: None
+            with patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.skills.system_prompt", side_effect=fake_prompt):
+                run = UntilRun.create("make it work")
+                run_until(
+                    _cfg(), "m", run=run, echo=lambda *_a, **_k: None,
+                    echo_status=echo_status, workspace_root=root,
+                )
+        self.assertEqual(len(clocks), 2)
+        self.assertIsNotNone(clocks[0])
+        self.assertIs(clocks[0], clocks[1])
+
     def test_check_denied_goes_to_gate(self):
         def fake_act(cfg, model, messages, **kwargs):
             messages.append({"role": "assistant", "content": "worked"})
@@ -346,7 +399,7 @@ class UntilRunnerTests(unittest.TestCase):
             with patch("lmloop.loop.project_dir", return_value=root), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.loop.agent.act", side_effect=always_fail), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"):
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"):
                 loaded = UntilRun.load(run.path)
                 run_until(
                     _cfg(until_max_steps=1), "m", run=loaded,

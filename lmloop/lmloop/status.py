@@ -82,6 +82,9 @@ def msg_until_continue() -> str:
     return status("until done — type to continue")
 
 
+MSG_UNTIL_FOLLOWUP = "Ready to continue from this until-run. Ask a follow-up."
+
+
 def msg_graph_step(node: str, step: int, max_steps: int) -> str:
     return status(f"graph {node} · step {step}/{max_steps}")
 
@@ -108,6 +111,9 @@ def msg_graph_done() -> str:
 
 def msg_graph_continue() -> str:
     return status("graph done — type to continue")
+
+
+MSG_GRAPH_FOLLOWUP = "Ready to continue from this graph-run. Ask a follow-up."
 
 
 def msg_context_pressure(pct: int) -> str:

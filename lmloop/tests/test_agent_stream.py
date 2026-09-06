@@ -9,6 +9,7 @@ from unittest import mock
 from lmloop import agent
 from lmloop import display
 from lmloop import stream as stream_mod
+from lmloop.server import ServerError
 from lmloop.status import ANSWER_TEXT, NUDGE_CONTINUE_TEXT, answer_message
 
 
@@ -1208,7 +1209,7 @@ class ChatStreamTests(unittest.TestCase):
     def test_empty_stream_raises(self):
         cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(b"")):
-            with self.assertRaises(agent.ServerError) as ctx:
+            with self.assertRaises(ServerError) as ctx:
                 agent._chat_stream(cfg, "m", [], None)
         self.assertIn("Empty stream", str(ctx.exception))
 
@@ -1540,13 +1541,13 @@ class ActIntegrationTests(unittest.TestCase):
                     }]},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
                 )
-            raise agent.ServerError("boom")
+            raise ServerError("boom")
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
              mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
-            with self.assertRaises(agent.ServerError):
+            with self.assertRaises(ServerError):
                 agent.act(
                     cfg, "m", messages,
                     echo=lambda *_a: None, echo_delta=False,
@@ -1988,6 +1989,95 @@ class GatherAnswerTests(unittest.TestCase):
         self.assertIsNone(specs[2])
         self.assertEqual(messages[-1].get("content"), "Done.")
 
+    def test_act_no_tools_omits_specs(self):
+        specs = []
+        built = []
+
+        def fake_chat(_cfg, _model, _messages, tool_specs, **_k):
+            specs.append(tool_specs)
+            return ({"role": "assistant", "content": "checkpoint"}, {})
+
+        def fake_build(*_a, **_k):
+            built.append(True)
+            return ([{"type": "function", "function": {"name": "list_dir"}}], {})
+
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": False,
+            "confirm_shell": False,
+        }
+        messages = [{"role": "user", "content": "summarize"}]
+        with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", side_effect=fake_build):
+            agent.act(
+                cfg, "m", messages, no_tools=True,
+                echo=lambda *_a: None, echo_delta=False,
+            )
+        self.assertEqual(specs, [None])
+        self.assertEqual(built, [])
+        self.assertEqual(messages[-1].get("content"), "checkpoint")
+
+    def test_act_max_rounds_override_caps_gather(self):
+        specs = []
+
+        def fake_chat(_cfg, _model, _messages, tool_specs, **_k):
+            specs.append(tool_specs)
+            return (
+                {"role": "assistant", "content": "", "tool_calls": [{
+                    "id": f"c{len(specs)}", "type": "function",
+                    "function": {"name": "list_dir", "arguments": "{}"},
+                }]},
+                {},
+            )
+
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": False,
+            "confirm_shell": False, "max_rounds": 60,
+        }
+        messages = [{"role": "user", "content": "hi"}]
+        with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(
+                 agent.tools, "build_tools",
+                 return_value=([{"type": "function", "function": {"name": "list_dir"}}], {}),
+             ), \
+             mock.patch.object(agent.tools, "run_tool_calls", return_value=["ok"]), \
+             mock.patch.object(agent.tools, "dispatch", return_value="ok"):
+            agent.act(
+                cfg, "m", messages, max_rounds=1,
+                echo=lambda *_a: None, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        # one gather (tools on) + one answer (tools omitted)
+        self.assertEqual(len(specs), 2)
+        self.assertIsNotNone(specs[0])
+        self.assertIsNone(specs[1])
+
+
+class ChatRequestTests(unittest.TestCase):
+    def test_tool_choice_auto_when_tools_present(self):
+        from lmloop.chat import _chat_request
+
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.2}
+        specs = [{"type": "function", "function": {"name": "list_dir"}}]
+        req = _chat_request(cfg, "m", [{"role": "user", "content": "hi"}], specs, stream=False)
+        payload = json.loads(req.data)
+        self.assertEqual(payload["tools"], specs)
+        self.assertEqual(payload["tool_choice"], "auto")
+        self.assertNotIn("stream_options", payload)
+
+    def test_tool_choice_omitted_when_no_tools(self):
+        from lmloop.chat import _chat_request
+
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.2}
+        req = _chat_request(cfg, "m", [{"role": "user", "content": "hi"}], None, stream=True)
+        payload = json.loads(req.data)
+        self.assertNotIn("tools", payload)
+        self.assertNotIn("tool_choice", payload)
+        self.assertEqual(payload["stream_options"], {"include_usage": True})
+
 
 class MalformedToolDeltaTests(unittest.TestCase):
     def test_bad_index_skipped(self):
@@ -2038,24 +2128,6 @@ class MalformedToolDeltaTests(unittest.TestCase):
         self.assertEqual(msgs[-1]["content"], "ok")
 
 
-class VisionCapabilityTests(unittest.TestCase):
-    def tearDown(self):
-        agent._VISION_CACHE.clear()
-
-    def test_config_true_false(self):
-        self.assertTrue(agent.model_has_vision("m", {"vision": "true"}))
-        self.assertFalse(agent.model_has_vision("m", {"vision": "false"}))
-
-    def test_auto_uses_native_type_not_name(self):
-        entries = [{"id": "qwen3.6-35b-a3b", "type": "vlm"}]
-        cfg = {"vision": "auto", "base_url": "http://127.0.0.1:1234/v1"}
-        with mock.patch("lmloop.agent._native_model_entries", return_value=entries):
-            agent._VISION_CACHE.clear()
-            self.assertTrue(agent.model_has_vision("qwen3.6-35b-a3b", cfg))
-            agent._VISION_CACHE.clear()
-            self.assertFalse(agent.model_has_vision("text-only", cfg))
-
-
 class ActVisionInjectTests(unittest.TestCase):
     def _sse_text_and_tool(self, content, name, args, call_id="c1"):
         return _sse(
@@ -2092,7 +2164,7 @@ class ActVisionInjectTests(unittest.TestCase):
              mock.patch("lmloop.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp, \
-             mock.patch.object(agent, "model_has_vision", return_value=True):
+             mock.patch("lmloop.server.model_has_vision", return_value=True):
             disp.return_value = ToolResult("caption", [media])
             agent.act(
                 cfg, "m", messages,

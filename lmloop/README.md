@@ -207,9 +207,9 @@ local, single-user research loop needs.
   `lmloop/steer/`, `~/.lmloop/steer/`, or `<workspace>/.lmloop/steer/`. Files
   concatenate into the system prompt (packaged, then user, then project; later
   dirs can contradict earlier; same-name files add, they do not override).
-  A Clock block (UTC date) is injected on every `system_prompt()` call so
-  relative windows like "last 4 weeks" use today, not a training-cutoff year.
-  `current_time` refreshes that clock in a long REPL session.
+  A Clock block (UTC date) is frozen at REPL session start and at each until/graph
+  run so relative windows like "last 4 weeks" use that snapshot, not a
+  training-cutoff year. `current_time` refreshes that clock in a long session.
 - **New graph:** drop `~/.lmloop/graphs/<name>.md` (overrides packaged). Line-based
   `node` / `edge` markdown; see `lmloop/graphs/company.md`. Run with
   `lmloop graph <name>` or `/graph <name>`.
@@ -227,6 +227,7 @@ zsh completion for `config set` is generated from these keys.
 | `base_url` | `http://127.0.0.1:1234/v1` | OpenAI-compatible API root |
 | `model` | *(empty)* | Empty = first model the server reports |
 | `max_rounds` | `60` | Tool-gather rounds per `act()` call; a tools-off answer follows if gather repeats a tool set or hits this budget |
+| `eval_max_rounds` | `8` | Gather rounds for until/graph **eval** `act()` (maker still uses `max_rounds`) |
 | `max_continue_nudges` | `2` | Auto-resume when the model narrates a next step without tools |
 | `temperature` | `0.7` | Chat sampling temperature |
 | `timeout_s` | `600` | HTTP timeout for chat completions (seconds) |

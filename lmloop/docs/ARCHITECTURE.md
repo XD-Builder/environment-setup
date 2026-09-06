@@ -17,25 +17,31 @@ lmloop/
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
 │   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (shipped opt-in)
-│   └── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
+│   ├── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
+│   └── DESIGN_LLM_CALLING.md   # completions HTTP + act() budgets (shipped)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
 │   ├── cli.py                  # argparse subcommands → REPL or one-shot
 │   ├── repl.py                 # interactive loop with slash commands
 │   ├── prompt.py               # prompt_toolkit session, completers
-│   ├── agent.py                # the loop: chat call + multi-round tool dispatch
+│   ├── agent.py                # gather/answer tool loop, skill drafting
+│   ├── chat.py                 # POST /v1/chat/completions (leaf)
+│   ├── skills.py               # skill playbooks, name validation, system prompt
+│   ├── server.py               # LMS bring-up, models, context length, vision
 │   ├── stream.py               # SSE ingest, overlap, repeat-halt
 │   ├── display.py              # spinner, live printers, thinking lines
 │   ├── tools.py                # tool registry: specs + Python impls
+│   ├── web.py                  # web_search / fetch_url + HTML parsers
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
-│   ├── config.py               # ~/.lmloop/config.json, project slug resolution
+│   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
+│   ├── config.py               # ~/.lmloop/config.json, project slug, utc_now
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
 │   ├── markdown_view.py        # render assistant markdown (no quote gutter)
 │   ├── ui.py                   # Console: ANSI theming, status bars, clipboard
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
-│   ├── status.py               # status/resume copy
+│   ├── status.py               # status / resume / until-graph follow-up copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
 │   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
@@ -65,13 +71,13 @@ lmloop/
 
 ## The Agent Loop
 
-**File:** `agent.py`
+**Files:** `agent.py` (gather/answer), `chat.py` (HTTP)
 
-The heart of lmloop. A single function, `act()`, implements the multi-round tool loop:
+The heart of lmloop. A single function, `act()`, implements the multi-round tool loop. Every generated token comes from `chat._chat()` posting to `{base_url}/chat/completions`. Call inventory and budgets: [DESIGN_LLM_CALLING.md](DESIGN_LLM_CALLING.md).
 
 ```
 gather (tools on, up to max_rounds):
-    msg, usage = _chat(..., tool_specs)
+    msg, usage = _chat(..., tools + tool_choice=auto)
     if no tool_calls:
         return                          # natural final reply
     if this tool set was already run this turn:
@@ -82,16 +88,85 @@ answer (tools off, one call):
     return
 ```
 
+```mermaid
+flowchart TD
+  start[act start] --> round[round 0 to max_rounds]
+  round --> warn[warn if context over 80 percent]
+  warn --> chat["_chat POST /v1/chat/completions"]
+  chat --> sse{cfg.stream?}
+  sse -->|yes| stream["_chat_stream SSE assemble"]
+  sse -->|no| once["_chat_once JSON"]
+  stream --> settle[RoundDisplay.settle]
+  once --> settle
+  settle --> answer{is_answer round?}
+  answer -->|yes| done[return thread]
+  answer -->|no| tools{named tool_calls?}
+  tools -->|no| empty[after_empty_gather]
+  empty -->|nudge| chat
+  empty -->|stop| done
+  tools -->|yes| dup{exact name plus args already run this turn?}
+  dup -->|yes| force[drop tool_calls gathering=false]
+  force --> round
+  dup -->|no| dispatch["run_tool_calls concurrent reads"]
+  dispatch --> vision{VLM plus image attachments?}
+  vision -->|yes| img[append user image parts]
+  vision -->|no| nextRound
+  img --> nextRound{round plus 1 >= max_rounds?}
+  nextRound -->|yes| force
+  nextRound -->|no| round
+```
+
 Key properties:
 
-- **No SDK dependency.** Plain `urllib` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible.
+- **No SDK dependency.** Plain `urllib` in `chat.py` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible. When tools are present the payload includes `tool_choice: "auto"`; the answer round and `no_tools` omit both `tools` and `tool_choice`.
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
-- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). Live refreshes on new tokens only (`auto_refresh` off) and closes when `tool_calls` start, so a long `write_file` argument stream cannot redraw the same preamble into scrollback. A spinner shows until the first token, and again while tool arguments stream. Set `stream: false` for a non-SSE full reply. Within one SSE body, `stream.py` halt-loops repeating thinking (including paraphrases) and exact-repeat content (`_halted`). A halt with no tools is unfinished: gather nudges only when the model has not already produced a draft (empty CoT hang or last-line "let me…"); a halted long answer is kept. Across rounds, `act()` is gather/answer: tools stay on for up to `max_rounds` gather steps; a repeated tool set (exact name+args already run this turn) or that budget forces one tools-off answer.
+- **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). Live refreshes on new tokens only (`auto_refresh` off) and closes when `tool_calls` start, so a long `write_file` argument stream cannot redraw the same preamble into scrollback. A spinner shows until the first token, and again while tool arguments stream. Set `stream: false` for a non-SSE full reply. Within one SSE body, `stream.py` halt-loops repeating thinking (including paraphrases) and exact-repeat content (`_halted`). A halt with no tools is unfinished: gather nudges only when the model has not already produced a draft (empty CoT hang or last-line "let me…"); a halted long answer is kept. Across rounds, `act()` is gather/answer: tools stay on for up to `max_rounds` gather steps; a repeated tool set (exact name+args already run this turn) or that budget forces one tools-off answer. Eval threads use `eval_max_rounds` (default 8) instead of `max_rounds`.
+- **Concurrent reads.** Consecutive side-effect-free tools (`read_file`, `list_dir`, `search_files`, `web_search`, `fetch_url`, `recall_memory`, `current_time`) share a thread pool. `run_shell`, `write_file`, `remember`, `log_decision`, and `graph_add_edge` stay serial and act as barriers. Results stay in `tool_call` order.
+- **`/save` is tools-off.** `act(no_tools=True)` skips `build_tools` so a checkpoint summary cannot emit tool calls.
+
+### Who calls `act()`
+
+```mermaid
+flowchart TB
+  subgraph live [Live REPL thread]
+    user[user line or /skill]
+    cont["/continue text"]
+    user --> runTurn["_run_turn to act"]
+    cont --> runTurn
+  end
+  subgraph iso [Fresh thread via isolated_act]
+    maker["until maker"]
+    evalN["until / graph eval readonly"]
+    gskill["graph skill node"]
+    mine["memory mine retro"]
+    compact["/compact"]
+    save["/save no_tools"]
+    recon["/memory reconcile"]
+    maker --> actIso["act"]
+    evalN --> actIso
+    gskill --> actIso
+    mine --> actIso
+    compact --> actIso
+    save --> actIso
+    recon --> actIso
+  end
+  subgraph oneshot [Bypasses act]
+    draft["generate_skill_draft"]
+    draft --> chatOnly["_chat tools omitted"]
+  end
+  actIso --> chat["_chat"]
+  runTurn --> chat
+  chat --> LMS["LM Studio /v1/chat/completions"]
+```
+
+Not completions: `GET /v1/models`, native `GET /api/v0/models` (context + vision), `lms` CLI, whisper, `--check` shell.
 
 ### Server management (`ensure_server`)
 
-Before the loop starts, `ensure_server()` checks if LM Studio is reachable. If not and `auto_start_server` is enabled, it runs `lms server start` and `lms load` (if the `lms` CLI is on PATH). Falls back to first available model if the configured model isn't loaded.
+**File:** `server.py`
+
+Before the loop starts, `ensure_server()` (`LmsClient.ensure`) checks if LM Studio is reachable. If not and `auto_start_server` is enabled, it runs `lms server start` and `lms load` (if the `lms` CLI is on PATH). Falls back to first available model if the configured model isn't loaded.
 
 ### Context limit detection
 
@@ -122,7 +197,7 @@ until goal:
 - Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role.
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
-This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `memory.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
+This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
 
 ---
 
@@ -153,7 +228,7 @@ edge <from> -> <to> [on pass|fail|blocked]
 
 ## Tools
 
-**File:** `tools.py`
+**File:** `tools.py` (registry) + `web.py` (search/fetch)
 
 Each tool has a JSON Schema spec (for the model) and a Python callable (for execution). The `build_tools()` function returns both the OpenAI tool spec list and an impl dispatch dict.
 
@@ -180,9 +255,9 @@ Tool output is truncated to 12,000 chars to protect the context window.
 
 ## Memory System
 
-**File:** `memory.py`
+**File:** `memory.py` (JSONL CRUD) + `knowledge_graph.py` (`KnowledgeGraph`)
 
-All state is human-readable files under `~/.lmloop/projects/<slug>/`. No database, no migrations. JSONL files assume a **single writer** (one REPL or CLI process per project); concurrent appends are out of scope.
+All state is human-readable files under `~/.lmloop/projects/<slug>/`. No database, no migrations. JSONL files assume a **single writer** (one REPL or CLI process per project); concurrent appends are out of scope. ISO timestamps use `config.utc_now()`.
 
 ### State layout
 
@@ -226,7 +301,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 - `read_session()` renders log files (including truncated tool rows) up to `max_chars`.
 - `format_messages_transcript()` renders the live thread (honors `/undo`) for `/compact` and this-session `/memory mine`. Tool rows are included truncated (live payloads can be huge); system messages are omitted.
 - `session_messages()` rebuilds user/assistant turns for `/restore`. Tool/system rows are transcript-only (truncated, not API-shaped) and are omitted. Restore loads those turns into the in-memory thread and prints the last assistant reply — it does not start a new model turn.
-- `/compact`, `/memory mine`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log).
+- `/compact`, `/memory mine`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log). `/save` uses `no_tools` so the checkpoint call cannot emit tool calls.
 
 ### Checkpoints (`checkpoints/*.md`)
 
@@ -236,7 +311,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 
 ### Knowledge graph (`graph_nodes.jsonl`, `graph_edges.jsonl`)
 
-Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `memory.py`. When off, no graph files are created, auto-edges do not write (even if files already exist), and `recall_memory` is unchanged.
+Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `knowledge_graph.py`. When off, no graph files are created, auto-edges do not write (even if files already exist), and `recall_memory` is unchanged.
 
 - Nodes are typed (`learning`, `decision`, `session`, `file`, `skill`, `concept`). Latest row per `(type, key)` wins. Learning/concept nodes reuse confidence decay; others stay live.
 - Edges are typed (`leads_to`, `contradicts`, `in_session`, `references`, `uses_skill`, `related_to`, `supersedes`). Endpoints that decayed away are dropped at read time.
@@ -247,17 +322,17 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `m
 
 ## Context Injection
 
-**File:** `agent.py::system_prompt()`
+**File:** `skills.py::system_prompt()`
 
 At session start (and each isolated `/until` or graph `act()`), the system prompt is assembled from:
 
 1. `skills/system.md` — core instructions (how to work, memory discipline, safety, style)
 2. Live tool name list
-3. `steer.clock_block()` — current UTC timestamp and calendar date (OS clock, rebuilt every call)
+3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
 5. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old)
 
-This keeps the system prompt small for local models with limited context windows. The clock is injected so relative windows ("last 4 weeks") do not resolve to a training-cutoff year.
+This keeps the system prompt small for local models with limited context windows. The clock is injected so relative windows ("last 4 weeks") do not resolve to a training-cutoff year. A long REPL session calls `current_time` when that frozen Clock is stale.
 
 ---
 
@@ -311,7 +386,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 
 ## Design Decisions (and why)
 
-1. **OpenAI-compatible REST, no SDK.** The multi-round loop is stdlib `urllib`. Swappable backend.
+1. **OpenAI-compatible REST, no SDK.** Completions HTTP lives in `chat.py` (stdlib `urllib`). Swappable backend. `tool_choice: "auto"` when tools are present.
 2. **File-only memory, computed views.** Append-only JSONL means no corruption, no migrations. You can `cat`, `grep`, or hand-edit every piece of agent memory.
 3. **Bounded context injection.** Local models have small contexts — the budget is respected. Only top-N learnings and active decisions injected at start; model pulls more on demand.
 4. **Self-learning is curated, not automatic.** The `remember` tool has a quality bar (enforced by `skills/retro.md`). Noisy memory is worse than none.

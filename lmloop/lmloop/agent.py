@@ -1,466 +1,55 @@
 """The agent loop: OpenAI-compatible multi-round tool calling against LM Studio.
 
-No SDK dependency — plain urllib against /v1/chat/completions with `tools`.
-The loop is a gather/answer state machine: the model may call tools for up to
-``max_rounds`` gather steps, then one tools-off answer. Gather ends early when
-the model stops requesting tools, or when it repeats a tool set already run
-this turn (exact name+args). Tool errors are reported back as text so it can
-self-correct instead of crashing the session.
+Chat HTTP lives in ``chat.py``. The loop is a gather/answer state machine: the
+model may call tools for up to ``max_rounds`` gather steps, then one tools-off
+answer. Gather ends early when the model stops requesting tools, or when it
+repeats a tool set already run this turn (exact name+args). Tool errors are
+reported back as text so it can self-correct instead of crashing the session.
 
 Stream assembly lives in ``stream.py``. Live printers live in ``display.py``.
+Skill playbooks live in ``skills.py``. LMS bring-up lives in ``server.py``.
 """
 
 import json
-import re
-import shutil
-import subprocess
-import time
-import urllib.error
-import urllib.request
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import extract, memory, steer, tools
-from .commands import RESERVED_SKILL_NAMES
-from .config import STATE_ROOT
+from . import extract, memory, server, skills, tools
 from . import status as status_mod
+from .chat import _chat, _chat_stream
 from .display import (
     _GeneratingIndicator,
     _ThinkingLive,
     _emit_assistant_content,
     _open_live_display,
 )
-from .stream import StreamError, _read_sse
 from .ui import estimate_context_tokens
 
-SKILLS_DIR = Path(__file__).parent / "skills"
-USER_SKILLS_DIR = STATE_ROOT / "skills"
-SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-
-API_CHAT_PATH = "/chat/completions"
-API_MODELS_PATH = "/models"
-NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")
 CONTEXT_PRESSURE_RATIO = 0.80
 CONTINUE_NUDGE_MAX_CHARS = 400
 
 
-class ServerError(RuntimeError):
-    pass
-
-
-# ---------------------------------------------------------------- server
-
-def _get_json(url: str, timeout: int = 5) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read().decode())
-
-
-def _get(base_url: str, path: str, timeout: int = 5):
-    return _get_json(base_url.rstrip("/") + path, timeout)
-
-
-def list_models(base_url: str) -> "list[str]":
-    try:
-        data = _get(base_url, API_MODELS_PATH)
-        return [m["id"] for m in data.get("data", [])]
-    except (OSError, json.JSONDecodeError, KeyError):
-        return []
-
-
-def _native_base(base_url: str) -> str:
-    url = base_url.rstrip("/")
-    if url.endswith("/v1"):
-        return url[:-3]
-    return url
-
-
-def _model_matches(entry: dict, model: str) -> bool:
-    """Prefer exact id/key match; allow suffix match only for multi-segment ids."""
-    ids = [entry.get("id", ""), entry.get("key", ""), entry.get("display_name", "")]
-    ids = [i for i in ids if i]
-    if model in ids:
-        return True
-    # Avoid bare endswith on short fragments (wrong-model context window).
-    if "/" in model or len(model) >= 8:
-        return any(model == i or i.endswith("/" + model) or model.endswith("/" + i)
-                   for i in ids)
-    return False
-
-
-def _native_model_entries(cfg: dict) -> list:
-    """LM Studio native model records, or empty if the API is unreachable."""
-    base_url = cfg.get("base_url") or ""
-    if not base_url:
-        return []
-    base = _native_base(base_url)
-    for path in NATIVE_MODELS_PATHS:
-        try:
-            data = _get_json(base + path)
-        except (OSError, json.JSONDecodeError):
-            continue
-        models = data.get("data") or data.get("models") or []
-        if models:
-            return models
-    return []
-
-
-def get_context_limit(model: str, cfg: dict) -> int:
-    """Return loaded context window size in tokens. 0 if unknown."""
-    manual = int(cfg.get("context_length") or 0)
-    if manual > 0:
-        return manual
-
-    for entry in _native_model_entries(cfg):
-        if not _model_matches(entry, model):
-            continue
-        for inst in entry.get("loaded_instances") or []:
-            loaded = (inst.get("config") or {}).get("context_length")
-            if loaded:
-                return int(loaded)
-        max_ctx = entry.get("max_context_length")
-        if max_ctx:
-            return int(max_ctx)
-    return 0
-
-
-_VISION_CACHE: "dict[tuple, bool]" = {}
-
-
-def _entry_has_vision(entry: dict) -> bool:
-    """True when a native models API record looks like a VLM."""
-    kind = str(entry.get("type") or entry.get("model_type") or "").lower()
-    if kind in ("vlm", "vision"):
-        return True
-    if entry.get("vision") is True:
-        return True
-    caps = entry.get("capabilities")
-    if isinstance(caps, dict) and caps.get("vision"):
-        return True
-    if isinstance(caps, (list, tuple)):
-        if any(str(c).lower() in ("vision", "vlm") for c in caps):
-            return True
-    for inst in entry.get("loaded_instances") or []:
-        inst_cfg = inst.get("config") or {}
-        if inst_cfg.get("vision") is True:
-            return True
-        if str(inst_cfg.get("type") or "").lower() in ("vlm", "vision"):
-            return True
-    return False
-
-
-def model_has_vision(model: str, cfg: dict) -> bool:
-    """Whether to attach image_url parts. Config vision: auto|true|false."""
-    mode = str(cfg.get("vision") or "auto").strip().lower()
-    if mode == "true":
-        return True
-    if mode == "false":
-        return False
-    key = (cfg.get("base_url") or "", model or "")
-    if key in _VISION_CACHE:
-        return _VISION_CACHE[key]
-    found = False
-    for entry in _native_model_entries(cfg):
-        if _model_matches(entry, model):
-            found = _entry_has_vision(entry)
-            break
-    _VISION_CACHE[key] = found
-    return found
-
-
-def _run_lms(args: list, echo=print, timeout: int = 60) -> bool:
-    """Run an lms CLI command; echo stderr on failure. Returns True on success."""
-    try:
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        echo(f"lms failed: {e}")
-        return False
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()
-        echo(f"lms {' '.join(args)} failed (exit {proc.returncode})"
-             + (f": {err[:500]}" if err else ""))
-        return False
-    return True
-
-
-def ensure_server(cfg: dict, echo=print) -> str:
-    """Make sure LM Studio is reachable and a model is loaded. Returns model id."""
-    base = cfg["base_url"]
-    models = list_models(base)
-    if not models and cfg.get("auto_start_server") and shutil.which("lms"):
-        echo(status_mod.msg_starting_server())
-        _run_lms(["lms", "server", "start"], echo=echo, timeout=60)
-        for _ in range(20):
-            time.sleep(1)
-            models = list_models(base)
-            if models:
-                break
-    if not models:
-        # server may be up with nothing loaded — try loading the configured model
-        if shutil.which("lms"):
-            want = cfg.get("model") or ""
-            echo(status_mod.msg_loading_model(want))
-            args = ["lms", "load", "--yes"] + ([want] if want else [])
-            _run_lms(args, echo=echo, timeout=300)
-            models = list_models(base)
-    if not models:
-        raise ServerError(status_mod.msg_no_models(base))
-    want = cfg.get("model")
-    if want and want in models:
-        return want
-    if want:
-        echo(status_mod.msg_model_fallback(want, models[0]))
-    return models[0]
-
-
-# ---------------------------------------------------------------- skills
-
-def _is_public_skill(stem: str) -> bool:
-    """User-facing skills: skip system prompt and private _*.md authoring files."""
-    return stem != "system" and not stem.startswith("_")
-
-
-def skill_dirs() -> "list[Path]":
-    """Search order for loading: user skills override packaged skills."""
-    dirs = []
-    if USER_SKILLS_DIR.is_dir():
-        dirs.append(USER_SKILLS_DIR)
-    dirs.append(SKILLS_DIR)
-    return dirs
-
-
-def skill_path(name: str) -> "Path | None":
-    for d in skill_dirs():
-        path = d / f"{name}.md"
-        if path.is_file():
-            return path
-    return None
-
-
-def list_skills() -> "list[str]":
-    """Skill names from packaged + ~/.lmloop/skills/, excluding system/_author."""
-    names = set()
-    for d in skill_dirs():
-        for p in d.glob("*.md"):
-            if _is_public_skill(p.stem):
-                names.add(p.stem)
-    return sorted(names)
-
-
-def _invalid_skill_name(name: str) -> bool:
-    """Reject empty or path-like names before joining under skills dirs."""
-    return (
-        not name
-        or "/" in name
-        or "\\" in name
-        or name.startswith(".")
-        or ".." in name
-    )
-
-
-def load_skill(name: str, *, public_only: bool = False) -> str:
-    """Load a skill body. When public_only, hide system/_*.md from callers."""
-    if _invalid_skill_name(name) or (public_only and not _is_public_skill(name)):
-        available = ", ".join(list_skills()) or "(none)"
-        raise FileNotFoundError(f"No skill '{name}'. Available: {available}")
-    path = skill_path(name)
-    if path is None:
-        available = ", ".join(list_skills()) or "(none)"
-        raise FileNotFoundError(f"No skill '{name}'. Available: {available}")
-    return path.read_text()
-
-
-def skill_blurb(name: str) -> str:
-    try:
-        first = load_skill(name).strip().splitlines()[0]
-        return first.lstrip("#").strip()[:80]
-    except (FileNotFoundError, IndexError):
-        return ""
-
-
-def validate_skill_name(name: str) -> "str | None":
-    """Return an error message if name is invalid, else None."""
-    if not name or not SKILL_NAME_RE.match(name):
-        return "skill name must be lowercase, start with a letter, and use only a-z 0-9 _ -"
-    if name in RESERVED_SKILL_NAMES or name.startswith("_"):
-        return f"skill name '{name}' is reserved"
-    return None
-
-
-def extract_skill_markdown(text: str) -> str:
-    """Normalize model output into a skill markdown body."""
-    body = (text or "").strip()
-    if body.startswith("```"):
-        lines = body.splitlines()
-        # drop opening fence
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        body = "\n".join(lines).strip()
-    if body and not body.endswith("\n"):
-        body += "\n"
-    return body
-
-
-def save_user_skill(name: str, content: str) -> Path:
-    """Write a confirmed skill into ~/.lmloop/skills/<name>.md."""
-    err = validate_skill_name(name)
-    if err:
-        raise ValueError(err)
-    USER_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    path = USER_SKILLS_DIR / f"{name}.md"
-    path.write_text(content if content.endswith("\n") else content + "\n")
-    return path
-
-
 def generate_skill_draft(cfg: dict, model: str, name: str, brief: str) -> str:
     """One-shot (no tools) generation of a new skill markdown body."""
-    author = load_skill("_author")
+    author = skills.load_skill("_author")
     brief = brief.strip() or f"A reusable playbook named '{name}'."
     user = (
         f"Author a new lmloop skill named `{name}`.\n\n"
         f"User brief:\n{brief}\n\n"
         f"Existing skills (do not duplicate; complement them): "
-        f"{', '.join(list_skills()) or '(none)'}\n"
+        f"{', '.join(skills.list_skills()) or '(none)'}\n"
     )
     messages = [
         {"role": "system", "content": author},
         {"role": "user", "content": user},
     ]
     msg, _usage = _chat(cfg, model, messages, tool_specs=None)
-    return extract_skill_markdown(msg.get("content") or "")
-
-
-def system_prompt(cfg: dict, workspace_root: "Path | None" = None) -> str:
-    base = load_skill("system")
-    names = tools.tool_names(cfg=cfg)
-    tools_block = (
-        "\n\n## Tools available\n\n"
-        + ", ".join(f"`{n}`" for n in names)
-        + ".\n"
-    )
-    # Inject after the first paragraph / before "## How to work" when present.
-    marker = "\n## How to work"
-    if marker in base:
-        base = base.replace(marker, tools_block + marker, 1)
-    else:
-        base += tools_block
-    base += "\n\n" + steer.clock_block()
-    steering = steer.steering_block(workspace_root)
-    if steering:
-        base += "\n\n" + steering
-    ctx = memory.context_block(cfg)
-    if ctx:
-        base += "\n\n## Context recovery (from project memory)\n\n" + ctx
-    return base
+    return skills.extract_skill_markdown(msg.get("content") or "")
 
 
 # ---------------------------------------------------------------- chat call
-
-def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | None",
-                  stream: bool) -> urllib.request.Request:
-    payload = {
-        "model": model,
-        "messages": status_mod.api_messages(messages),
-        "temperature": cfg.get("temperature", 0.7),
-        "stream": stream,
-    }
-    if stream:
-        # Ask the server for a final usage chunk (OpenAI-compatible; ignored if unsupported).
-        payload["stream_options"] = {"include_usage": True}
-    if tool_specs:
-        payload["tools"] = tool_specs
-    return urllib.request.Request(
-        cfg["base_url"].rstrip("/") + API_CHAT_PATH,
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream" if stream else "application/json"},
-    )
-
-
-def _raise_http_error(e: urllib.error.HTTPError, cfg: dict, body: "str | None" = None) -> None:
-    if body is None:
-        try:
-            body = e.read().decode("utf-8", errors="replace")[:800]
-        except OSError:
-            body = ""
-    lower = (body or "").lower()
-    if e.code in (400, 413) and any(
-        t in lower for t in ("context", "token", "length", "too long", "maximum")
-    ):
-        raise ServerError(status_mod.msg_context_overflow()) from e
-    raise ServerError(f"LM Studio returned HTTP {e.code}: {(body or '')[:500]}") from e
-
-
-def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
-    """Non-streaming chat completion."""
-    req = _chat_request(cfg, model, messages, tool_specs, stream=False)
-    try:
-        with urllib.request.urlopen(req, timeout=cfg.get("timeout_s", 600)) as resp:
-            data = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        _raise_http_error(e, cfg)
-    except OSError as e:
-        raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e}")
-    try:
-        usage = data.get("usage") or {}
-        return data["choices"][0]["message"], usage
-    except (KeyError, IndexError):
-        raise ServerError(f"Unexpected response shape: {json.dumps(data)[:500]}")
-
-
-def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None",
-                 on_delta=None, on_activity=None, on_reasoning=None,
-                 on_tools=None) -> "tuple[dict, dict]":
-    """Streaming chat completion (SSE). Assembles message; optionally echoes content deltas."""
-    req = _chat_request(cfg, model, messages, tool_specs, stream=True)
-
-    def _open_and_read(request):
-        with urllib.request.urlopen(request, timeout=cfg.get("timeout_s", 600)) as resp:
-            return _read_sse(
-                resp, on_delta=on_delta, on_activity=on_activity,
-                on_reasoning=on_reasoning, on_tools=on_tools,
-            )
-
-    try:
-        return _open_and_read(req)
-    except StreamError as e:
-        raise ServerError(str(e)) from e
-    except urllib.error.HTTPError as e:
-        try:
-            body = e.read().decode("utf-8", errors="replace")[:800]
-        except OSError:
-            body = ""
-        payload = json.loads(req.data.decode())
-        # Older / stricter servers may reject stream_options — retry without it.
-        if e.code == 400 and "stream_options" in payload:
-            payload.pop("stream_options", None)
-            retry = urllib.request.Request(
-                req.full_url, data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
-            )
-            try:
-                return _open_and_read(retry)
-            except StreamError as e2:
-                raise ServerError(str(e2)) from e2
-            except urllib.error.HTTPError as e2:
-                _raise_http_error(e2, cfg)
-            except OSError as e2:
-                raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e2}")
-        _raise_http_error(e, cfg, body=body)
-    except OSError as e:
-        raise ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e}")
-
-
-def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None",
-          on_delta=None, on_activity=None, on_reasoning=None,
-          on_tools=None) -> "tuple[dict, dict]":
-    """Chat completion. Streams when cfg['stream'] is true (default)."""
-    if cfg.get("stream", True):
-        return _chat_stream(
-            cfg, model, messages, tool_specs,
-            on_delta=on_delta, on_activity=on_activity,
-            on_reasoning=on_reasoning, on_tools=on_tools,
-        )
-    return _chat_once(cfg, model, messages, tool_specs)
-
+# HTTP lives in chat.py. Imported as _chat / _chat_stream for tests that patch
+# this module.
 
 def _accumulate_usage(stats: "dict | None", usage: dict) -> None:
     if not stats or not usage:
@@ -655,6 +244,268 @@ def _rollback_incomplete_messages(messages: list, start: int) -> None:
 
 # ---------------------------------------------------------------- act loop
 
+@dataclass
+class GatherTurn:
+    """Mutable gather/answer state for one ``act()`` call."""
+
+    max_gather: int
+    max_nudges: int
+    checkpoint: int
+    gathering: bool = True
+    seen_fps: set = field(default_factory=set)
+    turn_rounds: int = 0
+    turn_tools: int = 0
+    nudge_count: int = 0
+    context_warned: bool = False
+
+    def is_answer_round(self, round_idx: int, echo_status) -> bool:
+        if self.gathering and round_idx >= self.max_gather:
+            self.gathering = False
+            echo_status(status_mod.msg_gather_budget())
+        return not self.gathering
+
+    def warn_context(self, messages: list, stats: "dict | None",
+                     context_limit: int, context_reserve: int,
+                     echo_status) -> None:
+        if not context_limit or self.context_warned:
+            return
+        used = 0
+        if stats is not None:
+            used = int(stats.get("last_prompt_tokens") or 0)
+        if not used:
+            used = estimate_context_tokens(messages)
+        effective = max(context_limit - max(context_reserve, 0), 1)
+        ratio = min(used / effective, 1.0)
+        if ratio >= CONTEXT_PRESSURE_RATIO:
+            echo_status(status_mod.msg_context_pressure(int(ratio * 100)))
+            self.context_warned = True
+
+    def note_tools(self, fp: tuple) -> bool:
+        """Record a tool-set fingerprint. True if this set already ran."""
+        if fp in self.seen_fps:
+            return True
+        self.seen_fps.add(fp)
+        return False
+
+    def after_empty_gather(self, content: str, halted: bool, round_idx: int,
+                           echo_status, messages: list) -> str:
+        """No tool_calls this gather round. Returns ``nudge`` or ``stop``."""
+        can_nudge = (
+            self.nudge_count < self.max_nudges and round_idx + 1 < self.max_gather
+        )
+        if halted:
+            if can_nudge and _should_nudge_halt(
+                content, self.nudge_count, self.max_nudges,
+            ):
+                self.nudge_count += 1
+                echo_status(status_mod.msg_halted_continuing())
+                messages.append(status_mod.nudge_message())
+                return "nudge"
+            echo_status(status_mod.msg_stopped_unfinished())
+            return "stop"
+        soft_stop = _should_nudge_continue(
+            content, self.turn_tools, self.nudge_count, self.max_nudges,
+        )
+        if soft_stop and round_idx + 1 < self.max_gather:
+            self.nudge_count += 1
+            echo_status(status_mod.msg_paused_continuing())
+            messages.append(status_mod.nudge_message())
+            return "nudge"
+        if soft_stop or (
+            self.nudge_count >= self.max_nudges
+            and content
+            and _has_continue_intent(content)
+            and not _looks_grounded(content)
+        ):
+            echo_status(status_mod.msg_stopped_unfinished())
+        return "stop"
+
+    def commit_stats(self, stats: "dict | None") -> None:
+        if stats is None:
+            return
+        stats["turns"] = stats.get("turns", 0) + 1
+        stats["rounds"] = stats.get("rounds", 0) + self.turn_rounds
+        stats["tool_calls"] = stats.get("tool_calls", 0) + self.turn_tools
+        stats["interrupted"] = False
+
+    @staticmethod
+    def mark_interrupted(stats: "dict | None") -> None:
+        if stats is not None:
+            stats["interrupted"] = True
+
+
+class RoundDisplay:
+    """Printer / thinking / spinner wiring for one model round."""
+
+    def __init__(self, echo_delta, *, color: bool, use_stream: bool,
+                 on_thinking=None):
+        self.use_stream = use_stream
+        self.on_thinking = on_thinking
+        self.printer, self.live_mode = _open_live_display(echo_delta, color=color)
+        self.thinking = _ThinkingLive(color=color) if use_stream else None
+        self.indicator = None
+        if use_stream and self.live_mode in ("silent", "markdown"):
+            self.indicator = _GeneratingIndicator()
+        self.thinking_cleared = False
+        self.printer_finished = False
+
+    def retire_thinking(self, *, keep: bool = False) -> str:
+        if self.thinking_cleared or self.thinking is None:
+            return ""
+        text = self.thinking.finish_keep() if keep else self.thinking.erase()
+        self.thinking_cleared = True
+        if text.strip() and self.on_thinking:
+            self.on_thinking(text)
+        return text
+
+    def on_delta(self, piece: str) -> None:
+        self.retire_thinking()
+        if self.indicator is not None:
+            self.indicator.clear()
+        was = self.printer.visible
+        self.printer.feed(piece)
+        if (
+            self.indicator is not None
+            and self.live_mode == "markdown"
+            and self.printer.visible
+            and not was
+        ):
+            self.indicator.clear()
+
+    def on_reasoning(self, piece: str) -> None:
+        if self.thinking is None:
+            return
+        # Content Live owns the TTY. Painting thinking alongside it
+        # desyncs Live and stacks the preamble in scrollback.
+        if self.printer.visible:
+            return
+        if self.indicator is not None:
+            self.indicator.clear()
+        self.thinking.feed(piece)
+
+    def on_tools(self) -> None:
+        self.retire_thinking()
+        # Close Live before tool arguments stream (write_file can take
+        # minutes). Leaving Live up redraws the same preamble and
+        # leaks copies into scrollback.
+        if (
+            self.live_mode in ("plain", "markdown")
+            and self.printer is not None
+            and not self.printer_finished
+        ):
+            self.printer.finish()
+            self.printer_finished = True
+        if self.indicator is not None:
+            self.indicator.resume()
+
+    def chat_kwargs(self) -> dict:
+        return {
+            "on_delta": self.on_delta if self.use_stream else None,
+            "on_activity": self.indicator.tick if self.indicator else None,
+            "on_reasoning": self.on_reasoning if self.use_stream else None,
+            "on_tools": self.on_tools if self.use_stream else None,
+        }
+
+    def settle(self, msg: dict, is_answer: bool) -> "tuple[list, str]":
+        """Clear the spinner; return (tool_calls, content) for this round."""
+        if self.indicator is not None:
+            self.indicator.clear()
+        halted = bool(msg.get("_halted"))
+        tool_calls = (
+            [] if is_answer
+            else _named_tool_calls(msg.get("tool_calls") or [])
+        )
+        content = (msg.get("content") or "").strip()
+        reasoning_text = (msg.get("_reasoning") or "").strip()
+        # A halt is an unfinished round, not an answer. Do not promote
+        # looping reasoning into content (that made gather stop).
+        if halted and not tool_calls:
+            if self.thinking is not None and self.thinking.active:
+                retired = self.thinking.erase()
+                if retired.strip() and self.on_thinking:
+                    self.on_thinking(retired)
+        else:
+            if not content and not tool_calls and reasoning_text:
+                content = reasoning_text
+            if self.thinking is not None:
+                content, retired = self.thinking.retire_for_round(
+                    tool_calls, content, reasoning_text,
+                )
+                if retired.strip() and self.on_thinking:
+                    self.on_thinking(retired)
+        return tool_calls, content
+
+    def emit(self, echo, content: str, session_log: "Path | None") -> None:
+        # Finish Live/stream display before any other stdout writes
+        # (round breadcrumb, tool lines). Printing while rich.Live is
+        # active bypasses its cursor control and corrupts the frame.
+        if content:
+            if not self.printer_finished:
+                _emit_assistant_content(
+                    echo, content,
+                    self.printer if self.use_stream else None,
+                    self.live_mode,
+                )
+                self.printer_finished = True
+            if session_log:
+                memory.log_event(session_log, "assistant", content)
+        elif self.use_stream and not self.printer_finished:
+            self.printer.finish()
+            self.printer_finished = True
+
+    def close(self) -> None:
+        if self.indicator is not None:
+            self.indicator.clear()
+        if self.thinking is not None and self.thinking.active:
+            self.thinking.erase()
+        if not self.printer_finished and self.printer is not None:
+            self.printer.finish()
+
+
+def _dispatch_tools(
+    turn: GatherTurn, tool_calls: list, *, round_idx: int, impls: dict,
+    echo_tool, stats, session_log, workspace_root, messages: list,
+    cfg: dict, model: str,
+) -> None:
+    round_media = []
+    prepared = []
+    for call_idx, call in enumerate(tool_calls):
+        turn.turn_tools += 1
+        fn = call.get("function", {})
+        name, args = fn.get("name", ""), fn.get("arguments", "")
+        arg_preview = tools.format_tool_preview(
+            name, args, workspace_root=workspace_root,
+        )
+        echo_tool(name, arg_preview, stats)
+        prepared.append((call, call_idx, name, args, arg_preview))
+    raw_results = tools.run_tool_calls(
+        impls, [(name, args) for _call, _idx, name, args, _prev in prepared],
+    )
+    for (call, call_idx, name, _args, arg_preview), raw_result in zip(
+        prepared, raw_results,
+    ):
+        result, attachments = tools.unwrap_tool_result(raw_result)
+        if session_log:
+            memory.log_event(
+                session_log, "tool",
+                f"{name}({arg_preview}) -> {result[:500]}",
+            )
+        messages.append({
+            "role": "tool",
+            "tool_call_id": call.get("id") or f"call_{round_idx}_{call_idx}",
+            "content": result,
+        })
+        round_media.extend(attachments)
+    if round_media and server.model_has_vision(model, cfg):
+        messages.append({
+            "role": "user",
+            "content": extract.image_user_content(
+                "[lmloop] Image from tool result",
+                round_media,
+            ),
+        })
+
+
 def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None,
         confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
         echo_status=None, stats: "dict | None" = None, echo_round=None,
@@ -662,6 +513,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         context_reserve: int = 2048,
         workspace_root: "Path | None" = None,
         readonly: bool = False,
+        no_tools: bool = False,
+        max_rounds: "int | None" = None,
         extra_readable: "list | None" = None) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
@@ -669,6 +522,10 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     ``@``; ``read_file`` / ``list_dir`` may open those even outside the
     workspace. Writes to those outside paths require confirmation. Do not
     copy attached files into the workspace.
+
+    ``no_tools=True`` omits the tools array (and ``tool_choice``) on every
+    round — used by ``/save``. ``readonly`` still applies when tools are on.
+    ``max_rounds`` overrides ``cfg['max_rounds']`` when set (eval budget).
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
     is SSE and tokens are shown live:
@@ -698,262 +555,97 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     if echo_tool is None:
         echo_tool = lambda name, preview, stats=None: echo(f"  ⚙ {name}({preview})")
     color = bool(cfg.get("color", True))
-    tool_specs, impls = tools.build_tools(
-        cfg, confirm_gate=confirm_gate, workspace_root=workspace_root,
-        readonly=readonly, extra_readable=extra_readable,
-    )
+    if no_tools:
+        tool_specs, impls = None, {}
+    else:
+        tool_specs, impls = tools.build_tools(
+            cfg, confirm_gate=confirm_gate, workspace_root=workspace_root,
+            readonly=readonly, extra_readable=extra_readable,
+        )
     use_stream = bool(cfg.get("stream", True))
-    turn_rounds = 0
-    turn_tools = 0
-    nudge_count = 0
-    max_nudges = max(0, int(cfg.get("max_continue_nudges", 2)))
-    max_gather = max(1, int(cfg.get("max_rounds", 60)))
-    gathering = True
-    seen_fps: set = set()
-    checkpoint = len(messages)
-    context_warned = False
+    gather_budget = max_rounds if max_rounds is not None else cfg.get("max_rounds", 60)
+    turn = GatherTurn(
+        max_gather=max(1, int(gather_budget)),
+        max_nudges=max(0, int(cfg.get("max_continue_nudges", 2))),
+        checkpoint=len(messages),
+    )
     prev_session = memory.set_active_session(session_log)
 
-    def _mark_interrupted() -> None:
-        if stats is not None:
-            stats["interrupted"] = True
-
-    def _finish_turn() -> list:
-        if stats is not None:
-            stats["turns"] = stats.get("turns", 0) + 1
-            stats["rounds"] = stats.get("rounds", 0) + turn_rounds
-            stats["tool_calls"] = stats.get("tool_calls", 0) + turn_tools
-            stats["interrupted"] = False
+    def _finish() -> list:
+        turn.commit_stats(stats)
         return messages
 
     try:
-        for round_idx in range(max_gather + 1):
-            if gathering and round_idx >= max_gather:
-                gathering = False
-                echo_status(status_mod.msg_gather_budget())
-            is_answer = not gathering
+        for round_idx in range(turn.max_gather + 1):
+            is_answer = turn.is_answer_round(round_idx, echo_status)
             if is_answer and not (
                 messages and status_mod.is_answer_message(messages[-1])
             ):
                 messages.append(status_mod.answer_message())
-            if context_limit and not context_warned:
-                used = 0
-                if stats is not None:
-                    used = int(stats.get("last_prompt_tokens") or 0)
-                if not used:
-                    used = estimate_context_tokens(messages)
-                effective = max(context_limit - max(context_reserve, 0), 1)
-                ratio = min(used / effective, 1.0)
-                if ratio >= CONTEXT_PRESSURE_RATIO:
-                    echo_status(status_mod.msg_context_pressure(int(ratio * 100)))
-                    context_warned = True
+            turn.warn_context(
+                messages, stats, context_limit, context_reserve, echo_status,
+            )
 
-            printer, live_mode = _open_live_display(echo_delta, color=color)
-            thinking = _ThinkingLive(color=color) if use_stream else None
-            indicator = None
-            if use_stream and live_mode in ("silent", "markdown"):
-                indicator = _GeneratingIndicator()
-            thinking_cleared = False
-            printer_finished = False
-
-            def _retire_thinking(*, keep: bool = False) -> str:
-                nonlocal thinking_cleared
-                if thinking_cleared or thinking is None:
-                    return ""
-                text = thinking.finish_keep() if keep else thinking.erase()
-                thinking_cleared = True
-                if text.strip() and on_thinking:
-                    on_thinking(text)
-                return text
-
-            def on_delta(piece: str, _printer=printer, _ind=indicator, _mode=live_mode) -> None:
-                _retire_thinking()
-                if _ind is not None:
-                    _ind.clear()
-                was = _printer.visible
-                _printer.feed(piece)
-                if _ind is not None and _mode == "markdown" and _printer.visible and not was:
-                    _ind.clear()
-
-            def on_reasoning(piece: str, _think=thinking, _ind=indicator,
-                             _printer=printer) -> None:
-                if _think is None:
-                    return
-                # Content Live owns the TTY. Painting thinking alongside it
-                # desyncs Live and stacks the preamble in scrollback.
-                if _printer.visible:
-                    return
-                if _ind is not None:
-                    _ind.clear()
-                _think.feed(piece)
-
-            def on_tools(_ind=indicator, _printer=printer) -> None:
-                nonlocal printer_finished
-                _retire_thinking()
-                # Close Live before tool arguments stream (write_file can take
-                # minutes). Leaving Live up redraws the same preamble and
-                # leaks copies into scrollback.
-                if (
-                    live_mode in ("plain", "markdown")
-                    and _printer is not None
-                    and not printer_finished
-                ):
-                    _printer.finish()
-                    printer_finished = True
-                if _ind is not None:
-                    _ind.resume()
-
+            round_ui = RoundDisplay(
+                echo_delta, color=color, use_stream=use_stream,
+                on_thinking=on_thinking,
+            )
             try:
+                round_specs = None if (is_answer or no_tools) else tool_specs
                 msg, usage = _chat(
-                    cfg, model, messages, None if is_answer else tool_specs,
-                    on_delta=on_delta if use_stream else None,
-                    on_activity=indicator.tick if indicator else None,
-                    on_reasoning=on_reasoning if use_stream else None,
-                    on_tools=on_tools if use_stream else None,
+                    cfg, model, messages, round_specs,
+                    **round_ui.chat_kwargs(),
                 )
-                # Always retire the spinner before any post-stream prints.
-                if indicator is not None:
-                    indicator.clear()
                 _accumulate_usage(stats, usage)
-                turn_rounds += 1
+                turn.turn_rounds += 1
+                tool_calls, content = round_ui.settle(msg, is_answer or no_tools)
                 halted = bool(msg.get("_halted"))
-                tool_calls = (
-                    [] if is_answer
-                    else _named_tool_calls(msg.get("tool_calls") or [])
-                )
-                content = (msg.get("content") or "").strip()
-                reasoning_text = (msg.get("_reasoning") or "").strip()
-                # A halt is an unfinished round, not an answer. Do not promote
-                # looping reasoning into content (that made gather stop).
-                if halted and not tool_calls:
-                    if thinking is not None and thinking.active:
-                        retired = thinking.erase()
-                        if retired.strip() and on_thinking:
-                            on_thinking(retired)
-                else:
-                    if not content and not tool_calls and reasoning_text:
-                        content = reasoning_text
-                    if thinking is not None:
-                        content, retired = thinking.retire_for_round(
-                            tool_calls, content, reasoning_text,
-                        )
-                        if retired.strip() and on_thinking:
-                            on_thinking(retired)
 
-                store_content = content if content else ""
-                assistant_entry = {"role": "assistant", "content": store_content}
+                assistant_entry = {"role": "assistant", "content": content or ""}
                 if tool_calls:
                     assistant_entry["tool_calls"] = tool_calls
                 messages.append(assistant_entry)
-
-                # Finish Live/stream display before any other stdout writes
-                # (round breadcrumb, tool lines). Printing while rich.Live is
-                # active bypasses its cursor control and corrupts the frame.
-                if content:
-                    if not printer_finished:
-                        _emit_assistant_content(
-                            echo, content, printer if use_stream else None, live_mode,
-                        )
-                        printer_finished = True
-                    if session_log:
-                        memory.log_event(session_log, "assistant", content)
-                elif use_stream and not printer_finished:
-                    printer.finish()
-                    printer_finished = True
+                round_ui.emit(echo, content, session_log)
 
                 if echo_round is not None:
-                    echo_round(round_idx + 1, stats, messages, context_limit, context_reserve)
+                    echo_round(
+                        round_idx + 1, stats, messages,
+                        context_limit, context_reserve,
+                    )
 
                 if is_answer:
-                    return _finish_turn()
+                    return _finish()
 
                 if not tool_calls:
-                    can_nudge = (
-                        nudge_count < max_nudges and round_idx + 1 < max_gather
-                    )
-                    if halted:
-                        if can_nudge and _should_nudge_halt(
-                            content, nudge_count, max_nudges,
-                        ):
-                            nudge_count += 1
-                            echo_status(status_mod.msg_halted_continuing())
-                            messages.append(status_mod.nudge_message())
-                            continue
-                        echo_status(status_mod.msg_stopped_unfinished())
-                        return _finish_turn()
-                    soft_stop = _should_nudge_continue(
-                        content, turn_tools, nudge_count, max_nudges,
-                    )
-                    # Only inject a nudge when another gather round can still run.
-                    if soft_stop and round_idx + 1 < max_gather:
-                        nudge_count += 1
-                        echo_status(status_mod.msg_paused_continuing())
-                        messages.append(status_mod.nudge_message())
+                    if turn.after_empty_gather(
+                        content, halted, round_idx, echo_status, messages,
+                    ) == "nudge":
                         continue
-                    # Nudges exhausted, or soft-stop on the final gather round.
-                    if soft_stop or (
-                        nudge_count >= max_nudges
-                        and content
-                        and _has_continue_intent(content)
-                        and not _looks_grounded(content)
-                    ):
-                        echo_status(status_mod.msg_stopped_unfinished())
-                    return _finish_turn()
+                    return _finish()
 
-                fp = _tool_calls_fingerprint(tool_calls)
-                if fp in seen_fps:
+                if turn.note_tools(_tool_calls_fingerprint(tool_calls)):
                     echo_status(status_mod.msg_repeated_tools())
                     messages[-1].pop("tool_calls", None)
-                    gathering = False
+                    turn.gathering = False
                     continue
 
-                seen_fps.add(fp)
-                round_media = []
-                for call_idx, call in enumerate(tool_calls):
-                    turn_tools += 1
-                    fn = call.get("function", {})
-                    name, args = fn.get("name", ""), fn.get("arguments", "")
-                    arg_preview = tools.format_tool_preview(
-                        name, args, workspace_root=workspace_root,
-                    )
-                    echo_tool(name, arg_preview, stats)
-                    raw_result = tools.dispatch(impls, name, args)
-                    result, attachments = tools.unwrap_tool_result(raw_result)
-                    if session_log:
-                        memory.log_event(
-                            session_log, "tool",
-                            f"{name}({arg_preview}) -> {result[:500]}",
-                        )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": call.get("id") or f"call_{round_idx}_{call_idx}",
-                        "content": result,
-                    })
-                    round_media.extend(attachments)
-                if round_media and model_has_vision(model, cfg):
-                    messages.append({
-                        "role": "user",
-                        "content": extract.image_user_content(
-                            "[lmloop] Image from tool result",
-                            round_media,
-                        ),
-                    })
-                if round_idx + 1 >= max_gather:
+                _dispatch_tools(
+                    turn, tool_calls, round_idx=round_idx, impls=impls,
+                    echo_tool=echo_tool, stats=stats, session_log=session_log,
+                    workspace_root=workspace_root, messages=messages,
+                    cfg=cfg, model=model,
+                )
+                if round_idx + 1 >= turn.max_gather:
                     echo_status(status_mod.msg_gather_budget())
-                    gathering = False
+                    turn.gathering = False
             finally:
-                if indicator is not None:
-                    indicator.clear()
-                if thinking is not None and thinking.active:
-                    thinking.erase()
-                if not printer_finished and printer is not None:
-                    printer.finish()
+                round_ui.close()
 
         echo_status(status_mod.msg_hit_max_rounds())
-        return _finish_turn()
+        return _finish()
     except (KeyboardInterrupt, Exception):
-        _mark_interrupted()
-        _rollback_incomplete_messages(messages, checkpoint)
+        GatherTurn.mark_interrupted(stats)
+        _rollback_incomplete_messages(messages, turn.checkpoint)
         raise
     finally:
         memory.set_active_session(prev_session)

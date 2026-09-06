@@ -15,6 +15,7 @@ Shipped here (names resolved against `/graph` the control-flow stem):
 
 | Piece | Where |
 |-------|--------|
+| Owner | `knowledge_graph.py` (`KnowledgeGraph`); learnings/decisions/sessions stay in `memory.py` |
 | Storage | `graph_nodes.jsonl`, `graph_edges.jsonl` under the project dir |
 | Recall | `recall_memory` does keyword + 1-hop neighbors when `use_graph` |
 | Writes | `graph_add_edge` tool (registered only when `use_graph`) |

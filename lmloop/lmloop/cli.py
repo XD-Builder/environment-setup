@@ -35,7 +35,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import agent, loop as loop_mod, memory
+from . import agent, knowledge_graph, loop as loop_mod, memory, server, skills
 from . import graph as graph_mod
 from .commands import cli_subcommand_metas, cli_subcommand_names
 from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
@@ -75,8 +75,8 @@ def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
         console.info("no sessions recorded yet")
         return 0
     try:
-        model = agent.ensure_server(cfg, echo=console.info)
-    except agent.ServerError as e:
+        model = server.ensure_server(cfg, echo=console.info)
+    except server.ServerError as e:
         console.error(f"error: {e}")
         return 1
     try:
@@ -92,7 +92,7 @@ def cmd_retro(cfg: dict, count: int, console: Console) -> int:
 
 
 def cmd_skills(console: Console, names_only: bool = False, *, repl: bool = False) -> int:
-    names = agent.list_skills()
+    names = skills.list_skills()
     if names_only:
         for name in names:
             print(name)
@@ -101,12 +101,12 @@ def cmd_skills(console: Console, names_only: bool = False, *, repl: bool = False
         console.info("(no skills yet)")
         return 0
     for name in names:
-        blurb = agent.skill_blurb(name)
+        blurb = skills.skill_blurb(name)
         line = f"  /{name}"
         if blurb:
             line += f"  — {blurb}"
-        path = agent.skill_path(name)
-        if path and path.parent == agent.USER_SKILLS_DIR:
+        path = skills.skill_path(name)
+        if path and path.parent == skills.USER_SKILLS_DIR:
             line += "  (user)"
         console.info(line)
     if repl:
@@ -119,11 +119,11 @@ def cmd_skills(console: Console, names_only: bool = False, *, repl: bool = False
 
 def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console) -> int:
     """Generate a skill draft, show it, and save to ~/.lmloop/skills/ on confirm."""
-    err = agent.validate_skill_name(name)
+    err = skills.validate_skill_name(name)
     if err:
         console.error(err)
         return 1
-    existing = agent.skill_path(name)
+    existing = skills.skill_path(name)
     if existing is not None:
         console.warn(f"skill '{name}' already exists at {existing}")
         if not ask_yes_no("  overwrite? [y/N] "):
@@ -131,15 +131,15 @@ def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console) -> int:
             return 0
 
     try:
-        model = agent.ensure_server(cfg, echo=console.info)
-    except agent.ServerError as e:
+        model = server.ensure_server(cfg, echo=console.info)
+    except server.ServerError as e:
         console.error(f"error: {e}")
         return 1
 
     console.info(f"drafting skill '{name}'…")
     try:
         draft = agent.generate_skill_draft(cfg, model, name, brief)
-    except agent.ServerError as e:
+    except server.ServerError as e:
         console.error(f"error: {e}")
         return 1
     except KeyboardInterrupt:
@@ -154,13 +154,13 @@ def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console) -> int:
     console.info("── draft ─────────────────────────────────────────────")
     console.print_markdown(draft)
     console.info("──────────────────────────────────────────────────────")
-    console.warn(f"Save to {agent.USER_SKILLS_DIR / (name + '.md')}?")
+    console.warn(f"Save to {skills.USER_SKILLS_DIR / (name + '.md')}?")
     if not ask_yes_no("  save skill? [y/N] "):
         console.info("cancelled — draft not saved")
         return 0
 
     try:
-        path = agent.save_user_skill(name, draft)
+        path = skills.save_user_skill(name, draft)
     except ValueError as e:
         console.error(str(e))
         return 1
@@ -279,25 +279,25 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         if not cfg.get("use_graph"):
             console.info("knowledge graph is off — `lmloop config set use_graph true`")
             return 0
-        memory.ensure_graph(cfg)
-        console.info(memory.graph_stats())
+        knowledge_graph.ensure_graph(cfg)
+        console.info(knowledge_graph.graph_stats())
         return 0
     if words and words[0] == "reconcile":
         if not cfg.get("use_graph"):
             console.info("knowledge graph is off — `lmloop config set use_graph true`")
             return 0
-        memory.ensure_graph(cfg)
-        cluster = memory.contradiction_clusters()
+        knowledge_graph.ensure_graph(cfg)
+        cluster = knowledge_graph.contradiction_clusters()
         if cluster.startswith("(no "):
             console.info(cluster)
             return 0
         try:
-            model = agent.ensure_server(cfg, echo=console.info)
-        except agent.ServerError as e:
+            model = server.ensure_server(cfg, echo=console.info)
+        except server.ServerError as e:
             console.error(f"error: {e}")
             return 1
         try:
-            prompt = agent.load_skill("_reconcile") + "\n\n" + cluster
+            prompt = skills.load_skill("_reconcile") + "\n\n" + cluster
         except FileNotFoundError as e:
             console.error(str(e))
             return 1
@@ -309,7 +309,7 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
             echo_error=console.error,
             echo_tool=console.tool_call,
             echo_round=console.round_usage,
-            context_limit=agent.get_context_limit(model, cfg),
+            context_limit=server.get_context_limit(model, cfg),
             context_reserve=int(cfg.get("context_reserve") or 2048),
             workspace_root=Path.cwd().resolve(),
             log_label="/memory reconcile",
@@ -345,7 +345,7 @@ def cmd_history(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_models(cfg: dict, words: list, console: Console) -> int:
-    models = agent.list_models(cfg["base_url"])
+    models = server.list_models(cfg["base_url"])
     console.info("\n".join(models) if models else f"(no server at {cfg['base_url']} or nothing loaded)")
     return 0
 
@@ -363,8 +363,8 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
         console.error(err)
         return 1
     try:
-        model = agent.ensure_server(cfg, echo=console.info)
-    except agent.ServerError as e:
+        model = server.ensure_server(cfg, echo=console.info)
+    except server.ServerError as e:
         console.error(f"error: {e}")
         return 1
     hint = loop_mod.superseded_until_hint()
@@ -379,8 +379,8 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
                    model: "str | None" = None) -> int:
     if model is None:
         try:
-            model = agent.ensure_server(cfg, echo=console.info)
-        except agent.ServerError as e:
+            model = server.ensure_server(cfg, echo=console.info)
+        except server.ServerError as e:
             console.error(f"error: {e}")
             return 1
     confirm_gate = make_confirm_gate(console)
@@ -398,7 +398,7 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
         echo_error=console.error,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
-        context_limit=agent.get_context_limit(model, cfg),
+        context_limit=server.get_context_limit(model, cfg),
         context_reserve=int(cfg.get("context_reserve") or 2048),
         workspace_root=Path.cwd().resolve(),
         ask_gate=ask_until_gate,
@@ -434,8 +434,8 @@ def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
         console.error(str(e))
         return 1
     try:
-        model = agent.ensure_server(cfg, echo=console.info)
-    except agent.ServerError as e:
+        model = server.ensure_server(cfg, echo=console.info)
+    except server.ServerError as e:
         console.error(f"error: {e}")
         return 1
     hint = graph_mod.superseded_graph_hint()
@@ -450,8 +450,8 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
                    defn: graph_mod.GraphDef, model: "str | None" = None) -> int:
     if model is None:
         try:
-            model = agent.ensure_server(cfg, echo=console.info)
-        except agent.ServerError as e:
+            model = server.ensure_server(cfg, echo=console.info)
+        except server.ServerError as e:
             console.error(f"error: {e}")
             return 1
     confirm_gate = make_confirm_gate(console)
@@ -469,7 +469,7 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
         echo_error=console.error,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
-        context_limit=agent.get_context_limit(model, cfg),
+        context_limit=server.get_context_limit(model, cfg),
         context_reserve=int(cfg.get("context_reserve") or 2048),
         workspace_root=Path.cwd().resolve(),
         ask_gate=ask_until_gate,
@@ -501,11 +501,11 @@ def cmd_skills_cli(cfg: dict, words: list, console: Console) -> int:
 def cmd_skill_cli(cfg: dict, words: list, console: Console) -> int:
     if not words:
         console.error("usage: lmloop skill <name> [task]")
-        console.info(f"  skills: {', '.join(agent.list_skills()) or '(none)'}")
+        console.info(f"  skills: {', '.join(skills.list_skills()) or '(none)'}")
         return 1
     name = words[0]
     try:
-        agent.load_skill(name, public_only=True)
+        skills.load_skill(name, public_only=True)
     except FileNotFoundError as e:
         console.error(str(e))
         return 1

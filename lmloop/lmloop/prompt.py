@@ -16,7 +16,7 @@ from prompt_toolkit.search import stop_search
 from prompt_toolkit.shortcuts.prompt import CompleteStyle
 from prompt_toolkit.styles import Style
 
-from . import agent
+from . import skills
 from .config import STATE_ROOT
 from .files_index import (
     at_completion_token,
@@ -182,9 +182,9 @@ class LmloopCompleter(Completer):
 
         if _in_skill_arg(text_before, word):
             prefix = "" if word.startswith("/") else word
-            names = _filter_names(agent.list_skills(), prefix)
+            names = _filter_names(skills.list_skills(), prefix)
             for name in names:
-                blurb = _short_blurb(name, agent.skill_blurb(name)) or "skill"
+                blurb = _short_blurb(name, skills.skill_blurb(name)) or "skill"
                 yield Completion(
                     name,
                     start_position=-len(prefix),
