@@ -62,7 +62,7 @@ Ship **one new stem**: `graph` / `/graph`. Resume stays `/continue` (and `lmloop
 - LangGraph / ADK / AutoGen GraphFlow
 - `graphs new`, `_graph_author.md`, or a skill-drafting flow for graphs
 - Packaged `daily` (cron + `lmloop skill ceo` is enough)
-- Knowledge-graph JSONL **in this module** (that lives in `memory.py` / DESIGN_LOOP_AND_GRAPH.md)
+- Knowledge-graph JSONL **in this module** (that lives in `knowledge_graph.py` / DESIGN_LOOP_AND_GRAPH.md)
 - An LLM that can jump to any node
 - In-process scheduler / daemon
 - Parallel workers
@@ -70,7 +70,7 @@ Ship **one new stem**: `graph` / `/graph`. Resume stays `/continue` (and `lmloop
 
 ### Import graph (do not invert)
 
-- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`
+- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`), `skills.load_skill`, `memory`, `status`
 - `loop.py` must **not** import `graph`
 - `agent.py` / `stream.py` / `display.py` must **not** import `graph`
 - Handlers in `cli.py` / `repl.py`; names in `commands.py`

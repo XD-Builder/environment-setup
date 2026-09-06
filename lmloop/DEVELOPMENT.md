@@ -84,51 +84,71 @@ find yourself updating two lists, you have already added debt.
 
 | Change | Module |
 |---|---|
-| Multi-round tool loop, HTTP chat, skills, server bring-up | `agent.py` |
+| Multi-round tool loop, skill drafting | `agent.py` |
+| Chat HTTP (`POST /v1/chat/completions`) | `chat.py` |
+| Skill filesystem, name validation, system-prompt assembly | `skills.py` |
+| LMS bring-up, model listing, context length, VLM detection | `server.py` |
 | SSE ingest, cumulative snapshots, overlap, repeat-halt | `stream.py` |
 | Spinner, live printers, thinking lines, TTY writes | `display.py` |
 | Tool schema + impl + validation | `tools.py` (`ToolDef` rows) |
+| Web search / fetch / HTML parsers | `web.py` |
 | Slash/CLI names, reserved skill stems | `commands.py` |
 | Status / resume / nudge copy | `status.py` |
-| JSONL memory | `memory.py` |
+| JSONL memory (learnings, decisions, sessions, checkpoints) | `memory.py` |
+| Knowledge-graph nodes/edges (`use_graph`) | `knowledge_graph.py` |
 | Goal loop (`until` maker/check/eval) | `loop.py` |
 | Authored workflow graphs | `graph.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
-| Paths, `DEFAULTS`, project slug | `config.py` |
+| Paths, `DEFAULTS`, project slug, `utc_now()` | `config.py` |
 | `@path` completion + ref expansion | `files_index.py` |
 | PDF/Office/image/audio extraction | `extract.py` |
-| REPL session + slash handlers | `repl.py` |
+| REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
 | prompt_toolkit session, completers, key bindings, input lexer | `prompt.py` |
 | ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui.py` |
 | rich Console / markdown / pager | `markdown_view.py` |
 
-`agent.py` imports display/stream helpers that `act()` calls. Tests patch
-`lmloop.display` / `lmloop.stream` where those names are looked up — do not
-re-export privates through `agent` for tests. New stream or display logic
-belongs in those modules, not as more private helpers in `agent.py`.
+`agent.py` imports display helpers that `act()` calls, and `chat._chat` for
+completions. Tests patch `lmloop.display` / `lmloop.stream` / `lmloop.chat`
+where those names are looked up — do not re-export privates through `agent`
+for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
+`patch.object(agent, "_chat")` tests keep working. New HTTP logic belongs in
+`chat.py`, not as more private helpers in `agent.py`.
 
 **Import graph (do not invert):**
 
-- `stream.py` must not import `agent` or `display`.
+- `stream.py` must not import `agent`, `display`, or `chat`.
 - `display.py` may import stream helpers (they share `_think_line_similar`) but
-  not `agent`.
+  not `agent` or `chat`.
+- `chat.py` is a leaf relative to the loop: urllib, `stream._read_sse`,
+  `status.api_messages`, `server.ServerError`. It must not import `agent`,
+  `tools`, `loop`, or `graph`.
 - `ui.py` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
-- `loop.py` may import `agent.act`, `memory`, `status`, and `tools.run_shell` for the check command.
-- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`), `agent` (skills, `act` only through `isolated_act`), `memory`, `status`.
+- `loop.py` may import `agent.act`, `skills.system_prompt`, `memory`, `status`, and `tools.run_shell` for the check command.
+- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`, `eval_max_rounds`), `skills.load_skill`, `memory`, `knowledge_graph.record_skill_use`, `status`.
+- `knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.
 - `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
-- `extract.py` is a leaf: stdlib + optional CLIs (`pdftotext`, `whisper`). It must not import `agent`, `tools`, `loop`, or `graph`. `tools.py`, `agent.py`, `repl.py`, `memory.py`, and `markdown_view.py` may import it.
-- `agent.py` and `tools.py` may import `steer`.
+- `extract.py` is a leaf: stdlib + optional CLIs (`pdftotext`, `whisper`). It must not import `agent`, `tools`, `loop`, or `graph`. `tools.py`, `agent.py`, `repl.py`, `memory.py`, `markdown_view.py`, and `web.py` may import it.
+- `agent.py`, `tools.py`, and `skills.py` may import `steer`.
+- `skills.py` may import `tools.tool_names`, `steer`, and `memory.context_block`. It must not import `agent` (drafting stays in `agent.generate_skill_draft`).
+- `server.py` is a leaf relative to the loop: urllib, `lms` CLI, `status` copy. It must not import `agent`, `tools`, `loop`, `graph`, or `chat`.
+- `agent.py` may import `server` (`ServerError`, `model_has_vision`) and `chat` (`_chat`).
+- `tools.py` may import `web` (`web_search`, `fetch_url`). `web.py` must not
+  import `tools` at module load (lazy `ToolResult` only for image attachments).
 - `loop.py` must not import `graph`.
-- `agent.py` / `stream.py` / `display.py` must not import `loop` or `graph`.
+- `agent.py` / `stream.py` / `display.py` / `chat.py` must not import `loop` or `graph`.
 
 ### Keep components small
 
 - One registry: add tools as `ToolDef` rows in `build_tools()`. `tool_names()`
-  reads that registry — do not keep a parallel name list.
-- HTTP in `tools.py` returns `(info, err)` / `(body, err)` so backends do not
-  each wrap urllib. Search backends are a list of `(name, fn)` in `web_search()`.
+  reads that registry — do not keep a parallel name list. Side-effect-free tools
+  set `concurrent=True`; `run_tool_calls()` batches consecutive concurrent
+  names onto a thread pool and keeps shell/writes/memory serial.
+- JSONL I/O is `memory.append_jsonl` / `memory.read_jsonl`. Do not wrap them
+  as `_append_jsonl`. ISO timestamps use `config.utc_now()`.
+- HTTP in `web.py` returns `(info, err)` / `(body, err)` so backends do not
+  each wrap urllib. Search backends are a list of `(name, fn)` in `web.web_search()`.
 - Display close methods (`clear`, `finish`, `erase`, `reset`) must not raise.
   Catch `OSError` at the write site (`_tty_write`). `act()` then does not need
   `_safe_*` wrappers.
@@ -204,7 +224,7 @@ Name the contract after **what callers need** (`finish()`, `feed()`,
 Rare. Use it for a real **is-a** with shared parsing or protocol, not for
 code reuse.
 
-- **Yes:** `_HtmlToolParser(HTMLParser)` and its subclasses — the stdlib
+- **Yes:** `_HtmlToolParser(HTMLParser)` and its subclasses in `web.py` — the stdlib
   *is* the HTML API; subclasses specialize `handle_starttag` / data.
 - **No:** a `BaseAgent` / `BaseTool` / `AbstractPrinter` hierarchy for one
   concrete loop. Share a method-name contract (`feed` / `finish` / `reset`)
@@ -221,7 +241,9 @@ Same operation, different types, no `if kind ==` ladders at the call site.
 
 - Live printers (`_StreamPrinter`, `_MarkdownLivePrinter`, `_ThinkingLive`)
   share `feed` / `finish` / `reset` (and `clear` / `erase` where they write).
-  `act()` should not branch on printer class.
+  `RoundDisplay` binds those callbacks; `act()` should not branch on printer class.
+- `GatherTurn` owns gather/answer counters, tool fingerprints, and nudge policy
+  for one `act()` call. Do not thread those fields as loose locals.
 - Search backends are `(name, fn)` callables with the same `(query, …) ->
   (body, err)` shape. Add a backend by appending to the list.
 - Slash handlers are `Callable[[SessionState, str], bool]`. The dispatcher
@@ -232,8 +254,9 @@ the behavior on the type.
 
 ### Design that stays readable
 
-- **Dataclasses** for records and registries (`ToolDef`, `CommandMeta`,
-  `SlashCommand`, `SessionState`). Frozen when the row is a constant
+- Dataclasses for records and registries (`ToolDef`, `CommandMeta`,
+  `SlashCommand`, `SessionState`, `GatherTurn`, `LmsClient`, `SkillLibrary`,
+  `KnowledgeGraph`). Frozen when the row is a constant
   (`CommandMeta`).
 - **Plain functions** for stateless transforms (`format_tokens`,
   `context_block`, `expand_at_refs`, `collect_at_refs`, `load_steering`, `clock_block`). A class
@@ -339,7 +362,7 @@ Catch a specific type, or do not catch.
 - `subprocess.TimeoutExpired`, `shlex` `ValueError`
 - `dispatch()` turning impl failures into `ERROR: …` text (contract: the loop
   does not crash)
-- `except Exception` in `_search_ddgs` only — that library’s errors are not a
+- `except Exception` in `web._search_ddgs` only — that library’s errors are not a
   stable API
 
 **Avoid**

@@ -2,21 +2,27 @@
 
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import agent, extract, loop as loop_mod, memory
+from . import agent, extract, knowledge_graph, loop as loop_mod, memory, server, skills
 from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
 from .files_index import AtRefExpansion, collect_at_refs
-from .status import MSG_RESUME, msg_graph_continue, msg_until_continue, status as status_line
+from .status import (
+    MSG_GRAPH_FOLLOWUP,
+    MSG_RESUME,
+    MSG_UNTIL_FOLLOWUP,
+    msg_graph_continue,
+    msg_until_continue,
+    status as status_line,
+)
 from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate, write_clipboard
 
 _THINKING_HISTORY_MAX = 30
-_UNTIL_FOLLOWUP = "Ready to continue from this until-run. Ask a follow-up."
-_GRAPH_FOLLOWUP = "Ready to continue from this graph-run. Ask a follow-up."
 _REF_CONTENTS_HEADER = (
     "Attached file contents (extracted in place; do not copy into the workspace):"
 )
@@ -49,6 +55,7 @@ class SessionState:
     thinking_history: list = field(default_factory=list)
     until_run: "Path | None" = None
     graph_run: "Path | None" = None
+    clock_now: object = None
 
     @property
     def user_turns(self) -> int:
@@ -98,11 +105,14 @@ class SessionState:
 
 
 def _refresh_context_limit(state: SessionState) -> None:
-    state.context_limit = agent.get_context_limit(state.model, state.cfg)
+    state.context_limit = server.get_context_limit(state.model, state.cfg)
 
 
 def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
-    state.messages = _fresh_messages(state.cfg, state.workspace_root)
+    state.clock_now = datetime.now(timezone.utc)
+    state.messages = _fresh_messages(
+        state.cfg, state.workspace_root, clock_now=state.clock_now,
+    )
     state.session_log = memory.new_session_log()
     state.thinking_history = []
     state.until_run = None
@@ -111,8 +121,11 @@ def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
         state.stats = fresh_stats()
 
 
-def _fresh_messages(cfg: dict, workspace_root: "Path | None" = None) -> list:
-    return [{"role": "system", "content": agent.system_prompt(cfg, workspace_root)}]
+def _fresh_messages(cfg: dict, workspace_root: "Path | None" = None,
+                    clock_now=None) -> list:
+    return [{"role": "system", "content": skills.system_prompt(
+        cfg, workspace_root, clock_now=clock_now,
+    )}]
 
 
 def _echo_assistant(console: Console):
@@ -148,7 +161,7 @@ def _turn_user_content(state: SessionState, expansion: AtRefExpansion):
     """Referenced-files text, plus image_url parts when the model is a VLM."""
     extra_readable = [ref.resolved for ref in expansion.refs]
     content = _with_ref_excerpts(expansion.text, expansion.refs)
-    if agent.model_has_vision(state.model, state.cfg):
+    if server.model_has_vision(state.model, state.cfg):
         files = [ref.resolved for ref in expansion.refs if not ref.is_dir]
         content = extract.image_user_content(
             content, extract.media_from_paths(files),
@@ -194,7 +207,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
         if footer:
             print(footer)
         return True
-    except agent.ServerError as e:
+    except server.ServerError as e:
         memory.log_event(state.session_log, "system", f"error: {e}")
         state.console.error(f"error: {e}")
         state.console.hint(f"  conversation kept — type to steer, or {MSG_RESUME}")
@@ -211,6 +224,8 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
         state.console.hint(f"  conversation kept — type to steer, or {MSG_RESUME}")
         return False
 
+
+# --- session ---
 
 def _cmd_help(state: SessionState, _arg: str) -> bool:
     print(state.console.help_text(SLASH_COMMANDS))
@@ -242,10 +257,12 @@ def _cmd_model(state: SessionState, arg: str) -> bool:
             msg += f" · context {state.context_limit // 1000}k"
         state.console.info(msg)
     else:
-        models = agent.list_models(state.cfg["base_url"])
+        models = server.list_models(state.cfg["base_url"])
         state.console.info("\n".join(models) or "(none)")
     return True
 
+
+# --- memory ---
 
 def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
     parts = (arg or "").split(None, 1)
@@ -270,8 +287,8 @@ def _cmd_memory_graph(state: SessionState) -> bool:
     if not state.cfg.get("use_graph"):
         state.console.info("knowledge graph is off — `lmloop config set use_graph true`")
         return True
-    memory.ensure_graph(state.cfg)
-    state.console.info(memory.graph_stats())
+    knowledge_graph.ensure_graph(state.cfg)
+    state.console.info(knowledge_graph.graph_stats())
     return True
 
 
@@ -279,13 +296,13 @@ def _cmd_memory_reconcile(state: SessionState, confirm_gate) -> bool:
     if not state.cfg.get("use_graph"):
         state.console.info("knowledge graph is off — `lmloop config set use_graph true`")
         return True
-    memory.ensure_graph(state.cfg)
-    cluster = memory.contradiction_clusters()
+    knowledge_graph.ensure_graph(state.cfg)
+    cluster = knowledge_graph.contradiction_clusters()
     if cluster.startswith("(no "):
         state.console.info(cluster)
         return True
     try:
-        prompt = agent.load_skill("_reconcile") + "\n\n" + cluster
+        prompt = skills.load_skill("_reconcile") + "\n\n" + cluster
     except FileNotFoundError as e:
         state.console.error(str(e))
         return True
@@ -307,7 +324,8 @@ def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
         "Transcript:\n" + transcript
     )
     state.console.hint("[save · current conversation unchanged]")
-    result = _isolated_act(state, prompt, confirm_gate, log_label="/save")
+    result = _isolated_act(state, prompt, confirm_gate, log_label="/save",
+                           no_tools=True)
     if result is None:
         state.console.hint("[checkpoint not saved]")
         return True
@@ -335,14 +353,14 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
             return 0
         label = "/memory mine this session"
     try:
-        task = agent.load_skill("retro") + "\n\n" + transcript
+        task = skills.load_skill("retro") + "\n\n" + transcript
     except FileNotFoundError as e:
         console.error(str(e))
         return 1
     if cfg.get("use_graph"):
-        memory.ensure_graph(cfg)
+        knowledge_graph.ensure_graph(cfg)
         try:
-            task += "\n\n" + agent.load_skill("_graph_mine")
+            task += "\n\n" + skills.load_skill("_graph_mine")
         except FileNotFoundError:
             pass
     result = loop_mod.isolated_act(
@@ -353,7 +371,7 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
         echo_error=console.error,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
-        context_limit=agent.get_context_limit(model, cfg),
+        context_limit=server.get_context_limit(model, cfg),
         context_reserve=int(cfg.get("context_reserve") or 2048),
         workspace_root=Path.cwd().resolve(),
         log_label=label,
@@ -414,27 +432,7 @@ def _cmd_retro(state: SessionState, arg: str, confirm_gate) -> bool:
     return _cmd_memory_mine(state, arg, confirm_gate)
 
 
-def _run_named_skill(state: SessionState, name: str, task: str, confirm_gate) -> bool:
-    try:
-        prompt = agent.load_skill(name, public_only=True)
-    except FileNotFoundError as e:
-        state.console.error(str(e))
-        return True
-    _run_turn(state, prompt + ("\n\nTask: " + task if task else ""), confirm_gate)
-    memory.record_skill_use(name, session=state.session_log, cfg=state.cfg)
-    return True
-
-
-def _cmd_skill(state: SessionState, arg: str, confirm_gate) -> bool:
-    rest = arg.split(None, 1)
-    if not rest:
-        state.console.info("usage: /skill <name> [task]")
-        state.console.info(f"  skills: {', '.join(agent.list_skills())}")
-        return True
-    name = rest[0]
-    task = rest[1] if len(rest) > 1 else ""
-    return _run_named_skill(state, name, task, confirm_gate)
-
+# --- session ---
 
 def _cmd_undo(state: SessionState, _arg: str) -> bool:
     msgs = state.messages
@@ -461,7 +459,7 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
         state.console.info("(nothing to compact)")
         return True
     try:
-        prompt = agent.load_skill("compact") + "\n\nTranscript:\n" + transcript
+        prompt = skills.load_skill("compact") + "\n\nTranscript:\n" + transcript
     except FileNotFoundError as e:
         state.console.error(str(e))
         return True
@@ -483,7 +481,7 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
         return True
     state.console.hint("Replace the in-memory thread with this summary?")
     if ask_yes_no("Replace thread with summary? [y/N] "):
-        system = _fresh_messages(state.cfg, state.workspace_root)[0]
+        system = _fresh_messages(state.cfg, state.workspace_root, clock_now=state.clock_now)[0]
         handoff = (
             "Context was compacted. Continue from this handoff summary:\n\n" + summary
         )
@@ -506,7 +504,8 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
 
 
 def _isolated_act(state: SessionState, user_text: str, confirm_gate,
-                  *, log_label: str, extra_readable=None) -> "list | None":
+                  *, log_label: str, extra_readable=None,
+                  no_tools: bool = False) -> "list | None":
     """Run act() on a fresh thread. Returns messages, or None on failure."""
     try:
         result = loop_mod.isolated_act(
@@ -522,6 +521,8 @@ def _isolated_act(state: SessionState, user_text: str, confirm_gate,
             workspace_root=state.workspace_root,
             log_label=log_label,
             extra_readable=extra_readable,
+            no_tools=no_tools,
+            clock_now=state.clock_now,
         )
     except KeyboardInterrupt:
         return None
@@ -529,6 +530,30 @@ def _isolated_act(state: SessionState, user_text: str, confirm_gate,
         return None
     messages, _session_log = result
     return messages
+
+
+# --- skills ---
+
+def _run_named_skill(state: SessionState, name: str, task: str, confirm_gate) -> bool:
+    try:
+        prompt = skills.load_skill(name, public_only=True)
+    except FileNotFoundError as e:
+        state.console.error(str(e))
+        return True
+    _run_turn(state, prompt + ("\n\nTask: " + task if task else ""), confirm_gate)
+    knowledge_graph.record_skill_use(name, session=state.session_log, cfg=state.cfg)
+    return True
+
+
+def _cmd_skill(state: SessionState, arg: str, confirm_gate) -> bool:
+    rest = arg.split(None, 1)
+    if not rest:
+        state.console.info("usage: /skill <name> [task]")
+        state.console.info(f"  skills: {', '.join(skills.list_skills())}")
+        return True
+    name = rest[0]
+    task = rest[1] if len(rest) > 1 else ""
+    return _run_named_skill(state, name, task, confirm_gate)
 
 
 def _cmd_skills(state: SessionState, arg: str, confirm_gate) -> bool:
@@ -550,6 +575,8 @@ def _cmd_skills(state: SessionState, arg: str, confirm_gate) -> bool:
     cmd_skills(state.console, repl=True)
     return True
 
+
+# --- session ---
 
 def _cmd_history(state: SessionState, arg: str) -> bool:
     limit = int(arg) if arg.isdigit() and int(arg) > 0 else 10
@@ -654,7 +681,7 @@ def _cmd_restore(state: SessionState, arg: str) -> bool:
             state.console.error("checkpoint not found — try /checkpoints")
             return True
         body = memory.read_checkpoint_body(path)
-        system = _fresh_messages(state.cfg, state.workspace_root)[0]
+        system = _fresh_messages(state.cfg, state.workspace_root, clock_now=state.clock_now)[0]
         messages = [
             system,
             {"role": "user", "content": f"Resume from checkpoint ({path.stem}):\n\n{body}"},
@@ -677,7 +704,7 @@ def _cmd_restore(state: SessionState, arg: str) -> bool:
     if not turns:
         state.console.error("session is empty — nothing to restore")
         return True
-    system = _fresh_messages(state.cfg, state.workspace_root)[0]
+    system = _fresh_messages(state.cfg, state.workspace_root, clock_now=state.clock_now)[0]
     messages = [system] + turns
     if fresh:
         _adopt_thread(state, messages, log=memory.new_session_log(), replay=True)
@@ -695,6 +722,8 @@ def _cmd_restore(state: SessionState, arg: str) -> bool:
     state.console.info(f"[restored {tag} — {n} turn(s){extra}]")
     return True
 
+
+# --- until / graph ---
 
 def _until_callbacks(state: SessionState, confirm_gate):
     def mine(paths):
@@ -738,9 +767,9 @@ def attach_until_result(state: SessionState, run: loop_mod.UntilRun) -> None:
     summary = loaded.last_handoff() or loaded.last_maker_handoff() or "(no handoff)"
     user = f"Until-run ({outcome}). Goal: {loaded.goal}\n\n{summary}"
     state.messages.append({"role": "user", "content": user})
-    state.messages.append({"role": "assistant", "content": _UNTIL_FOLLOWUP})
+    state.messages.append({"role": "assistant", "content": MSG_UNTIL_FOLLOWUP})
     memory.log_event(state.session_log, "user", user)
-    memory.log_event(state.session_log, "assistant", _UNTIL_FOLLOWUP)
+    memory.log_event(state.session_log, "assistant", MSG_UNTIL_FOLLOWUP)
 
 
 def _advance_until(state: SessionState, run: loop_mod.UntilRun, confirm_gate) -> None:
@@ -807,9 +836,9 @@ def attach_graph_result(state: SessionState, run: graph_mod.GraphRun) -> None:
     summary = loaded.last_handoff() or "(no handoff)"
     user = f"Graph-run ({outcome}). Graph: {loaded.name}\n\n{summary}"
     state.messages.append({"role": "user", "content": user})
-    state.messages.append({"role": "assistant", "content": _GRAPH_FOLLOWUP})
+    state.messages.append({"role": "assistant", "content": MSG_GRAPH_FOLLOWUP})
     memory.log_event(state.session_log, "user", user)
-    memory.log_event(state.session_log, "assistant", _GRAPH_FOLLOWUP)
+    memory.log_event(state.session_log, "assistant", MSG_GRAPH_FOLLOWUP)
 
 
 def _advance_graph(state: SessionState, run: graph_mod.GraphRun,
@@ -843,6 +872,8 @@ def _cmd_graph(state: SessionState, arg: str, confirm_gate) -> bool:
     _advance_graph(state, run, defn, confirm_gate)
     return True
 
+
+# --- session ---
 
 def _cmd_continue(state: SessionState, arg: str, confirm_gate) -> bool:
     if state.graph_run and state.graph_run.exists():
@@ -954,11 +985,11 @@ def _build_slash_commands(confirm_gate) -> list:
         arg_hint="[n]", accepts_arg=True, hidden=True,
     ))
     taken = {c.name for c in commands}
-    for name in agent.list_skills():
+    for name in skills.list_skills():
         slash = f"/{name}"
         if slash in taken:
             continue
-        blurb = agent.skill_blurb(name) or f"run {name} skill"
+        blurb = skills.skill_blurb(name) or f"run {name} skill"
         commands.append(SlashCommand(
             slash, blurb,
             lambda s, a, n=name: _run_named_skill(s, n, a, confirm_gate),
@@ -1024,22 +1055,24 @@ def run_repl(cfg: dict, console: "Console | None" = None,
     console = console or Console(cfg.get("color", True))
 
     try:
-        model = agent.ensure_server(cfg, echo=console.info)
-    except agent.ServerError as e:
+        model = server.ensure_server(cfg, echo=console.info)
+    except server.ServerError as e:
         console.error(f"error: {e}")
         return 1
 
     slug = project_slug()
     workspace_root = Path.cwd().resolve()
+    clock_now = datetime.now(timezone.utc)
     state = SessionState(
         cfg=cfg,
         model=model,
-        messages=_fresh_messages(cfg, workspace_root),
+        messages=_fresh_messages(cfg, workspace_root, clock_now=clock_now),
         session_log=memory.new_session_log(),
         stats=fresh_stats(),
         console=console,
-        context_limit=agent.get_context_limit(model, cfg),
+        context_limit=server.get_context_limit(model, cfg),
         workspace_root=workspace_root,
+        clock_now=clock_now,
     )
     confirm_gate = make_confirm_gate(console)
 
@@ -1076,7 +1109,7 @@ def run_repl(cfg: dict, console: "Console | None" = None,
             return 0
     elif skill:
         try:
-            prompt_text = agent.load_skill(skill, public_only=True)
+            prompt_text = skills.load_skill(skill, public_only=True)
         except FileNotFoundError as e:
             console.error(str(e))
             return 1

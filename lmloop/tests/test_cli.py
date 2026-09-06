@@ -7,84 +7,10 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from lmloop import agent
+from lmloop import skills
 from lmloop.cli import main
 from lmloop.repl import _build_slash_commands
 from lmloop.ui import Console
-
-
-class SkillsDiscoveryTests(unittest.TestCase):
-    def test_list_skills_excludes_system(self):
-        names = agent.list_skills()
-        self.assertIn("ceo", names)
-        self.assertIn("investigate", names)
-        self.assertNotIn("system", names)
-        self.assertNotIn("_author", names)
-        self.assertNotIn("_graph_mine", names)
-        self.assertNotIn("_reconcile", names)
-
-    def test_skill_blurb(self):
-        blurb = agent.skill_blurb("ceo")
-        self.assertTrue(blurb)
-        self.assertNotIn("#", blurb.split()[0] if blurb else "")
-
-    def test_load_skill_missing(self):
-        with self.assertRaises(FileNotFoundError) as ctx:
-            agent.load_skill("no-such-skill-xyz")
-        self.assertIn("Available:", str(ctx.exception))
-
-    def test_load_author_skill(self):
-        text = agent.load_skill("_author")
-        self.assertTrue(text.lower().startswith("# skill author"))
-
-    def test_validate_skill_name(self):
-        self.assertIsNone(agent.validate_skill_name("deploy"))
-        self.assertIsNone(agent.validate_skill_name("compact"))  # skill override ok
-        self.assertIsNone(agent.validate_skill_name("retro"))
-        self.assertIsNotNone(agent.validate_skill_name("until"))
-        self.assertIsNotNone(agent.validate_skill_name("New"))
-        self.assertIsNotNone(agent.validate_skill_name("new"))
-        self.assertIsNotNone(agent.validate_skill_name("_hidden"))
-        self.assertIsNotNone(agent.validate_skill_name("transcript"))
-        self.assertIsNotNone(agent.validate_skill_name("copy"))
-        self.assertIsNotNone(agent.validate_skill_name("q"))
-
-    def test_load_skill_public_only_hides_private(self):
-        with self.assertRaises(FileNotFoundError):
-            agent.load_skill("_author", public_only=True)
-        with self.assertRaises(FileNotFoundError):
-            agent.load_skill("system", public_only=True)
-        # internal load still works
-        self.assertTrue(agent.load_skill("_author"))
-
-    def test_load_skill_rejects_path_like_name(self):
-        with self.assertRaises(FileNotFoundError):
-            agent.load_skill("../etc/passwd")
-
-    def test_user_skill_overrides_packaged(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            (root / "ceo.md").write_text("# Skill: ceo — user override\n\nUser body\n")
-            with patch.object(agent, "USER_SKILLS_DIR", root):
-                text = agent.load_skill("ceo")
-                self.assertIn("user override", text)
-                path = agent.skill_path("ceo")
-                self.assertEqual(path, root / "ceo.md")
-
-    def test_extract_skill_markdown_strips_fence(self):
-        raw = "```markdown\n# Skill: demo — x\n\nHello\n```"
-        out = agent.extract_skill_markdown(raw)
-        self.assertTrue(out.startswith("# Skill: demo"))
-        self.assertNotIn("```", out)
-
-    def test_save_user_skill(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            with patch.object(agent, "USER_SKILLS_DIR", root):
-                path = agent.save_user_skill("demo", "# Skill: demo — test\n\nBody\n")
-                self.assertEqual(path, root / "demo.md")
-                self.assertTrue(path.exists())
-                self.assertIn("demo", agent.list_skills())
 
 
 class CliRoutingTests(unittest.TestCase):
@@ -173,8 +99,8 @@ class CliRoutingTests(unittest.TestCase):
         draft = "# Skill: demoskill — demo\n\nDo the thing.\n"
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            with patch.object(agent, "USER_SKILLS_DIR", root), \
-                 patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+            with patch.object(skills, "USER_SKILLS_DIR", root), \
+                 patch("lmloop.cli.server.ensure_server", return_value="m"), \
                  patch("lmloop.cli.agent.generate_skill_draft", return_value=draft), \
                  patch("builtins.input", return_value="y"):
                 buf = io.StringIO()
@@ -188,8 +114,8 @@ class CliRoutingTests(unittest.TestCase):
         draft = "# Skill: demoskill — demo\n\nDo the thing.\n"
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            with patch.object(agent, "USER_SKILLS_DIR", root), \
-                 patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+            with patch.object(skills, "USER_SKILLS_DIR", root), \
+                 patch("lmloop.cli.server.ensure_server", return_value="m"), \
                  patch("lmloop.cli.agent.generate_skill_draft", return_value=draft), \
                  patch("builtins.input", return_value="n"):
                 buf = io.StringIO()
@@ -358,7 +284,7 @@ class AtRefTurnTests(unittest.TestCase):
                 return messages
 
             with patch("lmloop.repl.agent.act", side_effect=fake_act), \
-                 patch("lmloop.repl.agent.model_has_vision", return_value=True), \
+                 patch("lmloop.repl.server.model_has_vision", return_value=True), \
                  redirect_stdout(io.StringIO()):
                 _run_turn(state, "read @shot.png", lambda _: False)
 
@@ -401,8 +327,8 @@ class AtRefTurnTests(unittest.TestCase):
                 return messages
 
             with patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
-                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.load_skill", return_value="# Skill: compact"), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.repl.ask_yes_no", return_value=False), \
                  redirect_stdout(io.StringIO()):
@@ -593,7 +519,7 @@ class RestoreCommandTests(unittest.TestCase):
             state = self._state(root, current)
 
             with patch("lmloop.repl.agent.act") as act, \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  redirect_stdout(io.StringIO()) as buf:
                 ok = _cmd_restore(state, "1")
@@ -637,7 +563,7 @@ class RestoreCommandTests(unittest.TestCase):
             state = self._state(root, current)
 
             with patch("lmloop.repl.agent.act") as act, \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  redirect_stdout(io.StringIO()) as buf:
                 _cmd_restore(state, "2")
@@ -664,7 +590,7 @@ class RestoreCommandTests(unittest.TestCase):
             state = self._state(root, current)
 
             with patch("lmloop.repl.agent.act") as act, \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  redirect_stdout(io.StringIO()):
                 _cmd_restore(state, "session 1 fresh")
@@ -688,7 +614,7 @@ class RestoreCommandTests(unittest.TestCase):
             with patch("lmloop.memory.project_dir", return_value=root):
                 save_checkpoint("handoff", "We were fixing restore.")
             with patch("lmloop.repl.agent.act") as act, \
-                 patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  redirect_stdout(io.StringIO()) as buf:
                 _cmd_restore(state, "checkpoint latest")
@@ -731,9 +657,9 @@ class RetroIsolationTests(unittest.TestCase):
                 return messages
 
             with patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
-                 patch("lmloop.repl.agent.get_context_limit", return_value=0), \
-                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: retro"), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.server.get_context_limit", return_value=0), \
+                 patch("lmloop.repl.skills.load_skill", return_value="# Skill: retro"), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  redirect_stdout(io.StringIO()) as buf:
                 _cmd_retro(state, "", lambda _: False)
@@ -776,7 +702,7 @@ class CompactSaveUndoTests(unittest.TestCase):
                 raise KeyboardInterrupt()
 
             with patch("lmloop.loop.agent.act", side_effect=boom), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.memory.save_checkpoint") as save, \
                  redirect_stdout(io.StringIO()):
@@ -800,17 +726,20 @@ class CompactSaveUndoTests(unittest.TestCase):
                 {"role": "assistant", "content": "old reply"},
             ]
             state = self._state(original, log)
+            seen = []
 
             def fake_act(cfg, model, messages, **kwargs):
+                seen.append(bool(kwargs.get("no_tools")))
                 messages.append({"role": "assistant", "content": "checkpoint body"})
                 return messages
 
             with patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  redirect_stdout(io.StringIO()):
                 _cmd_save(state, "title", lambda _: False)
 
+            self.assertEqual(seen, [True])
             self.assertEqual(state.messages, original)
             self.assertEqual(state.session_log, log)
             cps = list((Path(d) / "checkpoints").glob("*.md"))
@@ -835,8 +764,8 @@ class CompactSaveUndoTests(unittest.TestCase):
                 return messages
 
             with patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
-                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.load_skill", return_value="# Skill: compact"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.repl.ask_yes_no", return_value=False), \
                  redirect_stdout(io.StringIO()):
@@ -862,8 +791,8 @@ class CompactSaveUndoTests(unittest.TestCase):
                 return messages
 
             with patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
-                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.load_skill", return_value="# Skill: compact"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.repl.ask_yes_no", return_value=True), \
                  redirect_stdout(io.StringIO()):
@@ -902,8 +831,8 @@ class CompactSaveUndoTests(unittest.TestCase):
                 return messages
 
             with patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
-                 patch("lmloop.repl.agent.load_skill", return_value="# Skill: compact"), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
+                 patch("lmloop.repl.skills.load_skill", return_value="# Skill: compact"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  patch("lmloop.repl.ask_yes_no", return_value=False), \
                  redirect_stdout(io.StringIO()):
@@ -921,7 +850,7 @@ class CompactSaveUndoTests(unittest.TestCase):
             log.write_text("")
             state = self._state([{"role": "system", "content": "sys"}], log)
             state.push_thinking("old thoughts")
-            with patch("lmloop.repl.agent.system_prompt", return_value="sys"), \
+            with patch("lmloop.repl.skills.system_prompt", return_value="sys"), \
                  patch("lmloop.memory.project_dir", return_value=Path(d)), \
                  redirect_stdout(io.StringIO()):
                 _cmd_new(state, "")
@@ -987,7 +916,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
         fake = Mock()
         fake.path = Path("/tmp/until.jsonl")
         fake.is_paused.return_value = False
-        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+        with patch("lmloop.cli.server.ensure_server", return_value="m"), \
              patch("lmloop.cli.loop_mod.UntilRun.create", return_value=fake) as create, \
              patch("lmloop.cli.loop_mod.run_until") as run, \
              patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
@@ -1002,7 +931,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
         fake = Mock()
         fake.path = Path("/tmp/until.jsonl")
         fake.is_paused.return_value = True
-        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+        with patch("lmloop.cli.server.ensure_server", return_value="m"), \
              patch("lmloop.cli.loop_mod.latest_open_until_run", return_value=fake), \
              patch("lmloop.cli.loop_mod.run_until") as run, \
              patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
@@ -1016,7 +945,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
         fake = Mock()
         fake.path = Path("/tmp/until.jsonl")
         fake.is_paused.return_value = False
-        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+        with patch("lmloop.cli.server.ensure_server", return_value="m"), \
              patch("lmloop.cli.loop_mod.UntilRun.create", return_value=fake), \
              patch("lmloop.cli.loop_mod.run_until"), \
              patch("lmloop.cli.loop_mod.UntilRun.load", return_value=fake), \
@@ -1071,7 +1000,8 @@ class MemoryMineAndUntilTests(unittest.TestCase):
 
     def test_until_appends_handoff_to_live_thread(self):
         from lmloop.loop import UntilRun
-        from lmloop.repl import _UNTIL_FOLLOWUP, attach_until_result
+        from lmloop.repl import attach_until_result
+        from lmloop.status import MSG_UNTIL_FOLLOWUP
 
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -1089,7 +1019,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
             self.assertEqual(len(state.messages), prior + 2)
             self.assertIn("ship it", state.messages[-2]["content"])
             self.assertIn("wrote findings.md", state.messages[-2]["content"])
-            self.assertEqual(state.messages[-1]["content"], _UNTIL_FOLLOWUP)
+            self.assertEqual(state.messages[-1]["content"], MSG_UNTIL_FOLLOWUP)
             self.assertIsNone(state.until_run)
 
 
@@ -1108,7 +1038,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
         fake.name = "company"
         fake.is_paused.return_value = True
         defn = Mock()
-        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+        with patch("lmloop.cli.server.ensure_server", return_value="m"), \
              patch("lmloop.cli.graph_mod.latest_open_graph_run", return_value=fake), \
              patch("lmloop.cli.graph_mod.load_graph", return_value=defn), \
              patch("lmloop.cli.graph_mod.run_graph") as run, \
@@ -1125,7 +1055,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
         fake.name = "company"
         fake.is_paused.return_value = False
         defn = Mock()
-        with patch("lmloop.cli.agent.ensure_server", return_value="m"), \
+        with patch("lmloop.cli.server.ensure_server", return_value="m"), \
              patch("lmloop.cli.graph_mod.load_graph", return_value=defn), \
              patch("lmloop.cli.graph_mod.GraphRun.create", return_value=fake) as create, \
              patch("lmloop.cli.graph_mod.superseded_graph_hint", return_value=None), \
@@ -1188,41 +1118,6 @@ class RegistryTests(unittest.TestCase):
         script = out.getvalue()
         for name in cli_subcommand_names():
             self.assertIn(f"'{name}:", script)
-
-
-class EnsureServerTests(unittest.TestCase):
-    def test_uses_configured_model_when_loaded(self):
-        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "mine",
-               "auto_start_server": False}
-        with patch("lmloop.agent.list_models", return_value=["other", "mine"]):
-            self.assertEqual(agent.ensure_server(cfg, echo=lambda *_a: None), "mine")
-
-    def test_falls_back_when_configured_model_missing(self):
-        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "missing",
-               "auto_start_server": False}
-        notes = []
-        with patch("lmloop.agent.list_models", return_value=["loaded"]):
-            self.assertEqual(agent.ensure_server(cfg, echo=notes.append), "loaded")
-        self.assertTrue(any("missing" in n and "loaded" in n for n in notes))
-
-    def test_starts_server_when_empty(self):
-        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "m",
-               "auto_start_server": True}
-        with patch("lmloop.agent.list_models", side_effect=[[], ["m"]]), \
-             patch("lmloop.agent.shutil.which", return_value="/usr/bin/lms"), \
-             patch("lmloop.agent._run_lms", return_value=True) as run, \
-             patch("lmloop.agent.time.sleep"):
-            self.assertEqual(agent.ensure_server(cfg, echo=lambda *_a: None), "m")
-        run.assert_called()
-
-    def test_raises_when_no_models(self):
-        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "",
-               "auto_start_server": False}
-        with patch("lmloop.agent.list_models", return_value=[]), \
-             patch("lmloop.agent.shutil.which", return_value=None):
-            with self.assertRaises(agent.ServerError) as ctx:
-                agent.ensure_server(cfg, echo=lambda *_a: None)
-            self.assertIn("No models available", str(ctx.exception))
 
 
 if __name__ == "__main__":

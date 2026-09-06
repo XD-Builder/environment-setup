@@ -90,7 +90,7 @@ def clock_snapshot(now: "datetime | None" = None) -> dict:
 
 
 def clock_block(now: "datetime | None" = None) -> str:
-    """System-prompt clock. Rebuilt every ``system_prompt()`` call."""
+    """System-prompt clock. Callers pass a frozen ``now`` for a session or run."""
     snap = clock_snapshot(now)
     return (
         "## Clock\n\n"

@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import agent, memory, status as status_mod
-from .config import STATE_ROOT, project_dir
+from . import knowledge_graph, memory, skills, status as status_mod
+from .config import STATE_ROOT, project_dir, utc_now
 from .loop import (
     DONE_ROLES,
     EVAL_PROMPT,
@@ -21,6 +21,7 @@ from .loop import (
     UntilRun,
     check_status_from_output,
     clip_check_output,
+    eval_max_rounds,
     isolated_act,
     last_assistant,
     parse_eval_status,
@@ -38,10 +39,6 @@ USER_GRAPHS_DIR = STATE_ROOT / "graphs"
 
 class GraphError(Exception):
     """Invalid graph markdown or unknown graph name."""
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @dataclass(frozen=True)
@@ -265,7 +262,7 @@ class GraphRun:
             path = d / f"{ts}-{n}.jsonl"
             n += 1
         run = cls(path=path, name=name, events=[])
-        run._write({"ts": _now(), "role": META_ROLE, "name": name})
+        run._write({"ts": utc_now(), "role": META_ROLE, "name": name})
         return run
 
     @classmethod
@@ -287,7 +284,7 @@ class GraphRun:
                until_run: str = "") -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
         self._write({
-            "ts": _now(),
+            "ts": utc_now(),
             "step": step,
             "role": role,
             "status": status,
@@ -405,7 +402,7 @@ def _pause_interrupted(run: GraphRun, echo_status, node: str = "",
 
 
 def _skill_prompt(node: NodeDef, handoff: str) -> str:
-    body = agent.load_skill(node.skill, public_only=True)
+    body = skills.load_skill(node.skill, public_only=True)
     parts = [body]
     if node.task:
         parts.append("Task: " + node.task)
@@ -418,6 +415,7 @@ def _run_skill_node(
     cfg: dict, model: str, node: NodeDef, handoff: str, *,
     confirm_gate, echo, echo_status, echo_error, echo_tool, echo_round,
     context_limit, context_reserve, workspace_root,
+    clock_now=None,
 ) -> "tuple[str, str, str]":
     """Return (status, handoff, session_path). status pause means stop the graph."""
     try:
@@ -432,11 +430,12 @@ def _run_skill_node(
         context_limit=context_limit, context_reserve=context_reserve,
         workspace_root=workspace_root,
         log_label=f"/graph {node.name}",
+        clock_now=clock_now,
     )
     if result is None:
         return "pause", "", ""
     messages, session_log = result
-    memory.record_skill_use(node.skill, session=session_log, cfg=cfg)
+    knowledge_graph.record_skill_use(node.skill, session=session_log, cfg=cfg)
     summary = last_assistant(messages)
     if node.check_cmd:
         output = run_check(cfg, node.check_cmd, confirm_gate, workspace_root)
@@ -457,6 +456,8 @@ def _run_skill_node(
         workspace_root=workspace_root,
         log_label=f"/graph {node.name} eval",
         readonly=True,
+        max_rounds=eval_max_rounds(cfg),
+        clock_now=clock_now,
     )
     if ev is None:
         return "pause", summary, str(session_log)
@@ -470,6 +471,7 @@ def _run_until_node(
     resume_until: "str | None",
     confirm_gate, echo, echo_status, echo_error, echo_tool, echo_round,
     context_limit, context_reserve, workspace_root, ask_gate,
+    clock_now=None,
 ) -> "tuple[str, str, str, str]":
     """Return (status, handoff, session, until_path)."""
     if resume_until:
@@ -483,6 +485,7 @@ def _run_until_node(
         context_limit=context_limit, context_reserve=context_reserve,
         workspace_root=workspace_root, ask_gate=ask_gate, mine=None,
         seed_handoff=handoff,
+        clock_now=clock_now,
     )
     until_path = str(result.path)
     paths = result.session_paths()
@@ -521,6 +524,7 @@ def run_graph(
     steps_this_call = 0
     current_node = ""
     current_until = ""
+    clock_now = datetime.now(timezone.utc)
 
     try:
         while True:
@@ -572,6 +576,7 @@ def run_graph(
                     echo_tool=echo_tool, echo_round=echo_round,
                     context_limit=context_limit,
                     context_reserve=context_reserve, workspace_root=root,
+                    clock_now=clock_now,
                 )
                 if status == "pause":
                     return _pause_interrupted(run, echo_status, node=node.name)
@@ -591,6 +596,7 @@ def run_graph(
                     context_limit=context_limit,
                     context_reserve=context_reserve, workspace_root=root,
                     ask_gate=ask_gate,
+                    clock_now=clock_now,
                 )
                 current_until = until_path
                 if status == "pause":

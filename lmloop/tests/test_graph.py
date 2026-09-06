@@ -175,7 +175,7 @@ class GraphRunnerTests(unittest.TestCase):
                  patch("lmloop.loop.project_dir", return_value=root), \
                  patch("lmloop.graph.isolated_act", side_effect=self._pass_act(root)), \
                  patch("lmloop.graph.run_until", side_effect=self._until_pass()), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
                 run = GraphRun.create("company")
                 run_graph(
                     _cfg(graph_mine=True), "m", run=run, defn=defn,
@@ -211,7 +211,7 @@ class GraphRunnerTests(unittest.TestCase):
                  patch("lmloop.loop.project_dir", return_value=root), \
                  patch("lmloop.graph.isolated_act", side_effect=self._pass_act(root)), \
                  patch("lmloop.graph.run_until", side_effect=fake_until), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
                 run = GraphRun.create("t")
                 run_graph(
                     _cfg(), "m", run=run, defn=defn,
@@ -230,7 +230,7 @@ class GraphRunnerTests(unittest.TestCase):
             with patch("lmloop.graph.project_dir", return_value=root), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.graph.isolated_act", side_effect=self._pass_act(root)), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"), \
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"), \
                  patch("lmloop.loop.run_shell", return_value="ok\n[exit code: 0]"):
                 run = GraphRun.create("t")
                 run_graph(
@@ -244,7 +244,7 @@ class GraphRunnerTests(unittest.TestCase):
             self.assertNotIn("exit code", node["handoff"])
 
     def test_skill_node_records_uses_skill_after_act(self):
-        from lmloop import memory as memory_mod
+        from lmloop import knowledge_graph as kg_mod
 
         text = "node a skill ceo"
         defn = parse_graph(text, "t")
@@ -254,7 +254,7 @@ class GraphRunnerTests(unittest.TestCase):
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.loop.project_dir", return_value=root), \
                  patch("lmloop.graph.isolated_act", side_effect=self._pass_act(root)), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
                 run = GraphRun.create("t")
                 run_graph(
                     _cfg(use_graph=True), "m", run=run, defn=defn,
@@ -263,11 +263,54 @@ class GraphRunnerTests(unittest.TestCase):
                     workspace_root=root,
                 )
                 uses = [
-                    e for e in memory_mod.get_graph_edges()
+                    e for e in kg_mod.get_graph_edges()
                     if e.get("edge_type") == "uses_skill"
                 ]
             self.assertEqual(len(uses), 1)
             self.assertEqual(uses[0]["to_key"], "ceo")
+
+    def test_skill_eval_uses_eval_max_rounds(self):
+        text = "node a skill ceo"
+        defn = parse_graph(text, "t")
+        seen = []
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = self._act_log(root)
+
+            def fake_act(cfg, model, user_text, **kwargs):
+                seen.append((
+                    "eval" if "independent checker" in user_text else "skill",
+                    kwargs.get("max_rounds"),
+                    kwargs.get("readonly"),
+                    kwargs.get("clock_now") is not None,
+                ))
+                messages = [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": user_text},
+                    {"role": "assistant", "content": (
+                        "ok\nSTATUS: pass" if "independent checker" in user_text
+                        else "did the skill"
+                    )},
+                ]
+                return messages, log
+
+            with patch("lmloop.graph.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.graph.isolated_act", side_effect=fake_act), \
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
+                run = GraphRun.create("t")
+                run_graph(
+                    _cfg(eval_max_rounds=4), "m", run=run, defn=defn,
+                    echo=lambda *_a, **_k: None,
+                    echo_status=lambda *_a, **_k: None,
+                    workspace_root=root,
+                )
+        self.assertEqual(
+            seen,
+            [("skill", None, None, True), ("eval", 4, True, True)],
+        )
 
     def test_qa_fail_cycles_to_build(self):
         defn = parse_graph(COMPANY, "company")
@@ -304,7 +347,7 @@ class GraphRunnerTests(unittest.TestCase):
                  patch("lmloop.loop.project_dir", return_value=root), \
                  patch("lmloop.graph.isolated_act", side_effect=fake_act), \
                  patch("lmloop.graph.run_until", side_effect=self._until_pass()), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
                 run = GraphRun.create("company")
                 run_graph(
                     _cfg(), "m", run=run, defn=defn,
@@ -341,7 +384,7 @@ class GraphRunnerTests(unittest.TestCase):
             with patch("lmloop.graph.project_dir", return_value=root), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.graph.isolated_act", side_effect=fake_act), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
                 run = GraphRun.create("t")
                 run_graph(
                     _cfg(), "m", run=run, defn=defn,
@@ -378,7 +421,7 @@ class GraphRunnerTests(unittest.TestCase):
             with patch("lmloop.graph.project_dir", return_value=root), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.graph.isolated_act", side_effect=fake_act), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
                 run = GraphRun.create("t")
                 run_graph(
                     _cfg(graph_max_steps=1), "m", run=run, defn=defn,
@@ -443,8 +486,8 @@ class GraphRunnerTests(unittest.TestCase):
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.loop.project_dir", return_value=root), \
                  patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.agent.system_prompt", return_value="sys"), \
-                 patch("lmloop.graph.agent.load_skill", return_value="skill body"):
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
+                 patch("lmloop.graph.skills.load_skill", return_value="skill body"):
                 run = GraphRun.create("t")
                 run_graph(
                     _cfg(), "m", run=run, defn=defn,

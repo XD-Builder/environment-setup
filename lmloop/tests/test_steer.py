@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop import agent, steer as steer_mod
+from lmloop import skills, steer as steer_mod
 from lmloop.steer import (
     _invalid_steer_name,
     clock_block,
@@ -145,7 +145,7 @@ class SystemPromptSteerTests(unittest.TestCase):
         with patch.object(steer_mod, "USER_STEER_DIR", missing), \
              patch("lmloop.steer.clock_block", return_value="## Clock\n\nNOW"), \
              patch("lmloop.memory.context_block", return_value=""):
-            text = agent.system_prompt({})
+            text = skills.system_prompt({})
         self.assertIn("## Clock\n\nNOW", text)
         self.assertIn("## Steering (always apply)", text)
         self.assertIn("# Time — relative windows", text)
@@ -156,8 +156,18 @@ class SystemPromptSteerTests(unittest.TestCase):
         with patch("lmloop.steer.clock_block", return_value="## Clock\n\nx"), \
              patch("lmloop.steer.steering_block", return_value="") as sb, \
              patch("lmloop.memory.context_block", return_value=""):
-            agent.system_prompt({}, workspace_root=root)
+            skills.system_prompt({}, workspace_root=root)
         sb.assert_called_once_with(root)
+
+    def test_system_prompt_passes_clock_now(self):
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+        with patch("lmloop.steer.clock_block", return_value="## Clock\n\nx") as cb, \
+             patch("lmloop.steer.steering_block", return_value=""), \
+             patch("lmloop.memory.context_block", return_value=""):
+            skills.system_prompt({}, clock_now=now)
+        cb.assert_called_once_with(now=now)
 
 
 if __name__ == "__main__":

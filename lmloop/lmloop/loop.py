@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import agent, memory, status as status_mod
-from .config import project_dir
+from . import agent, memory, server, skills, status as status_mod
+from .config import project_dir, utc_now
 from .tools import run_shell, shell_confirm_flags
 
 STATUS_LINE_PREFIX = "STATUS:"
@@ -58,10 +58,6 @@ pass — the goal is met with cited evidence.
 fail — more work is needed.
 blocked — you cannot tell, or a human must decide.
 """
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def clip_check_output(output: str, limit: int = CHECK_OUTPUT_LIMIT) -> str:
@@ -140,6 +136,11 @@ def parse_until_arg_line(arg: str) -> "tuple[str, str | None, str | None]":
     return parse_until_args(words)
 
 
+def eval_max_rounds(cfg: dict) -> int:
+    """Gather-round budget for an eval ``act()``. Maker keeps ``max_rounds``."""
+    return max(1, int(cfg.get("eval_max_rounds") or 8))
+
+
 def isolated_act(
     cfg: dict, model: str, user_text: str, *,
     confirm_gate=None, echo=print, echo_status=None, echo_error=None,
@@ -147,17 +148,23 @@ def isolated_act(
     context_reserve: int = 2048, workspace_root: "Path | None" = None,
     log_label: str = "",
     readonly: bool = False,
+    no_tools: bool = False,
+    max_rounds: "int | None" = None,
+    clock_now=None,
     extra_readable: "list | None" = None,
 ) -> "tuple[list, Path] | None":
     """Run act() on a fresh thread. Returns (messages, session_log), or None.
 
     KeyboardInterrupt is logged, then re-raised so ``run_until`` can pause.
+    ``clock_now`` freezes the system-prompt Clock across maker/eval cycles.
     """
     if echo_status is None:
         echo_status = echo
     if echo_error is None:
         echo_error = echo_status
-    messages = [{"role": "system", "content": agent.system_prompt(cfg, workspace_root)}]
+    messages = [{"role": "system", "content": skills.system_prompt(
+        cfg, workspace_root, clock_now=clock_now,
+    )}]
     session_log = memory.new_session_log()
     if log_label:
         memory.log_event(session_log, "user", log_label)
@@ -174,9 +181,11 @@ def isolated_act(
             context_reserve=context_reserve,
             workspace_root=workspace_root,
             readonly=readonly,
+            no_tools=no_tools,
+            max_rounds=max_rounds,
             extra_readable=extra_readable,
         )
-    except agent.ServerError as e:
+    except server.ServerError as e:
         memory.log_event(session_log, "system", f"error: {e}")
         echo_error(f"error: {e}")
         return None
@@ -223,7 +232,7 @@ class UntilRun:
             n += 1
         run = cls(path=path, goal=goal, check_cmd=check_cmd or None, events=[])
         run._write({
-            "ts": _now(),
+            "ts": utc_now(),
             "role": META_ROLE,
             "goal": goal,
             "check_cmd": check_cmd or "",
@@ -248,7 +257,7 @@ class UntilRun:
                session: str = "") -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
         self._write({
-            "ts": _now(),
+            "ts": utc_now(),
             "step": step,
             "role": role,
             "status": status,
@@ -382,6 +391,7 @@ def run_until(
     ask_gate=None,
     mine=None,
     seed_handoff: str = "",
+    clock_now=None,
 ) -> UntilRun:
     """Advance ``run`` until pass, gate-no, pause, or interrupt. Mutates run."""
     if echo_status is None:
@@ -394,6 +404,8 @@ def run_until(
     last = run.last_work()
     if last and last.get("role") == "check":
         check_output = last.get("handoff") or ""
+    if clock_now is None:
+        clock_now = datetime.now(timezone.utc)
 
     try:
         while True:
@@ -421,6 +433,7 @@ def run_until(
                     echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
                     context_limit=context_limit, context_reserve=context_reserve,
                     workspace_root=root, log_label="/until maker",
+                    clock_now=clock_now,
                 )
                 if result is None:
                     return _pause_interrupted(run, echo_status)
@@ -453,6 +466,8 @@ def run_until(
                     context_limit=context_limit, context_reserve=context_reserve,
                     workspace_root=root, log_label="/until eval",
                     readonly=True,
+                    max_rounds=eval_max_rounds(cfg),
+                    clock_now=clock_now,
                 )
                 if result is None:
                     return _pause_interrupted(run, echo_status)
