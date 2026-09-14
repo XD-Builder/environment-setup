@@ -189,7 +189,7 @@ until goal:
 ```
 
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
-- Eval cannot `write_file`, `remember`, `log_decision`, or `graph_add_edge`. It may `run_shell` to verify.
+- Eval cannot `write_file`, `update_file`, `move_file`, `delete_file`, `remember`, `log_decision`, or `graph_add_edge` (`tools.READONLY_OMIT`). It may `run_shell` to verify; a destructive shell request there is simply `DENIED` under the until/graph `GatePolicy` and never re-asked.
 - `--check` fail (nonzero exit) goes straight back to maker — no eval turn. Check `DENIED:` is `blocked` → gate.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
@@ -251,9 +251,21 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | `current_time` | UTC/local now plus 7/28/90-day lookback dates | No network. OS clock. For relative windows when Clock is stale. |
 | `graph_add_edge` | Record a relationship between existing memory-graph nodes | Only registered when `use_graph` is true. Requires a `note`. |
 
-Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
+Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl; `int_fields` / `bool_fields` coerce the strings local models send). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
 
 Tool output is truncated to 12,000 chars to protect the context window.
+
+### Confirm gates and autonomy
+
+Every gate is one call, `confirm_gate(command: str) -> bool`. The string is either a shell command or `<prefix><detail>` (`overwrite <p>`, `update_file <p>`, `move_file a -> b`, `delete_file <p>`, `write_file <p>` for outside-workspace writes). `tools.confirm_label()` owns the human label and `tools.gate_tier()` owns the recoverability tier for those prefixes; `ui.make_confirm_gate` only prints and asks.
+
+- **Pre-image backups.** Before an existing in-workspace file is overwritten, edited, moved, or deleted, `tools.backup_file` copies it to `~/.lmloop/projects/<slug>/trash/<process-stamp>/<relative path>` (pruned after 14 days). The tool result cites the backup path; the REPL echoes it via `tools.user_notice`.
+- **Interactive turns** use the y/N gate immediately; the user is present.
+- **`/until` and `/graph`** wrap the same gate in `tools.GatePolicy` (`tools.autonomous_gate`, config `autonomous_gates`):
+  - `files` (default): *recoverable* gates (overwrite / update / move / delete inside the workspace, all backed up) auto-approve with one dim `[auto-approved: …]` line. *Irreversible* gates (destructive shell, writes outside the workspace, copy/extract from outside) return `False` during the act — the tool returns `DENIED:` and the model is told not to work around it — and are recorded. After the maker step, `loop.boundary_approval` asks once (`ask_gate`); on yes the run appends an `approve` row (commands as JSON) and re-runs the maker with `Approved for this step: …` in the prompt, and the policy passes exactly those commands for that one step (approvals expire at the next boundary, so a later eval or node cannot reuse the yes). On no, or with no `ask_gate` (piped CLI), the run proceeds to check/eval as before. Denials from read-only evals and `--check` commands are dropped, never re-asked.
+  - `none`: every gate defers to the interactive y/N as before.
+  - `all`: never asks (unattended runs; explicit opt-in).
+  - `confirm_shell: false` still disables all gates everywhere.
 
 ---
 
@@ -398,7 +410,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 2. **File-only memory, computed views.** Append-only JSONL means no corruption, no migrations. You can `cat`, `grep`, or hand-edit every piece of agent memory.
 3. **Bounded context injection.** Local models have small contexts — the budget is respected. Only top-N learnings and active decisions injected at start; model pulls more on demand.
 4. **Self-learning is curated, not automatic.** The `remember` tool has a quality bar (enforced by `skills/retro.md`). Noisy memory is worse than none.
-5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Copy/extract of paths outside the workspace also confirms. Pipe/redirection confirms are opt-in (`confirm_shell_syntax`). Web content is fenced as untrusted data.
+5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Copy/extract of paths outside the workspace also confirms, as do overwriting, moving, and deleting existing files (each backed up first). Pipe/redirection confirms are opt-in (`confirm_shell_syntax`). Autonomous until/graph runs auto-approve only the recoverable tier and batch the rest to the cycle boundary (`autonomous_gates`). Web content is fenced as untrusted data.
 6. **Skills as markdown playbooks.** Numbered steps, English conditionals, explicit report format. User skills override packaged ones with the same name.
 
 ---

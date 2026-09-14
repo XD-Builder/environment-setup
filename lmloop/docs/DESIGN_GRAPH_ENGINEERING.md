@@ -28,10 +28,11 @@ Until is a one-node graph with an edge back to itself. A graph is worth it when 
 
 These were correctness holes in the maker/checker split. **Shipped:**
 
-1. **Eval is read-only.** Isolation is a fresh thread **and** a tool subset: eval omits `write_file` / `remember` / `log_decision` / `graph_add_edge`. It may still `run_shell` to verify.
+1. **Eval is read-only.** Isolation is a fresh thread **and** a tool subset: eval omits every `tools.READONLY_OMIT` tool — `write_file` / `update_file` / `move_file` / `delete_file` / `remember` / `log_decision` / `graph_add_edge`. It may still `run_shell` to verify; under the until/graph `GatePolicy` a destructive shell request from eval is `DENIED` and dropped, never offered for approval (a checker must not mutate).
 2. **Check fail goes to maker.** `--check` nonzero exit skips eval. Eval runs only when there is no check command. Check `DENIED:` is `blocked` → gate (not eval).
 3. **Overlapping runs.** Starting `/until` while another run is open already prints a hint (`superseded_until_hint`). `/continue` in the REPL still resumes `state.until_run` (the run this session started). CLI `lmloop until` with no goal still resumes **latest** open run. Do not auto-resume a week-old paused run from `/continue` after `/new`.
 4. **Checker is prompt-only about STATUS.** Missing token → `blocked` is correct. Do not let the maker’s last line count as `STATUS:`.
+5. **Gates do not stall the maker.** `run_until` / `run_graph` wrap the interactive gate in `tools.GatePolicy` (`autonomous_gates`, default `files`). Recoverable in-workspace file ops (overwrite / edit / move / delete, all pre-image backed up to `trash/`) auto-approve; irreversible ones (destructive shell, outside-workspace writes) are `DENIED` inside the act and asked **once** at the maker boundary via `loop.boundary_approval`. Yes → `approve` row (JSON command list) → maker re-runs with `Approved for this step: …`; no → check/eval as usual. A skill node in a graph gets one retry the same way. The `approve` row survives Ctrl-C: `run_until` re-seeds the policy from `UntilRun.approved_commands()` on resume.
 
 Phase 1 stays in `loop.py` / `tools.py` / `agent.py` (`readonly=` on `build_tools` + `act`). No `graph.py` in that change.
 

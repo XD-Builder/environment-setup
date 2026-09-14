@@ -65,6 +65,8 @@ _GATE_KINDS: "dict[str, tuple[str, str]]" = {
     GATE_MOVE: ("move/rename a file", GATE_RECOVERABLE),
     GATE_DELETE: ("delete a file", GATE_RECOVERABLE),
 }
+AUTONOMOUS_GATE_MODES = ("files", "none", "all")
+DEFAULT_AUTONOMOUS_GATES = "files"
 
 # Pre-image backups: project_dir()/trash/<process-stamp>/<workspace-relative path>
 TRASH_DIR = "trash"
@@ -130,6 +132,72 @@ def gate_tier(command: str) -> str:
     kind = _gate_kind(command)
     return kind[1] if kind is not None else GATE_IRREVERSIBLE
 
+
+class GatePolicy:
+    """A ``confirm_gate`` for autonomous runs (until / graph).
+
+    Same call signature as the interactive gate, so tools and ``agent.act``
+    are unchanged. ``files`` auto-approves recoverable in-workspace file ops
+    and records irreversible requests as denied so the run can ask once at
+    the cycle boundary. ``none`` defers every request to ``fallback`` (the
+    interactive y/N). ``all`` approves everything — explicit opt-in only.
+    """
+
+    def __init__(self, mode: str = DEFAULT_AUTONOMOUS_GATES, fallback=None,
+                 echo_status=None):
+        self.mode = mode if mode in AUTONOMOUS_GATE_MODES else DEFAULT_AUTONOMOUS_GATES
+        self.fallback = fallback
+        self.echo_status = echo_status
+        self.approved: "set[str]" = set()
+        self.denied: "list[str]" = []
+
+    @classmethod
+    def from_config(cls, cfg: dict, fallback=None, echo_status=None) -> "GatePolicy":
+        mode = str(cfg.get("autonomous_gates") or DEFAULT_AUTONOMOUS_GATES).lower()
+        return cls(mode, fallback=fallback, echo_status=echo_status)
+
+    def _say(self, text: str) -> None:
+        if self.echo_status is not None:
+            self.echo_status(text)
+
+    def __call__(self, command: str) -> bool:
+        if self.mode == "none":
+            return bool(self.fallback(command)) if self.fallback else False
+        if command in self.approved:
+            self._say(f"[approved: {confirm_label(command)} — {command}]")
+            return True
+        if self.mode == "all" or gate_tier(command) == GATE_RECOVERABLE:
+            self._say(f"[auto-approved: {confirm_label(command)} — {command}]")
+            return True
+        if command not in self.denied:
+            self.denied.append(command)
+        return False
+
+    def approve(self, commands) -> None:
+        """Pre-approve exact commands for the next step (see ``expire_approvals``)."""
+        self.approved.update(c for c in commands if c)
+
+    def expire_approvals(self) -> None:
+        """Approvals last one step; the next boundary clears them so a later
+        read-only eval or unrelated node cannot reuse an old yes."""
+        self.approved.clear()
+
+    def take_denied(self) -> list:
+        """Denied irreversible requests since the last call; clears the list."""
+        out = list(self.denied)
+        self.denied.clear()
+        return out
+
+
+def autonomous_gate(cfg: dict, confirm_gate, echo_status=None) -> "GatePolicy | None":
+    """Wrap an interactive gate in a GatePolicy for until/graph runs.
+
+    Returns ``confirm_gate`` unchanged when it is already a policy (nested
+    until-in-graph) or None (confirms disabled).
+    """
+    if confirm_gate is None or isinstance(confirm_gate, GatePolicy):
+        return confirm_gate
+    return GatePolicy.from_config(cfg, fallback=confirm_gate, echo_status=echo_status)
 
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     if len(text) <= limit:

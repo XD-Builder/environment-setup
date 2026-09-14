@@ -4,12 +4,13 @@ A loop is a while-statement. This module owns the stop condition — exit code o
 an isolated checker thread — so the maker cannot grade its own work.
 """
 
+import json
 import shlex
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import agent, memory, server, skills, status as status_mod
+from . import agent, memory, server, skills, status as status_mod, tools
 from .config import project_dir, utc_now
 from .tools import run_shell, shell_confirm_flags
 
@@ -18,6 +19,8 @@ EXIT_CODE_PREFIX = "[exit code:"
 VALID_EVAL_STATUS = frozenset({"pass", "fail", "blocked"})
 META_ROLE = "meta"
 PAUSE_ROLE = "pause"
+# User approved this cycle's denied irreversible actions; handoff holds them as JSON.
+APPROVE_ROLE = "approve"
 DONE_ROLES = frozenset({"mine", "done"})
 CHECK_OUTPUT_LIMIT = 2000
 _CHECK_TRUNCATED = "\n... [truncated, {total} chars total]"
@@ -299,6 +302,17 @@ class UntilRun:
                 return ev.get("handoff") or ""
         return ""
 
+    def approved_commands(self) -> "list[str]":
+        """Commands approved at the last cycle boundary, if that is the last work row."""
+        last = self.last_work()
+        if not last or last.get("role") != APPROVE_ROLE:
+            return []
+        try:
+            rows = json.loads(last.get("handoff") or "[]")
+        except ValueError:
+            return []
+        return [str(c) for c in rows if isinstance(c, str) and c]
+
     def session_paths(self) -> "list[Path]":
         seen: list[Path] = []
         have: set[str] = set()
@@ -328,6 +342,7 @@ class UntilRun:
             ("eval", "blocked"): "gate",
             ("gate", "yes"): "maker",
             ("gate", "no"): None,
+            (APPROVE_ROLE, "yes"): "maker",
             ("mine", "next"): None,
             ("done", "pass"): None,
         }
@@ -369,6 +384,42 @@ def run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> st
     )
 
 
+def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "list[str]":
+    """Ask once for the irreversible actions a GatePolicy denied this cycle.
+
+    Returns the approved commands (now pre-approved on ``policy``), or [] when
+    nothing was denied, no ``ask_gate`` is available (piped CLI), or the user
+    said no. Never raises except KeyboardInterrupt (caller pauses the run).
+    """
+    if not isinstance(policy, tools.GatePolicy):
+        return []
+    policy.expire_approvals()  # the step they were approved for has ended
+    denied = policy.take_denied()
+    if not denied:
+        return []
+    echo_status(status_mod.msg_gates_denied(len(denied), label))
+    for command in denied:
+        echo_status("    " + command)
+    if ask_gate is None or not ask_gate(status_mod.gates_denied_prompt(len(denied))):
+        return []
+    policy.approve(denied)
+    return denied
+
+
+def drop_denied(policy) -> None:
+    """Forget denials from a read-only eval or a --check command (no re-ask)."""
+    if isinstance(policy, tools.GatePolicy):
+        policy.take_denied()
+
+
+def approved_note(commands: "list[str]") -> str:
+    if not commands:
+        return ""
+    return status_mod.APPROVED_NOTE.format(
+        commands="\n".join("- " + c for c in commands),
+    )
+
+
 def _pause_interrupted(run: UntilRun, echo_status) -> UntilRun:
     if not run.is_paused() and not run.is_done():
         run.append(PAUSE_ROLE, "paused")
@@ -393,7 +444,12 @@ def run_until(
     seed_handoff: str = "",
     clock_now=None,
 ) -> UntilRun:
-    """Advance ``run`` until pass, gate-no, pause, or interrupt. Mutates run."""
+    """Advance ``run`` until pass, gate-no, pause, or interrupt. Mutates run.
+
+    ``confirm_gate`` is wrapped in a ``tools.GatePolicy`` (``autonomous_gates``
+    config): recoverable in-workspace file ops auto-approve; irreversible ones
+    are denied during the maker step and asked once at the cycle boundary.
+    """
     if echo_status is None:
         echo_status = echo
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
@@ -406,6 +462,9 @@ def run_until(
         check_output = last.get("handoff") or ""
     if clock_now is None:
         clock_now = datetime.now(timezone.utc)
+    gate = tools.autonomous_gate(cfg, confirm_gate, echo_status)
+    if isinstance(gate, tools.GatePolicy):
+        gate.approve(run.approved_commands())  # resumed right after a yes
 
     try:
         while True:
@@ -425,11 +484,12 @@ def run_until(
                 echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
                 prompt = MAKER_PROMPT.format(
                     goal=run.goal,
-                    handoff=run.last_handoff() or seed_handoff or "(none)",
+                    handoff=approved_note(run.approved_commands())
+                    + (run.last_handoff() or seed_handoff or "(none)"),
                 )
                 result = isolated_act(
                     cfg, model, prompt,
-                    confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
+                    confirm_gate=gate, echo=echo, echo_status=echo_status,
                     echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
                     context_limit=context_limit, context_reserve=context_reserve,
                     workspace_root=root, log_label="/until maker",
@@ -443,10 +503,14 @@ def run_until(
                     handoff=last_assistant(messages),
                     session=str(session_log),
                 )
+                approved = boundary_approval(gate, ask_gate, echo_status)
+                if approved:
+                    run.append(APPROVE_ROLE, "yes", handoff=json.dumps(approved))
                 continue
             if role == "check":
                 echo_status(status_mod.msg_until_step("check", makers_this_call, max_steps))
-                check_output = run_check(cfg, run.check_cmd or "", confirm_gate, root)
+                check_output = run_check(cfg, run.check_cmd or "", gate, root)
+                drop_denied(gate)
                 displayed = clip_check_output(check_output)
                 echo_status(displayed)
                 status = check_status_from_output(check_output)
@@ -461,7 +525,7 @@ def run_until(
                 )
                 result = isolated_act(
                     cfg, model, prompt,
-                    confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
+                    confirm_gate=gate, echo=echo, echo_status=echo_status,
                     echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
                     context_limit=context_limit, context_reserve=context_reserve,
                     workspace_root=root, log_label="/until eval",
@@ -469,6 +533,7 @@ def run_until(
                     max_rounds=eval_max_rounds(cfg),
                     clock_now=clock_now,
                 )
+                drop_denied(gate)
                 if result is None:
                     return _pause_interrupted(run, echo_status)
                 messages, session_log = result

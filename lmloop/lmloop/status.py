@@ -70,6 +70,24 @@ def msg_until_blocked() -> str:
     return status("until checker is blocked — need a yes/no")
 
 
+def msg_gates_denied(count: int, label: str = "until") -> str:
+    noun = "action" if count == 1 else "actions"
+    return status(f"{label}: {count} irreversible {noun} denied this cycle — need a yes/no")
+
+
+def gates_denied_prompt(count: int) -> str:
+    noun = "action was" if count == 1 else "actions were"
+    return (
+        f"{count} irreversible {noun} denied. Approve for the next step? [y/N] "
+    )
+
+
+APPROVED_NOTE = (
+    "Approved for this step (the user said yes; run these exactly as before):\n"
+    "{commands}\n\n"
+)
+
+
 def msg_until_mining() -> str:
     return status("until passed — mining learnings")
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import knowledge_graph, memory, skills, status as status_mod
+from . import knowledge_graph, memory, skills, status as status_mod, tools
 from .config import STATE_ROOT, project_dir, utc_now
 from .loop import (
     DONE_ROLES,
@@ -19,8 +19,11 @@ from .loop import (
     META_ROLE,
     PAUSE_ROLE,
     UntilRun,
+    approved_note,
+    boundary_approval,
     check_status_from_output,
     clip_check_output,
+    drop_denied,
     eval_max_rounds,
     isolated_act,
     last_assistant,
@@ -415,16 +418,20 @@ def _run_skill_node(
     cfg: dict, model: str, node: NodeDef, handoff: str, *,
     confirm_gate, echo, echo_status, echo_error, echo_tool, echo_round,
     context_limit, context_reserve, workspace_root,
+    ask_gate=None,
     clock_now=None,
 ) -> "tuple[str, str, str]":
-    """Return (status, handoff, session_path). status pause means stop the graph."""
+    """Return (status, handoff, session_path). status pause means stop the graph.
+
+    When the GatePolicy denied irreversible actions during the act, ask once
+    and re-run the node with those actions pre-approved (one retry).
+    """
     try:
         prompt = _skill_prompt(node, handoff)
     except FileNotFoundError as e:
         echo_error(str(e))
         return "blocked", str(e), ""
-    result = isolated_act(
-        cfg, model, prompt,
+    act_kwargs = dict(
         confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
         echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
         context_limit=context_limit, context_reserve=context_reserve,
@@ -432,13 +439,26 @@ def _run_skill_node(
         log_label=f"/graph {node.name}",
         clock_now=clock_now,
     )
+    result = isolated_act(cfg, model, prompt, **act_kwargs)
     if result is None:
         return "pause", "", ""
+    approved = boundary_approval(
+        confirm_gate, ask_gate, echo_status, label=f"graph {node.name}",
+    )
+    if approved:
+        messages, _prior = result
+        retry_prompt = approved_note(approved) + _skill_prompt(
+            node, last_assistant(messages) or handoff,
+        )
+        result = isolated_act(cfg, model, retry_prompt, **act_kwargs)
+        if result is None:
+            return "pause", "", ""
     messages, session_log = result
     knowledge_graph.record_skill_use(node.skill, session=session_log, cfg=cfg)
     summary = last_assistant(messages)
     if node.check_cmd:
         output = run_check(cfg, node.check_cmd, confirm_gate, workspace_root)
+        drop_denied(confirm_gate)
         displayed = clip_check_output(output)
         echo_status(displayed)
         status = check_status_from_output(output)
@@ -459,6 +479,7 @@ def _run_skill_node(
         max_rounds=eval_max_rounds(cfg),
         clock_now=clock_now,
     )
+    drop_denied(confirm_gate)
     if ev is None:
         return "pause", summary, str(session_log)
     ev_messages, _ev_session = ev
@@ -525,6 +546,8 @@ def run_graph(
     current_node = ""
     current_until = ""
     clock_now = datetime.now(timezone.utc)
+    # One policy for the whole graph run; nested run_until reuses it as-is.
+    confirm_gate = tools.autonomous_gate(cfg, confirm_gate, echo_status)
 
     try:
         while True:
@@ -576,6 +599,7 @@ def run_graph(
                     echo_tool=echo_tool, echo_round=echo_round,
                     context_limit=context_limit,
                     context_reserve=context_reserve, workspace_root=root,
+                    ask_gate=ask_gate,
                     clock_now=clock_now,
                 )
                 if status == "pause":

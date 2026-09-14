@@ -14,6 +14,8 @@ from lmloop.commands import RESERVED_SKILL_NAMES, slash_command_metas
 from lmloop.tools import (
     GATE_IRREVERSIBLE,
     GATE_RECOVERABLE,
+    GatePolicy,
+    autonomous_gate,
     build_tools,
     coerce_bool,
     confirm_label,
@@ -1174,6 +1176,55 @@ class FileEditToolTests(unittest.TestCase):
             self.assertFalse(gate("overwrite /ws/a.txt"))
         self.assertTrue(ask.called)
         self.assertIn("overwrite an existing file", warn.call_args[0][0])
+
+
+class GatePolicyTests(unittest.TestCase):
+    def test_files_mode_auto_approves_recoverable_and_records_irreversible(self):
+        said = []
+        policy = GatePolicy("files", fallback=_Gate(False), echo_status=said.append)
+        self.assertTrue(policy("overwrite /ws/a.py"))
+        self.assertTrue(policy("delete_file /ws/b.py"))
+        self.assertFalse(policy("rm -rf build"))
+        self.assertFalse(policy("rm -rf build"))  # de-duplicated
+        self.assertFalse(policy("write_file /etc/hosts"))
+        self.assertEqual(policy.take_denied(), ["rm -rf build", "write_file /etc/hosts"])
+        self.assertEqual(policy.take_denied(), [])
+        self.assertEqual(len(said), 2)
+        self.assertIn("[auto-approved: overwrite an existing file", said[0])
+
+    def test_approved_commands_pass_once_approved(self):
+        said = []
+        policy = GatePolicy("files", echo_status=said.append)
+        self.assertFalse(policy("rm -rf build"))
+        policy.approve(policy.take_denied())
+        self.assertTrue(policy("rm -rf build"))
+        self.assertIn("[approved:", said[-1])
+        self.assertFalse(policy("rm -rf other"))
+        policy.expire_approvals()
+        self.assertFalse(policy("rm -rf build"))  # a yes lasts one step
+
+    def test_none_mode_defers_to_fallback_and_all_mode_never_asks(self):
+        fb = _Gate(True)
+        none_policy = GatePolicy("none", fallback=fb)
+        self.assertTrue(none_policy("rm -rf build"))
+        self.assertEqual(fb.calls, ["rm -rf build"])
+        self.assertEqual(none_policy.take_denied(), [])
+        self.assertFalse(GatePolicy("none")("rm -rf build"))  # no fallback: deny
+        fb2 = _Gate(False)
+        all_policy = GatePolicy("all", fallback=fb2)
+        self.assertTrue(all_policy("rm -rf build"))
+        self.assertEqual(fb2.calls, [])
+
+    def test_from_config_and_autonomous_gate_wrapping(self):
+        self.assertEqual(GatePolicy.from_config({}).mode, "files")
+        self.assertEqual(GatePolicy.from_config({"autonomous_gates": "ALL"}).mode, "all")
+        self.assertEqual(GatePolicy.from_config({"autonomous_gates": "bogus"}).mode, "files")
+        self.assertIsNone(autonomous_gate({}, None))
+        fb = _Gate(True)
+        policy = autonomous_gate({}, fb)
+        self.assertIsInstance(policy, GatePolicy)
+        self.assertIs(policy.fallback, fb)
+        self.assertIs(autonomous_gate({}, policy), policy)
 
 
 class FindSearchToolTests(unittest.TestCase):

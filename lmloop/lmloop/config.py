@@ -49,6 +49,10 @@ DEFAULTS = {
     "confirm_shell": True,  # master: False disables all shell confirms
     "confirm_destructive": True,
     "confirm_shell_syntax": False,  # pipes/redirections; off to avoid fatigue
+    # until/graph gates: files = auto-approve recoverable in-workspace file ops
+    # (backed up to trash/), ask once per cycle for the rest; none = ask for
+    # everything; all = never ask (unattended runs only)
+    "autonomous_gates": "files",
     "shell_timeout_s": 120,
     "web_timeout_s": 30,
     "max_tool_output": 12000,

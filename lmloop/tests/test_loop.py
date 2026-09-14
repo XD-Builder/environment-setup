@@ -1,5 +1,6 @@
 """Tests for the until goal loop: parse, check, eval, runner, persist."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -530,6 +531,195 @@ class UntilRunnerTests(unittest.TestCase):
             self.assertTrue(checks)
             self.assertIn("[truncated", checks[0]["handoff"])
             self.assertTrue(run.is_done())
+
+
+class UntilGatePolicyTests(unittest.TestCase):
+    """Autonomous gates: recoverable ops auto-approve; irreversible ask at the boundary."""
+
+    _run = UntilRunnerTests._run
+    DESTRUCTIVE = "rm -rf build"
+
+    def _maker_that_needs(self, command: str, prompts: list, gate_results: list):
+        """Maker act that asks the gate once per cycle; eval always passes."""
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+                return messages
+            prompts.append(text)
+            gate = kwargs.get("confirm_gate")
+            gate_results.append(gate(command) if gate else None)
+            messages.append({"role": "assistant", "content": "did work"})
+            return messages
+        return fake_act
+
+    def test_irreversible_denied_then_asked_once_and_rerun_with_approval(self):
+        prompts, gates, asks, said = [], [], [], []
+        fake_act = self._maker_that_needs(self.DESTRUCTIVE, prompts, gates)
+
+        def ask(prompt):
+            asks.append(prompt)
+            return True
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(confirm_shell=True), fake_act,
+                confirm_gate=lambda _c: False, ask_gate=ask,
+                echo_status=said.append,
+            )
+        self.assertTrue(run.is_done())
+        roles = [e.get("role") for e in run.events if e.get("role") != "meta"]
+        self.assertEqual(roles[:4], ["maker", "approve", "maker", "eval"])
+        # first maker: denied inside act(); second maker: pre-approved
+        self.assertEqual(gates, [False, True])
+        self.assertEqual(len(asks), 1)
+        self.assertIn("1 irreversible action was denied", asks[0])
+        self.assertNotIn("Approved for this step", prompts[0])
+        self.assertIn("Approved for this step", prompts[1])
+        self.assertIn("- " + self.DESTRUCTIVE, prompts[1])
+        self.assertTrue(any("irreversible action denied" in s for s in said))
+        self.assertTrue(any(s.strip() == self.DESTRUCTIVE for s in said))
+        approve = [e for e in run.events if e.get("role") == "approve"][0]
+        self.assertEqual(json.loads(approve["handoff"]), [self.DESTRUCTIVE])
+
+    def test_declined_at_boundary_proceeds_to_eval_without_approve_row(self):
+        prompts, gates = [], []
+        fake_act = self._maker_that_needs(self.DESTRUCTIVE, prompts, gates)
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(confirm_shell=True), fake_act,
+                confirm_gate=lambda _c: False, ask_gate=lambda _p: False,
+            )
+        roles = [e.get("role") for e in run.events if e.get("role") != "meta"]
+        self.assertEqual(roles[:2], ["maker", "eval"])
+        self.assertNotIn("approve", roles)
+        self.assertEqual(gates, [False])
+        self.assertTrue(run.is_done())
+
+    def test_no_ask_gate_means_no_prompt_and_no_approval(self):
+        prompts, gates = [], []
+        fake_act = self._maker_that_needs(self.DESTRUCTIVE, prompts, gates)
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(confirm_shell=True), fake_act,
+                confirm_gate=lambda _c: False,
+            )
+        roles = [e.get("role") for e in run.events if e.get("role") != "meta"]
+        self.assertNotIn("approve", roles)
+        self.assertEqual(gates, [False])
+        self.assertTrue(run.is_done())
+
+    def test_recoverable_file_op_auto_approves_without_asking(self):
+        prompts, gates, asks, said = [], [], [], []
+        fake_act = self._maker_that_needs("overwrite /ws/a.py", prompts, gates)
+        interactive = []
+
+        def never(cmd):
+            interactive.append(cmd)
+            return False
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(confirm_shell=True), fake_act,
+                confirm_gate=never, ask_gate=asks.append,
+                echo_status=said.append,
+            )
+        self.assertTrue(run.is_done())
+        self.assertEqual(gates, [True])
+        self.assertEqual(asks, [])
+        self.assertEqual(interactive, [])
+        self.assertTrue(any("[auto-approved: overwrite an existing file" in s for s in said))
+
+    def test_autonomous_gates_none_defers_to_interactive_gate(self):
+        prompts, gates = [], []
+        fake_act = self._maker_that_needs("overwrite /ws/a.py", prompts, gates)
+        interactive = []
+
+        def yes(cmd):
+            interactive.append(cmd)
+            return True
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(confirm_shell=True, autonomous_gates="none"), fake_act,
+                confirm_gate=yes, ask_gate=lambda _p: False,
+            )
+        self.assertTrue(run.is_done())
+        self.assertEqual(interactive, ["overwrite /ws/a.py"])
+        self.assertEqual(gates, [True])
+
+    def test_approval_does_not_leak_into_eval(self):
+        eval_gates, asks = [], []
+
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            gate = kwargs["confirm_gate"]
+            if "independent checker" in text:
+                eval_gates.append(gate(self.DESTRUCTIVE))
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+            else:
+                gate(self.DESTRUCTIVE)
+                messages.append({"role": "assistant", "content": "did work"})
+            return messages
+
+        def ask(prompt):
+            asks.append(prompt)
+            return True
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(confirm_shell=True), fake_act,
+                confirm_gate=lambda _c: False, ask_gate=ask,
+            )
+        self.assertTrue(run.is_done())
+        # maker denied -> asked once -> maker re-run (pre-approved, nothing to ask)
+        # -> eval must be denied again: the yes expired at the boundary
+        self.assertEqual(eval_gates, [False])
+        self.assertEqual(len(asks), 1)
+
+    def test_eval_denials_are_dropped_not_asked(self):
+        asks = []
+
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                kwargs["confirm_gate"](self.DESTRUCTIVE)  # checker tries a destructive shell
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+            else:
+                messages.append({"role": "assistant", "content": "did work"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            run = self._run(
+                Path(d), _cfg(confirm_shell=True), fake_act,
+                confirm_gate=lambda _c: False, ask_gate=asks.append,
+            )
+        self.assertTrue(run.is_done())
+        self.assertEqual(asks, [])
+
+    def test_resume_after_approve_row_keeps_approval(self):
+        prompts, gates = [], []
+        fake_act = self._maker_that_needs(self.DESTRUCTIVE, prompts, gates)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.loop.project_dir", return_value=root), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                 patch("lmloop.loop.skills.system_prompt", return_value="sys"):
+                run = UntilRun.create("make it work")
+                run.append("maker", "next", handoff="wip")
+                run.append("approve", "yes", handoff=json.dumps([self.DESTRUCTIVE]))
+                loaded = UntilRun.load(run.path)
+                self.assertEqual(loaded.approved_commands(), [self.DESTRUCTIVE])
+                run_until(
+                    _cfg(confirm_shell=True), "m", run=loaded,
+                    echo=lambda *_a, **_k: None,
+                    echo_status=lambda *_a, **_k: None,
+                    workspace_root=root,
+                    confirm_gate=lambda _c: False,
+                )
+        self.assertEqual(gates, [True])
+        self.assertIn("Approved for this step", prompts[0])
 
 
 if __name__ == "__main__":
