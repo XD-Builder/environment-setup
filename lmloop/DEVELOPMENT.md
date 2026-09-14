@@ -70,7 +70,9 @@ list.
 
 | Concern | Owner | Rule |
 |---|---|---|
-| Tool schema + validation + impl | `ToolDef` rows in `tools.build_tools()` | `tool_names()` reads that registry. Never a second name list. |
+| Tool schema + validation + impl | `ToolDef` rows in `tools.build_tools()` | `tool_names()` reads that registry. Never a second name list. Argument coercion is a `ToolDef` field (`int_fields`, `bool_fields`, `enum_fields`, `allow_empty`), not a per-tool `if`. |
+| Confirm-gate labels and tiers | `tools._GATE_KINDS` via `confirm_label()` / `gate_tier()` | Gate strings are `<prefix><detail>`. `ui.make_confirm_gate` prints and asks; it does not classify. |
+| Post-tool user echo | `tools.user_notice(name, result)` | `agent._dispatch_tools` makes one call; no tool-name branching in `agent.py`. |
 | Slash / CLI stems, reserved skill names, first-arg completions | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names and `arg_choices` live here only. |
 | Status / resume / nudge copy | `status.py` | Do not hard-code user-facing loop copy in `agent.py`. |
 | Session mutable state | `SessionState` | Pass the object; do not thread the same fields as loose args. |

@@ -604,15 +604,7 @@ def ask_until_gate(message: str) -> bool:
 def make_confirm_gate(console: "Console"):
     """y/N gate for destructive / shell-syntax commands (plain input)."""
     def confirm_gate(command: str) -> bool:
-        parsed = tools.ShellCommand(command)
-        if command.startswith("write_file "):
-            label = "write outside the workspace"
-        elif parsed.copies_or_extracts() and not parsed.is_destructive():
-            label = "copy/extract into the workspace"
-        elif parsed.needs_shell() and not parsed.is_destructive():
-            label = "shell-syntax (pipes/redirections)"
-        else:
-            label = "potentially destructive"
-        console.warn(f"\n⚠ {label} command requested:\n    {command}")
+        label = tools.confirm_label(command)
+        console.warn(f"\n⚠ {label} requested:\n    {command}")
         return ask_yes_no(console.confirm_prompt(command))
     return confirm_gate

@@ -485,9 +485,9 @@ def _dispatch_tools(
         prepared, raw_results,
     ):
         result, attachments = tools.unwrap_tool_result(raw_result)
-        phrase = tools.user_disclosure(name, result)
-        if phrase:
-            echo_status(phrase)
+        notice = tools.user_notice(name, result)
+        if notice:
+            echo_status(notice)
         if session_log:
             memory.log_event(
                 session_log, "tool",

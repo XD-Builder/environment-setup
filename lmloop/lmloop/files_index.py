@@ -35,7 +35,8 @@ IGNORE_DIRS = frozenset({
 
 _CACHE: "dict[str, tuple[float, list[str]]]" = {}
 _CACHE_TTL_S = 2.0
-_MAX_PATHS = 800
+_MAX_PATHS = 800  # completion slice
+_MAX_WALK_PATHS = 20000  # non-git fallback walk cap (find_files needs the full list)
 _MAX_FS_COMPLETIONS = 80
 _REF_BLOCK_MARKER = "Referenced files (use read_file"
 _REF_BLOCK_HEADER = (
@@ -295,21 +296,24 @@ def at_completion_token(text_before: str, cwd: "Path | None" = None) -> str:
     return word
 
 
-def list_project_paths(cwd: "Path | None" = None, limit: int = _MAX_PATHS) -> "list[str]":
-    """Relative project paths for completion (git-aware when possible)."""
+def list_project_paths(cwd: "Path | None" = None,
+                       limit: "int | None" = _MAX_PATHS) -> "list[str]":
+    """Relative project paths (git-aware when possible).
+
+    The cache holds the full sorted list; ``limit`` slices on return so the
+    completion slice (800) and tools.find_files (``limit=None``) share it.
+    """
     root = (cwd or Path.cwd()).resolve()
     key = str(root)
     now = time.monotonic()
     cached = _CACHE.get(key)
-    if cached and (now - cached[0]) < _CACHE_TTL_S:
-        return cached[1][:limit]
-
-    paths = _git_paths(root)
-    if paths is None:
-        paths = _walk_paths(root)
-    paths = sorted(set(paths))[:limit]
-    _CACHE[key] = (now, paths)
-    return paths
+    if not cached or (now - cached[0]) >= _CACHE_TTL_S:
+        paths = _git_paths(root)
+        if paths is None:
+            paths = _walk_paths(root)
+        cached = (now, sorted(set(paths)))
+        _CACHE[key] = cached
+    return list(cached[1]) if limit is None else cached[1][:limit]
 
 
 def clear_path_cache() -> None:
@@ -433,7 +437,7 @@ def _walk_paths(root: Path) -> "list[str]":
                 continue
             rel = f"{rel_dir}/{name}" if rel_dir else name
             out.append(rel.replace("\\", "/"))
-            if len(out) >= _MAX_PATHS:
+            if len(out) >= _MAX_WALK_PATHS:
                 return out + dirs_out
     return out + dirs_out
 

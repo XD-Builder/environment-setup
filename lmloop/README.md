@@ -157,12 +157,13 @@ REPL UX (prompt_toolkit + rich):
 └─────┬──────┘        tool_calls                 └───────────────┘
       │ runs tools locally, feeds results back (multi-round loop)
       ▼
- shell · read/write file · list_dir · search (rg) · web_search · fetch_url
- current_time · remember · log_decision · recall_memory
+ shell · read/write/update/move/delete file · list_dir · find_files · search (rg)
+ web_search · fetch_url · current_time · remember · log_decision · recall_memory
  (ToolDef registry + commands.py + status.py as single sources of truth)
       │
       ▼
  ~/.lmloop/projects/<slug>/          (slug = git remote or dir name)
+ ├── trash/<stamp>/…     pre-image backups before overwrite/edit/move/delete (14d)
  ├── learnings.jsonl     append-only; latest-wins dedup; confidence decay
  ├── decisions.jsonl     event-sourced; supersede retires old decisions
  ├── sessions/*.jsonl    full transcript history

@@ -5,17 +5,21 @@ confirmation from the human before running. Untrusted web content is wrapped
 in a fence with an ignore-instructions notice (prompt-injection defense).
 """
 
+import difflib
 import inspect
 import json
 import shlex
+import shutil
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from pathlib import Path
+from datetime import datetime, timezone
+from pathlib import Path, PurePath
 from typing import Any, Callable
 
-from . import extract, knowledge_graph, memory, web
-from .files_index import resolve_user_path
+from . import config, extract, knowledge_graph, memory, web
+from .files_index import list_project_paths, resolve_user_path
 from .steer import format_current_time
 from .web import DEFAULT_WEB_TIMEOUT_S
 
@@ -23,6 +27,9 @@ from .web import DEFAULT_WEB_TIMEOUT_S
 MAX_OUTPUT = 12000  # chars returned to the model per tool call
 MAX_READ_LINES = 400
 MAX_SEARCH_MATCHES = 50
+MAX_SEARCH_CONTEXT = 5
+MAX_FIND_RESULTS = 200
+UPDATE_DIFF_LINES = 60
 DEFAULT_SHELL_TIMEOUT_S = 120
 MAX_CONCURRENT_TOOLS = 8
 
@@ -34,6 +41,35 @@ _TRUNCATE_HINT = (
 SAY_IN_REPLY = "Say in your reply: "
 PRIOR_LEARNING_APPLIED = "Prior learning applied: "
 DECISION_REFERENCED = "Decision referenced: "
+
+# Tools whose successful result is echoed to the user (dim status line) so a
+# file change or memory write is visible without reading the transcript.
+_NOTICE_FILE_TOOLS = frozenset({"update_file", "move_file", "delete_file"})
+_OVERWROTE_PREFIX = "Overwrote "
+
+# --- Confirm gates -----------------------------------------------------------
+# Gate strings are ``<prefix><detail>``. This map is the single owner of the
+# user-facing label and the recoverability tier for every non-shell gate.
+# Shell gates fall through to ShellCommand classification (always irreversible).
+GATE_RECOVERABLE = "recoverable"
+GATE_IRREVERSIBLE = "irreversible"
+GATE_WRITE_OUTSIDE = "write_file "
+GATE_UPDATE_OUTSIDE = "update_file "
+GATE_OVERWRITE = "overwrite "
+GATE_MOVE = "move_file "
+GATE_DELETE = "delete_file "
+_GATE_KINDS: "dict[str, tuple[str, str]]" = {
+    GATE_WRITE_OUTSIDE: ("write outside the workspace", GATE_IRREVERSIBLE),
+    GATE_UPDATE_OUTSIDE: ("edit outside the workspace", GATE_IRREVERSIBLE),
+    GATE_OVERWRITE: ("overwrite an existing file", GATE_RECOVERABLE),
+    GATE_MOVE: ("move/rename a file", GATE_RECOVERABLE),
+    GATE_DELETE: ("delete a file", GATE_RECOVERABLE),
+}
+
+# Pre-image backups: project_dir()/trash/<process-stamp>/<workspace-relative path>
+TRASH_DIR = "trash"
+TRASH_MAX_AGE_H = memory.CHECKPOINT_MAX_AGE_H
+_TRASH_STAMP: "str | None" = None
 
 
 def user_disclosure(name: str, result: str) -> "str | None":
@@ -48,6 +84,52 @@ def user_disclosure(name: str, result: str) -> "str | None":
             phrase = line[len(SAY_IN_REPLY):].strip()
             return phrase or None
     return None
+
+
+def user_notice(name: str, result: str) -> "str | None":
+    """Text the REPL should echo after a tool call, or None.
+
+    Memory writes yield their disclosure phrase. File mutations yield the tool
+    result itself (the update_file diff, or the one-line overwrite / move /
+    delete summary with its backup path) so the change is visible in place.
+    """
+    text = str(result or "")
+    if text.startswith("ERROR") or text.startswith("DENIED"):
+        return None
+    if name in ("remember", "log_decision"):
+        return user_disclosure(name, text)
+    if name in _NOTICE_FILE_TOOLS:
+        return text.strip() or None
+    if name == "write_file" and text.startswith(_OVERWROTE_PREFIX):
+        return text.strip()
+    return None
+
+
+def _gate_kind(command: str) -> "tuple[str, str] | None":
+    for prefix, entry in _GATE_KINDS.items():
+        if (command or "").startswith(prefix):
+            return entry
+    return None
+
+
+def confirm_label(command: str) -> str:
+    """Short human label for a confirm-gate request string."""
+    kind = _gate_kind(command)
+    if kind is not None:
+        return kind[0]
+    parsed = ShellCommand(command)
+    if parsed.copies_or_extracts() and not parsed.is_destructive():
+        return "copy/extract into the workspace"
+    if parsed.needs_shell() and not parsed.is_destructive():
+        return "shell-syntax (pipes/redirections)"
+    return "potentially destructive"
+
+
+def gate_tier(command: str) -> str:
+    """``recoverable`` for in-workspace file ops (backed up first); else irreversible."""
+    kind = _gate_kind(command)
+    return kind[1] if kind is not None else GATE_IRREVERSIBLE
+
 
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     if len(text) <= limit:
@@ -81,6 +163,7 @@ class ToolDef:
     required: list
     impl: Callable[..., Any]
     int_fields: tuple = ()
+    bool_fields: tuple = ()
     allow_empty: tuple = ()
     enum_fields: dict = field(default_factory=dict)
     concurrent: bool = False
@@ -278,25 +361,37 @@ def _resolve_path(path: str, root: "Path | None" = None) -> Path:
 
 
 _TOOL_PREVIEW_LIMIT = 160
-_FILE_PATH_TOOLS = frozenset({"read_file", "write_file", "list_dir", "search_files"})
+# tool -> path-valued args shown resolved on the ⚙ line. "path" defaults to ".".
+_FILE_PATH_TOOLS: "dict[str, tuple[str, ...]]" = {
+    "read_file": ("path",),
+    "write_file": ("path",),
+    "update_file": ("path",),
+    "list_dir": ("path",),
+    "search_files": ("path",),
+    "find_files": ("path",),
+    "move_file": ("path", "new_path"),
+    "delete_file": ("path",),
+}
 
 
 def format_tool_preview(name: str, args: str,
                         workspace_root: "Path | None" = None,
                         limit: int = _TOOL_PREVIEW_LIMIT) -> str:
-    """Compact ⚙-line args. File tools show the resolved workspace path."""
+    """Compact ⚙-line args. File tools show the resolved workspace path(s)."""
     text = args or ""
-    if name in _FILE_PATH_TOOLS:
+    path_args = _FILE_PATH_TOOLS.get(name)
+    if path_args:
         try:
             parsed = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, dict):
-            raw = parsed.get("path", ".")
-            if isinstance(raw, str):
-                parsed = dict(parsed)
-                parsed["path"] = str(_resolve_path(raw, workspace_root))
-                text = json.dumps(parsed, ensure_ascii=False)
+            parsed = dict(parsed)
+            for arg in path_args:
+                raw = parsed.get(arg, "." if arg == "path" else None)
+                if isinstance(raw, str):
+                    parsed[arg] = str(_resolve_path(raw, workspace_root))
+            text = json.dumps(parsed, ensure_ascii=False)
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
@@ -427,9 +522,127 @@ def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES,
     return _numbered_chunk(extracted.text, str(p), start_line, max_lines)
 
 
+def _trash_stamp() -> str:
+    """One backup folder per process (a REPL session or CLI run)."""
+    global _TRASH_STAMP
+    if _TRASH_STAMP is None:
+        _TRASH_STAMP = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    return _TRASH_STAMP
+
+
+def trash_dir() -> Path:
+    return config.project_dir() / TRASH_DIR
+
+
+def _prune_trash(base: Path, max_age_h: int = TRASH_MAX_AGE_H) -> None:
+    cutoff = time.time() - max_age_h * 3600
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def backup_file(p: Path, root: Path) -> "Path | None":
+    """Copy an existing in-workspace file to the trash before mutating it.
+
+    Returns the backup path, or None when there is nothing to back up (new
+    file, outside the workspace) or the copy failed. Failure never blocks
+    the edit; the tool result simply omits the backup note.
+    """
+    try:
+        if not p.is_file() or not _in_workspace(p, root):
+            return None
+        rel = p.resolve().relative_to(root.resolve())
+        base = trash_dir()
+        _prune_trash(base)
+        dest = base / _trash_stamp() / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while dest.exists():  # keep every pre-image of a file edited repeatedly
+            dest = dest.with_name(f"{rel.name}.~{n}~")
+            n += 1
+        shutil.copy2(p, dest)
+        return dest
+    except (OSError, ValueError):
+        return None
+
+
+def _backup_note(backup: "Path | None") -> str:
+    return f" (backup: {backup})" if backup else ""
+
+
 def write_file(path: str, content: str, workspace_root: "Path | None" = None,
                extra_readable: "list[Path] | None" = None,
-               confirm_gate=None) -> str:
+               confirm_gate=None, confirm_overwrite: bool = True) -> str:
+    """Create a file. Overwriting an existing workspace file asks first."""
+    root = workspace_root or _workspace_root()
+    p, err = _check_workspace(path, root, extra_readable=extra_readable)
+    if err:
+        return err
+    inside = _in_workspace(p, root)
+    if not inside:
+        if not confirm_gate:
+            return f"ERROR: {path} is outside workspace {root}"
+        if not confirm_gate(f"{GATE_WRITE_OUTSIDE}{p}"):
+            return "DENIED: the user declined to write outside the workspace."
+    if p.is_dir():
+        return f"ERROR: {path} is a directory"
+    exists = p.is_file()
+    if exists and inside and confirm_gate and confirm_overwrite:
+        if not confirm_gate(f"{GATE_OVERWRITE}{p}"):
+            return (
+                f"DENIED: the user declined to overwrite {p}; "
+                "use update_file for edits."
+            )
+    backup = backup_file(p, root) if exists else None
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    except OSError as e:
+        return f"ERROR: {e}"
+    if exists:
+        return f"{_OVERWROTE_PREFIX}{p} with {len(content)} chars{_backup_note(backup)}"
+    return f"Wrote {len(content)} chars to {p}"
+
+
+def _line_of(text: str, index: int) -> int:
+    return text.count("\n", 0, index) + 1
+
+
+def _match_lines(text: str, needle: str) -> "list[int]":
+    out: "list[int]" = []
+    start = 0
+    while True:
+        idx = text.find(needle, start)
+        if idx < 0:
+            return out
+        out.append(_line_of(text, idx))
+        start = idx + max(len(needle), 1)
+
+
+def _unified_diff(old: str, new: str, label: str,
+                  limit: int = UPDATE_DIFF_LINES) -> str:
+    lines = list(difflib.unified_diff(
+        old.splitlines(), new.splitlines(),
+        fromfile=label, tofile=label, n=2, lineterm="",
+    ))
+    if len(lines) > limit:
+        lines = lines[:limit] + [f"... [diff truncated, {len(lines)} lines total]"]
+    return "\n".join(lines)
+
+
+def update_file(path: str, old_string: str, new_string: str,
+                replace_all: bool = False,
+                workspace_root: "Path | None" = None,
+                extra_readable: "list[Path] | None" = None,
+                confirm_gate=None) -> str:
+    """Replace an exact snippet in an existing file. Returns a unified diff."""
     root = workspace_root or _workspace_root()
     p, err = _check_workspace(path, root, extra_readable=extra_readable)
     if err:
@@ -437,14 +650,156 @@ def write_file(path: str, content: str, workspace_root: "Path | None" = None,
     if not _in_workspace(p, root):
         if not confirm_gate:
             return f"ERROR: {path} is outside workspace {root}"
-        if not confirm_gate(f"write_file {p}"):
-            return "DENIED: the user declined to write outside the workspace."
+        if not confirm_gate(f"{GATE_UPDATE_OUTSIDE}{p}"):
+            return "DENIED: the user declined to edit outside the workspace."
+    if not p.exists():
+        return f"ERROR: {path} does not exist; use write_file to create it"
+    if p.is_dir():
+        return f"ERROR: {path} is a directory"
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
+        with p.open("r", newline="") as fh:  # keep CRLF as-is; no translation
+            text = fh.read()
+    except UnicodeDecodeError:
+        return f"ERROR: {path} is not a text file"
     except OSError as e:
         return f"ERROR: {e}"
-    return f"Wrote {len(content)} chars to {p}"
+    if not old_string:
+        return "ERROR: old_string must not be empty"
+    if old_string == new_string:
+        return "ERROR: no change: old_string and new_string are identical"
+    if "\r\n" in text and "\r" not in old_string and old_string not in text:
+        # Model copied LF lines from read_file; the file is CRLF. Match its style.
+        old_string = old_string.replace("\n", "\r\n")
+        new_string = new_string.replace("\n", "\r\n")
+    count = text.count(old_string)
+    if count == 0:
+        return (
+            f"ERROR: old_string not found in {p}. read_file it and copy the "
+            "exact text, including indentation."
+        )
+    lines = _match_lines(text, old_string)
+    if count > 1 and not replace_all:
+        shown = ", ".join(str(n) for n in lines[:8])
+        return (
+            f"ERROR: old_string matches {count} places in {p} (lines {shown}); "
+            "include more surrounding lines or set replace_all=true."
+        )
+    new_text = text.replace(old_string, new_string)
+    backup = backup_file(p, root)
+    try:
+        with p.open("w", newline="") as fh:
+            fh.write(new_text)
+    except OSError as e:
+        return f"ERROR: {e}"
+    span_end = lines[0] + old_string.rstrip("\n").count("\n")
+    where = (
+        f"lines {', '.join(str(n) for n in lines)}" if count > 1
+        else f"lines {lines[0]}-{span_end}" if span_end != lines[0]
+        else f"line {lines[0]}"
+    )
+    header = (
+        f"Updated {p}: replaced {count} occurrence{'s' if count != 1 else ''} "
+        f"({where}){_backup_note(backup)}"
+    )
+    try:
+        label = str(p.relative_to(Path(root).resolve()))
+    except ValueError:
+        label = str(p)
+    return _truncate(header + "\n" + _unified_diff(text, new_text, label))
+
+
+def move_file(path: str, new_path: str, workspace_root: "Path | None" = None,
+              confirm_gate=None, confirm: bool = True) -> str:
+    """Rename/move a workspace file. Asks first; destination must not exist."""
+    root = workspace_root or _workspace_root()
+    src, err = _check_workspace(path, root)
+    if err:
+        return err
+    dst, err = _check_workspace(new_path, root)
+    if err:
+        return err
+    if not src.exists():
+        return f"ERROR: {path} does not exist"
+    if src.is_dir():
+        return f"ERROR: {path} is a directory; use run_shell mv, which asks for confirmation"
+    if dst.exists():
+        return f"ERROR: {new_path} already exists; delete_file it first or pick another name"
+    if confirm_gate and confirm and not confirm_gate(f"{GATE_MOVE}{src} -> {dst}"):
+        return f"DENIED: the user declined to move {src}."
+    backup = backup_file(src, root)
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+    except OSError as e:
+        return f"ERROR: {e}"
+    return f"Moved {src} -> {dst}{_backup_note(backup)}"
+
+
+def delete_file(path: str, workspace_root: "Path | None" = None,
+                confirm_gate=None, confirm: bool = True) -> str:
+    """Delete a single workspace file. Asks first; directories are refused."""
+    root = workspace_root or _workspace_root()
+    p, err = _check_workspace(path, root)
+    if err:
+        return err
+    if not p.exists():
+        return f"ERROR: {path} does not exist"
+    if p.is_dir():
+        return f"ERROR: {path} is a directory; use run_shell rm -r, which asks for confirmation"
+    if confirm_gate and confirm and not confirm_gate(f"{GATE_DELETE}{p}"):
+        return f"DENIED: the user declined to delete {p}."
+    backup = backup_file(p, root)
+    try:
+        p.unlink()
+    except OSError as e:
+        return f"ERROR: {e}"
+    return f"Deleted {p}{_backup_note(backup)}"
+
+
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _glob_match(rel: str, pattern: str) -> bool:
+    pat = pattern[3:] if pattern.startswith("**/") else pattern
+    if not pat:
+        return True
+    return PurePath(rel).match(pat)
+
+
+def find_files(pattern: str, path: str = ".",
+               workspace_root: "Path | None" = None,
+               limit: int = MAX_FIND_RESULTS) -> str:
+    """Find project files by glob (``*.py``, ``src/**/*.ts``) or name substring.
+
+    Git-aware: honours .gitignore via files_index.list_project_paths.
+    """
+    root = Path(workspace_root).resolve() if workspace_root else _workspace_root()
+    p, err = _check_workspace(path or ".", root)
+    if err:
+        return err
+    if not p.is_dir():
+        return f"ERROR: {path} is not a directory"
+    prefix = p.relative_to(root).as_posix()
+    prefix = "" if prefix == "." else prefix + "/"
+    use_glob = any(ch in pattern for ch in _GLOB_CHARS)
+    needle = pattern.lower()
+    matches: "list[str]" = []
+    total = 0
+    for rel in list_project_paths(root, limit=None):
+        if rel.endswith("/") or (prefix and not rel.startswith(prefix)):
+            continue
+        hit = _glob_match(rel, pattern) if use_glob else needle in rel.lower()
+        if not hit:
+            continue
+        total += 1
+        if len(matches) < limit:
+            matches.append(rel)
+    if not matches:
+        return f"(no files match {pattern!r} under {p})"
+    body = "\n".join(matches)
+    if total > len(matches):
+        body = f"[{len(matches)} of {total} matches; narrow the pattern]\n" + body
+    return _truncate(body)
 
 
 def list_dir(path: str = ".", workspace_root: "Path | None" = None,
@@ -464,18 +819,31 @@ def list_dir(path: str = ".", workspace_root: "Path | None" = None,
 
 
 def search_files(pattern: str, path: str = ".",
-                 workspace_root: "Path | None" = None) -> str:
-    """ripgrep if available, grep -rn fallback."""
-    import shutil
+                 workspace_root: "Path | None" = None,
+                 glob: str = "", case_insensitive: bool = False,
+                 context: int = 0, fixed: bool = False) -> str:
+    """ripgrep if available, grep -rn fallback. Flags map 1:1 to both."""
     p, err = _check_workspace(path or ".", workspace_root)
     if err:
         return err
     search_path = str(p)
+    context = max(0, min(int(context or 0), MAX_SEARCH_CONTEXT))
     if shutil.which("rg"):
         cmd = ["rg", "--line-number", "--max-count", str(MAX_SEARCH_MATCHES),
-               "--max-columns", "200", pattern, search_path]
+               "--max-columns", "200"]
+        if glob:
+            cmd += ["-g", glob]
     else:
-        cmd = ["grep", "-rn", "-m", str(MAX_SEARCH_MATCHES), pattern, search_path]
+        cmd = ["grep", "-rn", "-m", str(MAX_SEARCH_MATCHES)]
+        if glob:
+            cmd.append(f"--include={glob}")
+    if case_insensitive:
+        cmd.append("-i")
+    if fixed:
+        cmd.append("-F")
+    if context:
+        cmd += ["-C", str(context)]
+    cmd += ["-e", pattern, search_path]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -491,7 +859,10 @@ def search_files(pattern: str, path: str = ".",
 # graph_add_edge when use_graph is off, and omit write tools when readonly.
 # Prompt names use tool_names(cfg=...) so they match what the model can call.
 _TOOL_DEFS: "dict[str, ToolDef]" = {}
-READONLY_OMIT = frozenset({"write_file", "remember", "log_decision", "graph_add_edge"})
+READONLY_OMIT = frozenset({
+    "write_file", "update_file", "move_file", "delete_file",
+    "remember", "log_decision", "graph_add_edge",
+})
 
 
 def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
@@ -510,8 +881,8 @@ def build_tools(cfg: dict, confirm_gate=None,
                 extra_readable: "list[Path] | None" = None) -> "tuple[list[dict], dict]":
     """Returns (openai tool specs, name -> callable) derived from ToolDef list.
 
-    ``readonly=True`` omits write_file / remember / log_decision /
-    graph_add_edge from the returned specs and impls. The module registry
+    ``readonly=True`` omits the READONLY_OMIT tools (file writes, memory
+    writes, graph edges) from the returned specs and impls. The module registry
     always keeps the full set so ``dispatch()`` validation is not poisoned
     by the last readonly or use_graph=false build. Prompt injection uses
     ``tool_names(cfg=...)``.
@@ -593,16 +964,60 @@ def build_tools(cfg: dict, confirm_gate=None,
         ),
         ToolDef(
             "write_file",
-            "Write (overwrite) a file under the session workspace (cwd at start). "
-            "path is relative to that workspace unless it is absolute. User-@ "
-            "attached paths outside the workspace may be written only after "
-            "explicit user confirmation.",
+            "Create a new file under the session workspace (cwd at start). "
+            "path is relative to that workspace unless it is absolute. "
+            "Overwriting an existing file asks the user first — use update_file "
+            "to edit existing files. User-@ attached paths outside the workspace "
+            "may be written only after explicit user confirmation.",
             {"path": s, "content": s}, ["path", "content"],
             lambda path, content: write_file(
                 path, content, workspace_root=root,
                 extra_readable=extra, confirm_gate=gate,
+                confirm_overwrite=confirm_destructive,
             ),
             allow_empty=("content",),
+        ),
+        ToolDef(
+            "update_file",
+            "Edit an existing file by replacing an exact snippet. Prefer this "
+            "over write_file for any change to an existing file. old_string must "
+            "match the file text exactly (copy it from read_file, including "
+            "indentation) and, unless replace_all is true, exactly once; include "
+            "surrounding lines to disambiguate. new_string may be empty to delete. "
+            "Returns a unified diff of the change.",
+            {
+                "path": s,
+                "old_string": s,
+                "new_string": s,
+                "replace_all": {"type": "boolean"},
+            },
+            ["path", "old_string", "new_string"],
+            lambda path, old_string, new_string, replace_all=False: update_file(
+                path, old_string, new_string, replace_all=replace_all,
+                workspace_root=root, extra_readable=extra, confirm_gate=gate,
+            ),
+            allow_empty=("new_string",),
+            bool_fields=("replace_all",),
+        ),
+        ToolDef(
+            "move_file",
+            "Move or rename a single file inside the workspace. Asks the user "
+            "first; new_path must not already exist. Directories: use run_shell mv.",
+            {"path": s, "new_path": s}, ["path", "new_path"],
+            lambda path, new_path: move_file(
+                path, new_path, workspace_root=root,
+                confirm_gate=gate, confirm=confirm_destructive,
+            ),
+        ),
+        ToolDef(
+            "delete_file",
+            "Delete a single file inside the workspace. Asks the user first. "
+            "Directories are refused; use run_shell rm -r, which also asks.",
+            {"path": s}, ["path"],
+            lambda path: delete_file(
+                path, workspace_root=root,
+                confirm_gate=gate, confirm=confirm_destructive,
+            ),
         ),
         ToolDef(
             "list_dir",
@@ -614,10 +1029,37 @@ def build_tools(cfg: dict, confirm_gate=None,
             concurrent=True,
         ),
         ToolDef(
-            "search_files",
-            "Search file contents under the working directory with a regex (ripgrep).",
+            "find_files",
+            "Find project files by name. pattern is a glob (`*.py`, `src/*.ts`, "
+            "`test_*`) or, without glob characters, a case-insensitive substring "
+            "of the relative path. Honours .gitignore. Use this before guessing "
+            "paths; returns up to 200 workspace-relative paths.",
             {"pattern": s, "path": s}, ["pattern"],
-            lambda pattern, path=".": search_files(pattern, path, workspace_root=root),
+            lambda pattern, path=".": find_files(pattern, path, workspace_root=root),
+            concurrent=True,
+        ),
+        ToolDef(
+            "search_files",
+            "Search file contents under the working directory with a regex "
+            "(ripgrep). Optional: glob to limit files (`*.py`), case_insensitive, "
+            "context lines (0-5) around each match, fixed for a literal (non-regex) "
+            "pattern. Returns up to 50 matches per file.",
+            {
+                "pattern": s,
+                "path": s,
+                "glob": s,
+                "case_insensitive": {"type": "boolean"},
+                "context": {"type": "integer", "minimum": 0, "maximum": MAX_SEARCH_CONTEXT},
+                "fixed": {"type": "boolean"},
+            },
+            ["pattern"],
+            lambda pattern, path=".", glob="", case_insensitive=False, context=0,
+            fixed=False: search_files(
+                pattern, path, workspace_root=root, glob=glob,
+                case_insensitive=case_insensitive, context=context, fixed=fixed,
+            ),
+            int_fields=("context",),
+            bool_fields=("case_insensitive", "fixed"),
             concurrent=True,
         ),
         ToolDef(
@@ -773,6 +1215,25 @@ def run_tool_calls(impls: dict, calls: list) -> list:
     return out
 
 
+_TRUE_WORDS = frozenset({"true", "1", "yes", "y", "on"})
+_FALSE_WORDS = frozenset({"false", "0", "no", "n", "off", ""})
+
+
+def coerce_bool(value) -> "bool | None":
+    """bool from JSON bool, 0/1, or the strings local models send. None if unclear."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in _TRUE_WORDS:
+            return True
+        if word in _FALSE_WORDS:
+            return False
+    return None
+
+
 def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
     """Return an ERROR string if kwargs are invalid, else None."""
     tool = _TOOL_DEFS.get(name)
@@ -795,6 +1256,13 @@ def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
             kwargs[key] = int(kwargs[key])
         except (TypeError, ValueError):
             return f"ERROR: '{key}' must be an integer"
+    for key in tool.bool_fields:
+        if key not in kwargs or kwargs[key] is None:
+            continue
+        coerced = coerce_bool(kwargs[key])
+        if coerced is None:
+            return f"ERROR: '{key}' must be true or false"
+        kwargs[key] = coerced
     for key, allowed in tool.enum_fields.items():
         if kwargs.get(key) is not None and kwargs[key] not in allowed:
             return f"ERROR: {key} must be one of " + ", ".join(allowed)

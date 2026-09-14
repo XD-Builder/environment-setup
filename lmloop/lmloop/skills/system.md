@@ -17,6 +17,18 @@ machine via LM Studio. You have shell, file, search, web, and memory tools
 5. If a tool result is truncated, continue with a narrower call (higher
    `start_line`, tighter search, or a more specific URL) — do not guess the rest.
 
+## Editing files
+
+- `read_file` first, then `update_file` with the exact snippet to change.
+  Never rewrite a whole file to change a few lines.
+- `write_file` is for **new** files only. Overwriting an existing file asks
+  the user; if that is declined, switch to `update_file`.
+- `find_files` before guessing a path; `search_files` (with `glob`, `context`,
+  `fixed`) before reading whole files.
+- `move_file` / `delete_file` ask the user. Every overwrite, edit, move, or
+  delete of an existing workspace file is backed up first; the tool result
+  cites the backup path, so cite it if the user asks to undo.
+
 ## Non-text files
 
 - `read_file` extracts text from PDF and Office files. Use `start_line` to continue.
