@@ -367,6 +367,7 @@ class ToolSafetyTests(unittest.TestCase):
                                         key="pitfall_ambiguous_numeric_abbreviation")
             self.assertIn("pitfall_ambiguous_numeric_abbreviation", out)
             self.assertIn(str(root / "learnings.jsonl"), out)
+            self.assertIn("Prior learning applied: pitfall_ambiguous_numeric_abbreviation", out)
 
     def test_file_tools_stay_pinned_after_chdir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -832,6 +833,46 @@ class ConcurrentToolTests(unittest.TestCase):
         ])
         self.assertEqual(set(out), {"a.py", "b.py"})
         self.assertEqual(set(seen), {"a.py", "b.py"})
+
+
+class MemoryDisclosureTests(unittest.TestCase):
+    def test_user_disclosure_from_write_tools(self):
+        from lmloop.tools import user_disclosure
+
+        self.assertEqual(
+            user_disclosure(
+                "remember",
+                "Saved learning [uv]\nSay in your reply: Prior learning applied: uv",
+            ),
+            "Prior learning applied: uv",
+        )
+        self.assertEqual(
+            user_disclosure(
+                "log_decision",
+                "Logged decision [abc]\nSay in your reply: Decision referenced: [abc]",
+            ),
+            "Decision referenced: [abc]",
+        )
+        self.assertIsNone(user_disclosure("recall_memory", "Learnings:\n- [uv]"))
+        self.assertIsNone(user_disclosure("remember", "ERROR: missing required argument 'insight'"))
+
+    def test_memory_tool_descriptions_require_disclosure(self):
+        specs, _ = build_tools({"confirm_shell": False})
+        desc = {s["function"]["name"]: s["function"]["description"] for s in specs}
+        self.assertIn("Prior learning applied: <key>", desc["remember"])
+        self.assertIn("Prior learning applied: <key>", desc["recall_memory"])
+        self.assertIn("Decision referenced: [id]", desc["log_decision"])
+        self.assertIn("Decision referenced: [id]", desc["recall_memory"])
+
+    def test_log_decision_cites_id_and_disclosure(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch("lmloop.memory.project_dir", return_value=root):
+                _, impls = build_tools({"confirm_shell": False}, workspace_root=root)
+                out = impls["log_decision"]("use pytest", rationale="fits")
+            self.assertIn("Logged decision [", out)
+            self.assertIn("Decision referenced: [", out)
+            self.assertIn(str(root / "decisions.jsonl"), out)
 
 
 if __name__ == "__main__":

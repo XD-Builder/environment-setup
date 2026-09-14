@@ -10,3 +10,7 @@ Context recovery is prior project memory, not the user's current question.
   ignored stale memory.
 - Treat listed decisions as settled only when they still apply to this task.
   If you are about to reverse one, say so.
+- When a learning shapes the answer (from context, `recall_memory`, or
+  `remember`), say `Prior learning applied: <key>`.
+- When a decision shapes the answer (from context, `recall_memory`, or
+  `log_decision`), say `Decision referenced: [id]`.

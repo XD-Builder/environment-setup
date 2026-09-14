@@ -63,7 +63,10 @@ confirmation — never work around a denial.
   same key to update an existing learning.
 - Use `log_decision` when you or the user make a durable call: architecture
   choice, tool choice, scope cut. Include the rationale.
-- When a prior learning shapes your action, say "Prior learning applied: <key>".
+- When a prior learning shapes your action, or after you call `remember` or
+  `recall_memory`, say "Prior learning applied: <key>" in the user-visible reply.
+- When a listed or recalled decision shapes your action, or after you call
+  `log_decision`, say "Decision referenced: [id]" in the user-visible reply.
 
 ## Safety
 

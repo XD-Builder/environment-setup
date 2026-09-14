@@ -82,5 +82,12 @@ class SkillsDiscoveryTests(unittest.TestCase):
                 self.assertIn("demo", skills.list_skills())
 
 
+class SystemPromptMemoryTests(unittest.TestCase):
+    def test_system_prompt_requires_memory_disclosure(self):
+        text = skills.load_skill("system")
+        self.assertIn("Prior learning applied: <key>", text)
+        self.assertIn("Decision referenced: [id]", text)
+
+
 if __name__ == "__main__":
     unittest.main()

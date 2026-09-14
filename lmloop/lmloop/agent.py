@@ -464,7 +464,7 @@ class RoundDisplay:
 
 def _dispatch_tools(
     turn: GatherTurn, tool_calls: list, *, round_idx: int, impls: dict,
-    echo_tool, stats, session_log, workspace_root, messages: list,
+    echo_tool, echo_status, stats, session_log, workspace_root, messages: list,
     cfg: dict, model: str,
 ) -> None:
     round_media = []
@@ -485,6 +485,9 @@ def _dispatch_tools(
         prepared, raw_results,
     ):
         result, attachments = tools.unwrap_tool_result(raw_result)
+        phrase = tools.user_disclosure(name, result)
+        if phrase:
+            echo_status(phrase)
         if session_log:
             memory.log_event(
                 session_log, "tool",
@@ -631,7 +634,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
 
                 _dispatch_tools(
                     turn, tool_calls, round_idx=round_idx, impls=impls,
-                    echo_tool=echo_tool, stats=stats, session_log=session_log,
+                    echo_tool=echo_tool, echo_status=echo_status, stats=stats,
+                    session_log=session_log,
                     workspace_root=workspace_root, messages=messages,
                     cfg=cfg, model=model,
                 )

@@ -31,6 +31,23 @@ _TRUNCATE_HINT = (
     "Continue with read_file(path, start_line=…) for files, a narrower "
     "shell command, or web_search / fetch_url on a more specific URL."
 )
+SAY_IN_REPLY = "Say in your reply: "
+PRIOR_LEARNING_APPLIED = "Prior learning applied: "
+DECISION_REFERENCED = "Decision referenced: "
+
+
+def user_disclosure(name: str, result: str) -> "str | None":
+    """User-visible phrase after a successful remember / log_decision."""
+    if name not in ("remember", "log_decision"):
+        return None
+    text = str(result or "")
+    if text.startswith("ERROR"):
+        return None
+    for line in text.splitlines():
+        if line.startswith(SAY_IN_REPLY):
+            phrase = line[len(SAY_IN_REPLY):].strip()
+            return phrase or None
+    return None
 
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     if len(text) <= limit:
@@ -514,13 +531,19 @@ def build_tools(cfg: dict, confirm_gate=None,
         row = memory.add_learning(
             insight, type=type, key=key, confidence=confidence, cfg=cfg,
         )
-        return f"Saved learning [{row['key']}] to {memory.learnings_file()}"
+        return (
+            f"Saved learning [{row['key']}] to {memory.learnings_file()}\n"
+            f"{SAY_IN_REPLY}{PRIOR_LEARNING_APPLIED}{row['key']}"
+        )
 
     def _decide(decision: str, rationale: str = "", supersedes: str = "") -> str:
         row = memory.add_decision(
             decision, rationale=rationale, supersedes=supersedes, cfg=cfg,
         )
-        return f"Logged decision [{row['id']}] to {memory.decisions_file()}"
+        return (
+            f"Logged decision [{row['id']}] to {memory.decisions_file()}\n"
+            f"{SAY_IN_REPLY}{DECISION_REFERENCED}[{row['id']}]"
+        )
 
     def _recall(query: str) -> str:
         return memory.search_memory(query, learning_limit=10, decision_limit=10, cfg=cfg)
@@ -639,7 +662,8 @@ def build_tools(cfg: dict, confirm_gate=None,
         ToolDef(
             "remember",
             "Save a durable learning to project memory so future sessions know it. "
-            "Use for reusable insights, not turn-level trivia.",
+            "Use for reusable insights, not turn-level trivia. After saving, the "
+            "user-visible reply must include `Prior learning applied: <key>`.",
             {
                 "insight": s,
                 "type": {"type": "string", "enum": list(memory.LEARNING_TYPES)},
@@ -652,12 +676,16 @@ def build_tools(cfg: dict, confirm_gate=None,
         ToolDef(
             "log_decision",
             "Record a durable project decision (architecture, tool choice, scope cut) "
-            "with its rationale. Pass supersedes=<id> to reverse an earlier decision.",
+            "with its rationale. Pass supersedes=<id> to reverse an earlier decision. "
+            "After logging, the user-visible reply must include `Decision referenced: [id]`.",
             {"decision": s, "rationale": s, "supersedes": s}, ["decision"], _decide,
         ),
         ToolDef(
             "recall_memory",
-            "Keyword-search past learnings and decisions for this project.",
+            "Keyword-search past learnings and decisions for this project. "
+            "In the user-visible reply, cite each applied learning as "
+            "`Prior learning applied: <key>` and each applied decision as "
+            "`Decision referenced: [id]`.",
             {"query": s}, ["query"], _recall,
             concurrent=True,
         ),

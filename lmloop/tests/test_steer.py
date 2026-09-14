@@ -169,6 +169,11 @@ class SystemPromptSteerTests(unittest.TestCase):
             skills.system_prompt({}, clock_now=now)
         cb.assert_called_once_with(now=now)
 
+    def test_packaged_memory_steer_requires_disclosure(self):
+        body = (steer_mod.STEER_DIR / "memory.md").read_text()
+        self.assertIn("Prior learning applied: <key>", body)
+        self.assertIn("Decision referenced: [id]", body)
+
 
 if __name__ == "__main__":
     unittest.main()
