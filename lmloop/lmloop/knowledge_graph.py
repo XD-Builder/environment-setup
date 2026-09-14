@@ -16,6 +16,7 @@ GRAPH_EDGE_TYPES = frozenset({
     "leads_to", "contradicts", "in_session", "references",
     "uses_skill", "related_to", "supersedes",
 })
+MSG_GRAPH_OFF = "knowledge graph is off — `lmloop config set use_graph true`"
 
 
 
@@ -246,13 +247,13 @@ class KnowledgeGraph:
         if learnings:
             lines = []
             for r in learnings:
-                lines.append(f"- ({r['type']}, {r['confidence']}/10) {r['insight']}")
+                lines.append(memory.format_learning_line(r))
                 lines.extend(self.neighbor_lines(_node_id("learning", r["key"])))
             out.append("Learnings:\n" + "\n".join(lines))
         if decisions:
             lines = []
             for d in decisions:
-                lines.append(f"- [{d['id']}] {d['decision']}")
+                lines.append(memory.format_decision_line(d))
                 lines.extend(self.neighbor_lines(_node_id("decision", d["id"])))
             out.append("Decisions:\n" + "\n".join(lines))
         if not out and terms:
@@ -449,6 +450,14 @@ def graph_stats(slug: "str | None" = None) -> str:
 def contradiction_clusters(slug: "str | None" = None) -> str:
     """Text dump of contradicts edges for /memory reconcile."""
     return KnowledgeGraph(slug).contradiction_text()
+
+
+def inspect_report(cfg: dict, slug: "str | None" = None) -> str:
+    """``/memory graph`` body: stats plus contradiction clusters, or how to enable."""
+    if not cfg.get("use_graph"):
+        return MSG_GRAPH_OFF
+    KnowledgeGraph(slug).ensure(cfg)
+    return graph_stats(slug) + "\n" + contradiction_clusters(slug)
 
 
 def try_add_graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
