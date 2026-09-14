@@ -11,6 +11,9 @@
     lmloop skill <name> [task]      start with a skill
     lmloop retro [N]                alias for memory mine
     lmloop memory [query]           peek curated learnings (read-only)
+    lmloop memory list              top 5 active learnings
+    lmloop memory decisions         top 3 active decisions
+    lmloop memory dump              injected context_block (debug)
     lmloop memory mine [N]          mine last N sessions into learnings (writes)
     lmloop memory graph             knowledge-graph stats (use_graph)
     lmloop memory reconcile         review contradicts clusters (use_graph)
@@ -22,7 +25,7 @@
 
 Project memory commands:
 
-    memory            peek curated learnings (read-only)
+    memory            peek curated learnings (read-only); list | decisions | dump
     memory mine [N]   mine last N sessions into learnings (writes memory)
     memory graph      knowledge-graph stats (requires use_graph)
     memory reconcile  review contradicts clusters (requires use_graph)
@@ -37,7 +40,7 @@ from pathlib import Path
 
 from . import agent, knowledge_graph, loop as loop_mod, memory, server, skills
 from . import graph as graph_mod
-from .commands import cli_subcommand_metas, cli_subcommand_names
+from .commands import MEMORY_ARG_CHOICES, cli_subcommand_metas, cli_subcommand_names
 from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
 from .repl import mine_sessions, run_repl
 from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
@@ -45,6 +48,9 @@ from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
 EPILOG = """
 project memory commands:
   memory [query]     peek curated learnings (read-only)
+  memory list        top 5 active learnings
+  memory decisions   top 3 active decisions
+  memory dump        injected context_block (debug)
   memory mine [N]    mine last N sessions into learnings (writes memory)
   memory graph       knowledge-graph stats (requires use_graph)
   memory reconcile   review contradicts clusters (requires use_graph)
@@ -226,7 +232,7 @@ __SUBS__
           ;;
         memory)
           if (( CURRENT == 2 )); then
-            compadd - mine graph reconcile
+            compadd - __MEMORY_VERBS__
           fi
           ;;
         retro|until|graph|decisions|history|models)
@@ -237,7 +243,9 @@ __SUBS__
 }
 
 compdef _lmloop lmloop
-""".replace("__CONFIG_KEYS__", keys).replace("__SUBS__", subs)
+""".replace("__CONFIG_KEYS__", keys).replace("__SUBS__", subs).replace(
+        "__MEMORY_VERBS__", " ".join(MEMORY_ARG_CHOICES)
+    )
     sys.stdout.write(script)
     return 0
 
@@ -271,20 +279,36 @@ def cmd_config(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_memory(cfg: dict, words: list, console: Console) -> int:
-    if words and words[0] == "mine":
+    verb = words[0] if words else "list"
+    if not words or verb == "list":
+        rows = memory.get_learnings(limit=memory.MEMORY_LIST_LIMIT)
+        if rows:
+            for r in rows:
+                console.info(memory.format_learning_line(r))
+        else:
+            console.info(memory.MSG_NO_LEARNINGS)
+        return 0
+    if verb == "decisions":
+        rows = memory.get_decisions(limit=memory.MEMORY_DECISIONS_LIMIT)
+        if rows:
+            for d in rows:
+                console.info(memory.format_decision_line(d))
+        else:
+            console.info(memory.MSG_NO_DECISIONS)
+        return 0
+    if verb == "dump":
+        console.info(memory.dump_context_block(cfg))
+        return 0
+    if verb == "mine":
         rest = words[1:]
         count = int(rest[0]) if rest and rest[0].isdigit() else 3
         return cmd_memory_mine(cfg, count, console)
-    if words and words[0] == "graph":
-        if not cfg.get("use_graph"):
-            console.info("knowledge graph is off — `lmloop config set use_graph true`")
-            return 0
-        knowledge_graph.ensure_graph(cfg)
-        console.info(knowledge_graph.graph_stats())
+    if verb == "graph":
+        console.info(knowledge_graph.inspect_report(cfg))
         return 0
-    if words and words[0] == "reconcile":
+    if verb == "reconcile":
         if not cfg.get("use_graph"):
-            console.info("knowledge graph is off — `lmloop config set use_graph true`")
+            console.info(knowledge_graph.MSG_GRAPH_OFF)
             return 0
         knowledge_graph.ensure_graph(cfg)
         cluster = knowledge_graph.contradiction_clusters()
@@ -317,24 +341,21 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         return 0 if result is not None else 1
     q = " ".join(words)
     rows = memory.get_learnings(query=q, limit=30)
-    for r in rows:
-        console.info(
-            f"- [{r['key']}] ({r['type']}, {r['confidence']}/10, {r['ts'][:10]}) {r['insight']}"
-        )
-    if not rows:
-        console.info("(no learnings yet — run tasks, then `lmloop memory mine`)")
+    if rows:
+        for r in rows:
+            console.info(memory.format_learning_line(r))
+    else:
+        console.info(memory.MSG_NO_LEARNINGS)
     return 0
 
 
 def cmd_decisions(cfg: dict, words: list, console: Console) -> int:
     rows = memory.get_decisions(limit=30)
-    for d in rows:
-        line = f"- [{d['id']}] {d['date'][:10]} {d['decision']}"
-        if d.get("rationale"):
-            line += f"  (why: {d['rationale']})"
-        console.info(line)
-    if not rows:
-        console.info("(no decisions logged yet)")
+    if rows:
+        for d in rows:
+            console.info(memory.format_decision_line(d, date=True))
+    else:
+        console.info(memory.MSG_NO_DECISIONS)
     return 0
 
 

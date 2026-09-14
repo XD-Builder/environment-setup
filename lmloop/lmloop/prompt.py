@@ -194,8 +194,21 @@ class LmloopCompleter(Completer):
                 )
             return
 
+        cmds = list(self._commands_provider())
+        choices = _command_arg_choices(text_before, word, cmds)
+        if choices is not None:
+            prefix = "" if word.startswith("/") else word
+            for name in _filter_names(list(choices), prefix):
+                yield Completion(
+                    name,
+                    start_position=-len(prefix),
+                    display=name,
+                    display_meta="subcommand",
+                    style="class:slash",
+                )
+            return
+
         if word.startswith("/"):
-            cmds = list(self._commands_provider())
             names = [c.name for c in cmds]
             descs = {c.name: c.desc for c in cmds}
             for name in _filter_names(names, word):
@@ -267,6 +280,25 @@ def _in_skill_arg(text_before: str, word: str) -> bool:
             return False
         return True
     return False
+
+
+def _command_arg_choices(text_before: str, word: str, commands: list) -> "list[str] | None":
+    """First-arg completions from ``CommandMeta.arg_choices`` / ``SlashCommand``."""
+    if word.startswith("/"):
+        return None
+    stripped = text_before.lstrip()
+    for cmd in commands:
+        name = cmd.name if str(cmd.name).startswith("/") else "/" + cmd.name
+        choices = getattr(cmd, "arg_choices", ()) or ()
+        if not choices:
+            continue
+        if stripped != name and not stripped.startswith(name + " "):
+            continue
+        rest = stripped[len(name):].lstrip()
+        if " " in rest:
+            return None
+        return list(choices)
+    return None
 
 
 def build_prompt_session(

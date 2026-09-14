@@ -81,6 +81,9 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | Command | What it does | Read / write |
 |---------|--------------|--------------|
 | `lmloop memory [query]` | Peek **learnings** — curated tips (patterns, pitfalls, prefs) in `learnings.jsonl`. Deduped by key; confidence decays over time. | Peek |
+| `lmloop memory list` | Top 5 active learnings (type, key, confidence, insight). | Peek |
+| `lmloop memory decisions` | Top 3 active decisions (ID, decision, rationale). | Peek |
+| `lmloop memory dump` | Exact `context_block` injected into the system prompt (debug). | Peek |
 | `lmloop memory graph` | Peek **knowledge graph** stats (`use_graph` must be true). | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
 | `lmloop decisions` | Peek **decisions** — durable choices with rationale in `decisions.jsonl` (can be superseded). | Peek |
@@ -89,7 +92,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 
 In the REPL:
 
-- **Peek:** `/memory`, `/decisions`, `/history`, `/context` (memory injected into the system prompt). Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle.
+- **Peek:** `/memory` (or `/memory list`) for top learnings, `/memory decisions`, `/memory dump` (injected context), `/decisions`, `/history`. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
 - **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
@@ -113,14 +116,14 @@ Inside the REPL:
 | `/checkpoints [n]` | list saved checkpoints (global `#` matches `/restore`) |
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
-| `/context` | show memory injected into the system prompt |
+| `/context` | alias for `/memory dump` — show memory injected into the system prompt |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
-| `/memory [query \| mine [n] \| graph \| reconcile]` | peek learnings; mine this session (or last n prior files); when `use_graph`, show graph stats or reconcile contradictions |
+| `/memory [list \| decisions \| graph \| dump \| query \| mine [n] \| reconcile]` | peek top learnings; compact decisions; dump injected context; mine this session (or last n prior files); when `use_graph`, show graph stats or reconcile contradictions |
 | `/model <name>` | switch model, or list models with no argument |
-| `/stats` | show token usage and session activity |
+| `/stats` | show token usage, session activity, and the memory HUD (learnings, decisions, graph, checkpoint) |
 | `/new` | reset conversation (memory context re-injected) |
 | `/transcript` | view rendered session in less (`q` to quit) |
 | `/copy [transcript]` | copy last assistant answer to the clipboard (plain text, no live bar); `transcript` copies the full session as markdown |
@@ -138,7 +141,7 @@ REPL UX (prompt_toolkit + rich):
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
 - **Type `@`** for file paths. Project-relative names complete from the git-aware index (plus the current directory, including files git ignores). Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. A unique directory (`@~/Downloads`) lists that directory’s contents — you do not have to type `/` to open it. `/` on a highlighted `@dir/` opens that listing and does not insert another slash. Names with spaces complete quoted (`@"Module 2.docx"`) and also resolve unquoted on submit when the file exists (`@~/Downloads/Module 2 Team.docx`). Typed `@path` tokens (including `~/…` and spaces) are colored in the input; duplicate slashes from completion (`@~//Downloads//file`) are collapsed. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted or unquoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. PDF, Office (`.docx`/`.xlsx`/`.pptx`), zip, and audio attachments inline extracted text in the message so the model does not need to `read_file` first. The model may still `read_file` / `list_dir` those attached paths **in place** this turn even if they sit outside the workspace — it must not copy them into the project first. Zip `@path`s list archive members. Missing tokens print `[no file at @…]` and are skipped. Image `@path`s are attached as native vision input when the loaded model is a VLM (`vision: auto` in config). Writing an attached outside path, or `cp`/`unzip` of an outside path into the workspace, asks for confirmation.
 - **Ctrl-C** dismisses an open `/` or `@` completion menu first; with no menu, once shows “Ctrl-C again to exit”, twice exits. Ctrl-D exits immediately.
-- **Post-turn footer** shows a context bar, token breakdown, rounds, and tools.
+- **Post-turn footer** shows a context bar, token breakdown, rounds, tools, then a memory HUD `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
 - **Colors** for banners/tools when stdout is a TTY; disable with `NO_COLOR=1` or `lmloop config set color false`.
 - **Streaming** is on by default (SSE). Tokens appear live as markdown (`rich.Live`); a spinner shows until the first token. Disable with `lmloop config set stream false`.
 - **Context window** is auto-detected from LM Studio (`/api/v0/models`); override with `lmloop config set context_length 8192`.

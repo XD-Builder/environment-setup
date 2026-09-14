@@ -71,7 +71,7 @@ list.
 | Concern | Owner | Rule |
 |---|---|---|
 | Tool schema + validation + impl | `ToolDef` rows in `tools.build_tools()` | `tool_names()` reads that registry. Never a second name list. |
-| Slash / CLI stems, reserved skill names | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names live here only. |
+| Slash / CLI stems, reserved skill names, first-arg completions | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names and `arg_choices` live here only. |
 | Status / resume / nudge copy | `status.py` | Do not hard-code user-facing loop copy in `agent.py`. |
 | Session mutable state | `SessionState` | Pass the object; do not thread the same fields as loose args. |
 | TTY chrome | `ui.Console` / `Theme` | Display printers write; they do not own theming. |

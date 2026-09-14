@@ -316,7 +316,8 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 - Nodes are typed (`learning`, `decision`, `session`, `file`, `skill`, `concept`). Latest row per `(type, key)` wins. Learning/concept nodes reuse confidence decay; others stay live.
 - Edges are typed (`leads_to`, `contradicts`, `in_session`, `references`, `uses_skill`, `related_to`, `supersedes`). Endpoints that decayed away are dropped at read time.
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
-- `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`. `/memory graph` prints counts and an adjacency list. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
+- `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.
+- `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected `context_block`. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
 
 ---
 
@@ -348,7 +349,7 @@ The interactive mode uses `prompt_toolkit` for:
 - **Double Ctrl-C to exit** (first dismisses completion menu, second exits).
 - **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted or unquoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Duplicate slashes in the typed token are collapsed. Missing tokens warn; existing ones are readable this turn **in place** even outside the workspace. PDF/Office/zip/audio attachments inline extracted text in the user message. Copy/extract of those files into the workspace, and writes to them, require confirmation.
 
-Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable.
+Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/memory list`, `/memory decisions`, `/memory graph`, and `/memory dump` inspect hidden state without a model turn. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable. After each agent turn the REPL prints a memory HUD (`memory.MemoryHud.line()`), for example `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`: active learning/decision counts, whether `use_graph` is on and populated, and whether a checkpoint newer than 336 hours exists.
 
 Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input()` without completions.
 
@@ -373,6 +374,9 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop skills new <name> [brief]` | AI-draft a skill, review, then save |
 | `lmloop retro [N]` | Alias for `memory mine` |
 | `lmloop memory [query]` | Peek curated learnings |
+| `lmloop memory list` | Top 5 active learnings |
+| `lmloop memory decisions` | Top 3 active decisions |
+| `lmloop memory dump` | Injected `context_block` (debug) |
 | `lmloop memory mine [N]` | Mine last N sessions into learnings |
 | `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |
 | `lmloop memory reconcile` | Review `contradicts` clusters (requires `use_graph`) |

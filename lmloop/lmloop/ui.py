@@ -360,7 +360,7 @@ class Console:
         return f"  {rule} {body} {rule}"
 
     def stats_detail(self, stats: dict, model: str, messages: list,
-                     session_log: Path, learnings: int, decisions: int,
+                     session_log: Path, hud,
                      context_limit: int = 0, reserve: int = 2048) -> str:
         t = self.t
         counts = count_messages_by_role(messages)
@@ -419,7 +419,10 @@ class Console:
             ))
         else:
             lines.append(row("tokens", "(server did not report usage)", t.dim))
-        lines.append(row("memory", f"{learnings} learnings, {decisions} active decisions"))
+        lines.append(row("memory", f"{hud.learnings} learnings, {hud.decisions} active decisions"))
+        lines.append(row("graph", "on" if hud.graph_on else "off"))
+        lines.append(row("checkpoint", "yes" if hud.checkpoint else "no"))
+        lines.append(row("hud", hud.line()))
         lines.append(row("cwd", str(Path.cwd()), t.dim))
         return "\n".join(lines)
 
