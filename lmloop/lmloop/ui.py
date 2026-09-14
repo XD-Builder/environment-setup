@@ -360,7 +360,7 @@ class Console:
         return f"  {rule} {body} {rule}"
 
     def stats_detail(self, stats: dict, model: str, messages: list,
-                     session_log: Path, learnings: int, decisions: int,
+                     session_log: Path, hud,
                      context_limit: int = 0, reserve: int = 2048) -> str:
         t = self.t
         counts = count_messages_by_role(messages)
@@ -419,7 +419,10 @@ class Console:
             ))
         else:
             lines.append(row("tokens", "(server did not report usage)", t.dim))
-        lines.append(row("memory", f"{learnings} learnings, {decisions} active decisions"))
+        lines.append(row("memory", f"{hud.learnings} learnings, {hud.decisions} active decisions"))
+        lines.append(row("graph", "on" if hud.graph_on else "off"))
+        lines.append(row("checkpoint", "yes" if hud.checkpoint else "no"))
+        lines.append(row("hud", hud.line()))
         lines.append(row("cwd", str(Path.cwd()), t.dim))
         return "\n".join(lines)
 
@@ -601,15 +604,7 @@ def ask_until_gate(message: str) -> bool:
 def make_confirm_gate(console: "Console"):
     """y/N gate for destructive / shell-syntax commands (plain input)."""
     def confirm_gate(command: str) -> bool:
-        parsed = tools.ShellCommand(command)
-        if command.startswith("write_file "):
-            label = "write outside the workspace"
-        elif parsed.copies_or_extracts() and not parsed.is_destructive():
-            label = "copy/extract into the workspace"
-        elif parsed.needs_shell() and not parsed.is_destructive():
-            label = "shell-syntax (pipes/redirections)"
-        else:
-            label = "potentially destructive"
-        console.warn(f"\n⚠ {label} command requested:\n    {command}")
+        label = tools.confirm_label(command)
+        console.warn(f"\n⚠ {label} requested:\n    {command}")
         return ask_yes_no(console.confirm_prompt(command))
     return confirm_gate

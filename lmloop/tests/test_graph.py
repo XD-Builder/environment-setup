@@ -500,5 +500,88 @@ class GraphRunnerTests(unittest.TestCase):
             self.assertEqual(roles, ["system", "user"])
 
 
+class GraphGatePolicyTests(unittest.TestCase):
+    """Skill nodes: denied irreversible actions ask once, then the node re-runs."""
+
+    def _run_graph(self, root: Path, fake_act, ask_gate, cfg=None):
+        defn = parse_graph("node a skill ceo", "t")
+        with patch("lmloop.graph.project_dir", return_value=root), \
+             patch("lmloop.memory.project_dir", return_value=root), \
+             patch("lmloop.loop.project_dir", return_value=root), \
+             patch("lmloop.graph.isolated_act", side_effect=fake_act), \
+             patch("lmloop.graph.skills.load_skill", return_value="skill body"):
+            run = GraphRun.create("t")
+            run_graph(
+                cfg or _cfg(confirm_shell=True), "m", run=run, defn=defn,
+                echo=lambda *_a, **_k: None,
+                echo_status=lambda *_a, **_k: None,
+                workspace_root=root,
+                confirm_gate=lambda _c: False,
+                ask_gate=ask_gate,
+            )
+        return run
+
+    def _acts(self, command: str, prompts: list, gates: list, log: Path):
+        def fake_act(cfg, model, user_text, **kwargs):
+            messages = [{"role": "system", "content": "sys"},
+                        {"role": "user", "content": user_text}]
+            if "independent checker" in user_text:
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+                return messages, log
+            prompts.append(user_text)
+            gates.append(kwargs["confirm_gate"](command))
+            messages.append({"role": "assistant", "content": "did the skill"})
+            return messages, log
+        return fake_act
+
+    def test_skill_node_reruns_once_after_boundary_approval(self):
+        prompts, gates, asks = [], [], []
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+
+            def ask(prompt):
+                asks.append(prompt)
+                return True
+
+            run = self._run_graph(root, self._acts("rm -rf build", prompts, gates, log), ask)
+        self.assertTrue(run.is_done())
+        self.assertEqual(gates, [False, True])
+        self.assertEqual(len(asks), 1)
+        self.assertNotIn("Approved for this step", prompts[0])
+        self.assertIn("Approved for this step", prompts[1])
+        self.assertIn("- rm -rf build", prompts[1])
+        nodes = [e for e in run.events if e.get("role") == "node"]
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(nodes[0]["status"], "pass")
+
+    def test_skill_node_declined_runs_once(self):
+        prompts, gates = [], []
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            run = self._run_graph(
+                root, self._acts("rm -rf build", prompts, gates, log), lambda _p: False,
+            )
+        self.assertEqual(gates, [False])
+        self.assertEqual(len(prompts), 1)
+        self.assertTrue(run.is_done())
+
+    def test_recoverable_op_in_skill_node_never_asks(self):
+        prompts, gates, asks = [], [], []
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            run = self._run_graph(
+                root, self._acts("delete_file /ws/x.py", prompts, gates, log), asks.append,
+            )
+        self.assertEqual(gates, [True])
+        self.assertEqual(asks, [])
+        self.assertTrue(run.is_done())
+
+
 if __name__ == "__main__":
     unittest.main()

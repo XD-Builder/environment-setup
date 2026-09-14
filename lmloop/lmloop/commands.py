@@ -13,6 +13,7 @@ class CommandMeta:
     desc: str
     accepts_arg: bool = False
     arg_hint: str = ""
+    arg_choices: tuple = ()
     exits: bool = False
     slash: bool = True
     cli: bool = False
@@ -20,10 +21,14 @@ class CommandMeta:
     reserve_skill: bool = True
 
 
+# First-token verbs for ``/memory`` and ``lmloop memory`` (not search queries).
+MEMORY_ARG_CHOICES = ("list", "decisions", "graph", "dump", "mine", "reconcile")
+
+
 # Core commands. Skill shortcuts (/investigate, …) are added dynamically in repl.
 COMMANDS: tuple = (
     CommandMeta("help", "show available commands"),
-    CommandMeta("stats", "show token usage and session activity"),
+    CommandMeta("stats", "show token usage, session activity, and memory HUD"),
     CommandMeta("transcript", "view rendered session in less (q to quit)"),
     CommandMeta("copy", "copy last answer to the clipboard (plain text, no live bar)",
                 accepts_arg=True, arg_hint="[transcript]"),
@@ -38,7 +43,7 @@ COMMANDS: tuple = (
     CommandMeta("restore", "reload a prior session (shows last result) or checkpoint",
                 accepts_arg=True, arg_hint="[session|checkpoint] <query> [fresh]"),
     CommandMeta("decisions", "show active project decisions", cli=True),
-    CommandMeta("context", "show memory injected into the system prompt"),
+    CommandMeta("context", "alias for /memory dump — show injected context_block"),
     CommandMeta("continue", "resume after max_rounds, an interruption, or a paused until/graph run",
                 accepts_arg=True, arg_hint="[message]"),
     CommandMeta("undo", "drop the last user turn from the in-memory thread"),
@@ -48,8 +53,10 @@ COMMANDS: tuple = (
     CommandMeta("model", "switch model, or list models with no argument",
                 accepts_arg=True, arg_hint="<name>"),
     CommandMeta("models", "list models on the server", slash=False, cli=True),
-    CommandMeta("memory", "show learnings, or: mine [n] | graph | reconcile",
-                accepts_arg=True, arg_hint="[query | mine [n] | graph | reconcile]", cli=True),
+    CommandMeta("memory", "inspect learnings, or: list | decisions | graph | dump | mine [n] | reconcile",
+                accepts_arg=True,
+                arg_hint="[list | decisions | graph | dump | query | mine [n] | reconcile]",
+                arg_choices=MEMORY_ARG_CHOICES, cli=True),
     CommandMeta("until", "work toward a goal until a check or evaluator passes",
                 accepts_arg=True, arg_hint="[--check cmd] <goal>", cli=True),
     CommandMeta("graph", "run an authored workflow graph",

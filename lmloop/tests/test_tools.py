@@ -12,16 +12,29 @@ from pathlib import Path
 
 from lmloop.commands import RESERVED_SKILL_NAMES, slash_command_metas
 from lmloop.tools import (
+    GATE_IRREVERSIBLE,
+    GATE_RECOVERABLE,
+    GatePolicy,
+    autonomous_gate,
     build_tools,
+    coerce_bool,
+    confirm_label,
+    delete_file,
     dispatch,
+    find_files,
     format_tool_preview,
+    gate_tier,
     is_destructive,
     list_dir,
+    move_file,
     needs_shell,
     read_file,
     run_shell,
+    search_files,
     tool_names,
     unwrap_tool_result,
+    update_file,
+    user_notice,
     write_file,
     ShellCommand,
     ToolResult,
@@ -291,7 +304,8 @@ class ToolSafetyTests(unittest.TestCase):
                 extra_readable=[outside.resolve()],
                 confirm_gate=lambda _: True,
             )
-            self.assertIn("Wrote", ok)
+            self.assertIn("Overwrote", ok)
+            self.assertNotIn("backup", ok)  # outside the workspace: no trash copy
             self.assertEqual(outside.read_text(), "yes\n")
 
     def test_read_file_zip_lists_in_place(self):
@@ -367,6 +381,7 @@ class ToolSafetyTests(unittest.TestCase):
                                         key="pitfall_ambiguous_numeric_abbreviation")
             self.assertIn("pitfall_ambiguous_numeric_abbreviation", out)
             self.assertIn(str(root / "learnings.jsonl"), out)
+            self.assertIn("Prior learning applied: pitfall_ambiguous_numeric_abbreviation", out)
 
     def test_file_tools_stay_pinned_after_chdir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -832,6 +847,537 @@ class ConcurrentToolTests(unittest.TestCase):
         ])
         self.assertEqual(set(out), {"a.py", "b.py"})
         self.assertEqual(set(seen), {"a.py", "b.py"})
+
+
+class _Gate:
+    """Recording confirm_gate with a fixed answer."""
+
+    def __init__(self, answer: bool):
+        self.answer = answer
+        self.calls: list = []
+
+    def __call__(self, command: str) -> bool:
+        self.calls.append(command)
+        return self.answer
+
+
+class FileEditToolTests(unittest.TestCase):
+    """update_file / write_file overwrite / move_file / delete_file + backups."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.root = base / "ws"
+        self.root.mkdir()
+        self.state = base / "state"
+        self.state.mkdir()
+        self._patch = mock.patch("lmloop.config.project_dir", return_value=self.state)
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        self._tmp.cleanup()
+
+    def _backups(self) -> list:
+        trash = self.state / "trash"
+        return sorted(p for p in trash.rglob("*") if p.is_file()) if trash.exists() else []
+
+    # --- update_file ---
+
+    def test_update_file_unique_replace_returns_diff_and_backup(self):
+        f = self.root / "a.py"
+        f.write_text("def f():\n    return 1\n\ndef g():\n    return 2\n")
+        out = update_file("a.py", "    return 1\n", "    return 10\n", workspace_root=self.root)
+        self.assertTrue(out.startswith("Updated "), out)
+        self.assertIn("replaced 1 occurrence (line 2)", out)
+        self.assertIn("-    return 1", out)
+        self.assertIn("+    return 10", out)
+        self.assertIn("--- a.py\n+++ a.py", out)  # diff labels are workspace-relative
+        self.assertIn("backup: ", out)
+        self.assertEqual(f.read_text(), "def f():\n    return 10\n\ndef g():\n    return 2\n")
+        backups = self._backups()
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].name, "a.py")
+        self.assertEqual(backups[0].read_text(), "def f():\n    return 1\n\ndef g():\n    return 2\n")
+
+    def test_repeated_edits_keep_every_preimage(self):
+        f = self.root / "a.txt"
+        f.write_text("v1\n")
+        update_file("a.txt", "v1", "v2", workspace_root=self.root)
+        update_file("a.txt", "v2", "v3", workspace_root=self.root)
+        out = write_file("a.txt", "v4\n", workspace_root=self.root, confirm_gate=_Gate(True))
+        backups = self._backups()
+        self.assertEqual([b.name for b in backups], ["a.txt", "a.txt.~1~", "a.txt.~2~"])
+        self.assertEqual([b.read_text() for b in backups], ["v1\n", "v2\n", "v3\n"])
+        self.assertIn(str(backups[2]), out)  # result cites the exact pre-image
+
+    def test_update_file_preserves_crlf_and_matches_lf_snippet(self):
+        f = self.root / "win.txt"
+        f.write_bytes(b"a\r\nb\r\nc\r\n")
+        out = update_file("win.txt", "b\nc\n", "B\n", workspace_root=self.root)
+        self.assertIn("Updated", out)
+        self.assertEqual(f.read_bytes(), b"a\r\nB\r\n")
+        untouched = self.root / "mixed.txt"
+        untouched.write_bytes(b"x\r\ny\n")
+        update_file("mixed.txt", "x\r\n", "X\r\n", workspace_root=self.root)
+        self.assertEqual(untouched.read_bytes(), b"X\r\ny\n")
+
+    def test_update_file_multiline_span_in_header(self):
+        f = self.root / "a.txt"
+        f.write_text("one\ntwo\nthree\nfour\n")
+        out = update_file("a.txt", "two\nthree\n", "TWO\n", workspace_root=self.root)
+        self.assertIn("(lines 2-3)", out)
+        self.assertEqual(f.read_text(), "one\nTWO\nfour\n")
+
+    def test_update_file_not_found_error_copy(self):
+        (self.root / "a.txt").write_text("hello\n")
+        out = update_file("a.txt", "nope", "x", workspace_root=self.root)
+        self.assertTrue(out.startswith("ERROR: old_string not found"))
+        self.assertIn("read_file", out)
+        self.assertEqual((self.root / "a.txt").read_text(), "hello\n")
+        self.assertEqual(self._backups(), [])
+
+    def test_update_file_ambiguous_lists_lines(self):
+        (self.root / "a.txt").write_text("x = 1\ny = 2\nx = 1\n")
+        out = update_file("a.txt", "x = 1", "x = 2", workspace_root=self.root)
+        self.assertIn("matches 2 places", out)
+        self.assertIn("lines 1, 3", out)
+        self.assertIn("replace_all=true", out)
+        self.assertEqual((self.root / "a.txt").read_text(), "x = 1\ny = 2\nx = 1\n")
+
+    def test_update_file_replace_all(self):
+        (self.root / "a.txt").write_text("x = 1\ny = 2\nx = 1\n")
+        out = update_file("a.txt", "x = 1", "x = 2", replace_all=True, workspace_root=self.root)
+        self.assertIn("replaced 2 occurrences (lines 1, 3)", out)
+        self.assertEqual((self.root / "a.txt").read_text(), "x = 2\ny = 2\nx = 2\n")
+
+    def test_update_file_empty_new_string_deletes(self):
+        (self.root / "a.txt").write_text("keep\ndrop\n")
+        out = update_file("a.txt", "drop\n", "", workspace_root=self.root)
+        self.assertIn("Updated", out)
+        self.assertEqual((self.root / "a.txt").read_text(), "keep\n")
+
+    def test_update_file_no_change_and_missing_file(self):
+        (self.root / "a.txt").write_text("same\n")
+        self.assertIn("no change", update_file("a.txt", "same", "same", workspace_root=self.root))
+        out = update_file("missing.txt", "a", "b", workspace_root=self.root)
+        self.assertIn("does not exist", out)
+        self.assertIn("write_file", out)
+
+    def test_update_file_non_text_file(self):
+        (self.root / "blob.bin").write_bytes(b"\xff\xfe\x00\x01binary")
+        out = update_file("blob.bin", "a", "b", workspace_root=self.root)
+        self.assertIn("not a text file", out)
+
+    def test_update_file_outside_workspace_requires_confirm(self):
+        outside = Path(self._tmp.name) / "ext.txt"
+        outside.write_text("hello\n")
+        self.assertIn(
+            "outside workspace",
+            update_file(str(outside), "hello", "bye", workspace_root=self.root),
+        )
+        no = _Gate(False)
+        denied = update_file(
+            str(outside), "hello", "bye", workspace_root=self.root,
+            extra_readable=[outside], confirm_gate=no,
+        )
+        self.assertIn("DENIED", denied)
+        self.assertEqual(no.calls, [f"update_file {outside.resolve()}"])
+        self.assertEqual(outside.read_text(), "hello\n")
+        yes = _Gate(True)
+        ok = update_file(
+            str(outside), "hello", "bye", workspace_root=self.root,
+            extra_readable=[outside], confirm_gate=yes,
+        )
+        self.assertIn("Updated", ok)
+        self.assertNotIn("backup", ok)
+        self.assertEqual(outside.read_text(), "bye\n")
+
+    def test_dispatch_update_file_allows_empty_new_string_and_coerces_bool(self):
+        (self.root / "a.txt").write_text("a\na\n")
+        _, impls = build_tools({"confirm_shell": False}, workspace_root=self.root)
+        out = dispatch(
+            impls, "update_file",
+            '{"path": "a.txt", "old_string": "a\\n", "new_string": "", "replace_all": "true"}',
+        )
+        self.assertIn("replaced 2 occurrences", out)
+        self.assertEqual((self.root / "a.txt").read_text(), "")
+        bad = dispatch(
+            impls, "update_file",
+            '{"path": "a.txt", "old_string": "a", "new_string": "b", "replace_all": "maybe"}',
+        )
+        self.assertIn("must be true or false", bad)
+
+    # --- write_file ---
+
+    def test_write_file_new_file_does_not_prompt(self):
+        gate = _Gate(False)
+        out = write_file("new.txt", "hi", workspace_root=self.root, confirm_gate=gate)
+        self.assertIn("Wrote 2 chars", out)
+        self.assertEqual(gate.calls, [])
+        self.assertEqual(self._backups(), [])
+
+    def test_write_file_overwrite_prompts_and_decline_keeps_content(self):
+        f = self.root / "a.txt"
+        f.write_text("original\n")
+        no = _Gate(False)
+        out = write_file("a.txt", "new\n", workspace_root=self.root, confirm_gate=no)
+        self.assertTrue(out.startswith("DENIED"), out)
+        self.assertIn("update_file", out)
+        self.assertEqual(no.calls, [f"overwrite {f.resolve()}"])
+        self.assertEqual(f.read_text(), "original\n")
+        self.assertEqual(self._backups(), [])
+
+    def test_write_file_overwrite_accept_backs_up(self):
+        f = self.root / "sub" / "a.txt"
+        f.parent.mkdir()
+        f.write_text("original\n")
+        yes = _Gate(True)
+        out = write_file("sub/a.txt", "new\n", workspace_root=self.root, confirm_gate=yes)
+        self.assertTrue(out.startswith("Overwrote"), out)
+        self.assertIn("backup: ", out)
+        self.assertEqual(f.read_text(), "new\n")
+        backups = self._backups()
+        self.assertEqual(len(backups), 1)
+        self.assertTrue(str(backups[0]).endswith("sub/a.txt"))
+        self.assertEqual(backups[0].read_text(), "original\n")
+        self.assertIn(str(backups[0]), out)
+
+    def test_write_file_confirms_disabled_overwrites_silently(self):
+        f = self.root / "a.txt"
+        f.write_text("original\n")
+        gate = _Gate(False)
+        _, impls = build_tools({"confirm_shell": False}, workspace_root=self.root, confirm_gate=gate)
+        out = impls["write_file"]("a.txt", "new\n")
+        self.assertIn("Overwrote", out)
+        self.assertEqual(gate.calls, [])
+        self.assertEqual(f.read_text(), "new\n")
+
+    def test_build_tools_write_file_overwrite_rides_confirm_destructive(self):
+        f = self.root / "a.txt"
+        f.write_text("original\n")
+        gate = _Gate(False)
+        _, impls = build_tools({}, workspace_root=self.root, confirm_gate=gate)
+        self.assertIn("DENIED", impls["write_file"]("a.txt", "new\n"))
+        self.assertEqual(len(gate.calls), 1)
+        self.assertEqual(f.read_text(), "original\n")
+
+    # --- move_file / delete_file ---
+
+    def test_move_file_gate_and_backup(self):
+        src = self.root / "a.txt"
+        src.write_text("body\n")
+        no = _Gate(False)
+        denied = move_file("a.txt", "b/c.txt", workspace_root=self.root, confirm_gate=no)
+        self.assertIn("DENIED", denied)
+        self.assertEqual(no.calls, [f"move_file {src.resolve()} -> {(self.root / 'b' / 'c.txt').resolve()}"])
+        self.assertTrue(src.exists())
+        yes = _Gate(True)
+        ok = move_file("a.txt", "b/c.txt", workspace_root=self.root, confirm_gate=yes)
+        self.assertIn("Moved", ok)
+        self.assertIn("backup: ", ok)
+        self.assertFalse(src.exists())
+        self.assertEqual((self.root / "b" / "c.txt").read_text(), "body\n")
+
+    def test_move_file_refuses_dirs_dest_exists_and_outside(self):
+        (self.root / "d").mkdir()
+        (self.root / "a.txt").write_text("a")
+        (self.root / "b.txt").write_text("b")
+        self.assertIn("is a directory", move_file("d", "e", workspace_root=self.root))
+        self.assertIn("already exists", move_file("a.txt", "b.txt", workspace_root=self.root))
+        self.assertIn("does not exist", move_file("zzz", "y", workspace_root=self.root))
+        self.assertIn("outside workspace", move_file("a.txt", "/tmp/x.txt", workspace_root=self.root))
+        self.assertTrue((self.root / "a.txt").exists())
+
+    def test_delete_file_gate_backup_and_dir_refused(self):
+        f = self.root / "a.txt"
+        f.write_text("bye\n")
+        (self.root / "d").mkdir()
+        no = _Gate(False)
+        self.assertIn("DENIED", delete_file("a.txt", workspace_root=self.root, confirm_gate=no))
+        self.assertEqual(no.calls, [f"delete_file {f.resolve()}"])
+        self.assertTrue(f.exists())
+        out = delete_file("d", workspace_root=self.root, confirm_gate=_Gate(True))
+        self.assertIn("is a directory", out)
+        self.assertIn("rm -r", out)
+        ok = delete_file("a.txt", workspace_root=self.root, confirm_gate=_Gate(True))
+        self.assertIn("Deleted", ok)
+        self.assertFalse(f.exists())
+        backups = self._backups()
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), "bye\n")
+        self.assertIn("does not exist", delete_file("a.txt", workspace_root=self.root))
+
+    def test_write_tools_readonly_omitted_and_serial(self):
+        from lmloop.tools import READONLY_OMIT, concurrent_groups
+        for name in ("update_file", "move_file", "delete_file", "write_file"):
+            self.assertIn(name, READONLY_OMIT)
+        specs, _ = build_tools({"confirm_shell": False}, readonly=True)
+        names = {s["function"]["name"] for s in specs}
+        self.assertNotIn("update_file", names)
+        self.assertNotIn("move_file", names)
+        self.assertNotIn("delete_file", names)
+        self.assertIn("find_files", names)
+        build_tools({"confirm_shell": False})
+        self.assertEqual(
+            concurrent_groups(["read_file", "update_file", "find_files", "move_file", "delete_file"]),
+            [[0], [1], [2], [3], [4]],
+        )
+
+    # --- previews / notices / labels ---
+
+    def test_format_tool_preview_two_path_tool(self):
+        out = format_tool_preview(
+            "move_file", '{"path": "a.txt", "new_path": "b/c.txt"}',
+            workspace_root=self.root, limit=2000,
+        )
+        self.assertIn(str((self.root / "a.txt").resolve()), out)
+        self.assertIn(str((self.root / "b" / "c.txt").resolve()), out)
+        one = format_tool_preview("update_file", '{"path": "a.txt", "old_string": "x"}', workspace_root=self.root)
+        self.assertIn(str((self.root / "a.txt").resolve()), one)
+
+    def test_user_notice_covers_file_and_memory_tools(self):
+        self.assertEqual(
+            user_notice("remember", "Saved [k]\nSay in your reply: Prior learning applied: k"),
+            "Prior learning applied: k",
+        )
+        diff = "Updated a.py: replaced 1 occurrence (line 2)\n--- a.py\n+++ a.py\n-x\n+y"
+        self.assertEqual(user_notice("update_file", diff), diff)
+        self.assertIsNone(user_notice("update_file", "ERROR: old_string not found in a.py"))
+        self.assertIsNone(user_notice("write_file", "Wrote 3 chars to /ws/new.txt"))
+        self.assertEqual(
+            user_notice("write_file", "Overwrote /ws/a.txt with 3 chars (backup: /t/a.txt)"),
+            "Overwrote /ws/a.txt with 3 chars (backup: /t/a.txt)",
+        )
+        self.assertEqual(user_notice("delete_file", "Deleted /ws/a.txt"), "Deleted /ws/a.txt")
+        self.assertIsNone(user_notice("move_file", "DENIED: the user declined to move /ws/a."))
+        self.assertIsNone(user_notice("read_file", "[/ws/a.py: lines 1-2 of 2]"))
+
+    def test_confirm_label_and_gate_tier(self):
+        self.assertEqual(confirm_label("write_file /x"), "write outside the workspace")
+        self.assertEqual(confirm_label("update_file /x"), "edit outside the workspace")
+        self.assertEqual(confirm_label("overwrite /x"), "overwrite an existing file")
+        self.assertEqual(confirm_label("move_file /a -> /b"), "move/rename a file")
+        self.assertEqual(confirm_label("delete_file /x"), "delete a file")
+        self.assertEqual(confirm_label("cp ~/x ."), "copy/extract into the workspace")
+        self.assertEqual(confirm_label("ls | wc -l"), "shell-syntax (pipes/redirections)")
+        self.assertEqual(confirm_label("rm -rf build"), "potentially destructive")
+        for cmd in ("overwrite /x", "move_file /a -> /b", "delete_file /x"):
+            self.assertEqual(gate_tier(cmd), GATE_RECOVERABLE, cmd)
+        for cmd in ("write_file /x", "update_file /x", "rm -rf build", "cp ~/x .", "ls | wc"):
+            self.assertEqual(gate_tier(cmd), GATE_IRREVERSIBLE, cmd)
+
+    def test_ui_confirm_gate_uses_tools_label(self):
+        from lmloop.ui import Console, make_confirm_gate
+        console = Console(color=False)
+        gate = make_confirm_gate(console)
+        with mock.patch("lmloop.ui.ask_yes_no", return_value=False) as ask, \
+             mock.patch.object(console, "warn") as warn:
+            self.assertFalse(gate("overwrite /ws/a.txt"))
+        self.assertTrue(ask.called)
+        self.assertIn("overwrite an existing file", warn.call_args[0][0])
+
+
+class GatePolicyTests(unittest.TestCase):
+    def test_files_mode_auto_approves_recoverable_and_records_irreversible(self):
+        said = []
+        policy = GatePolicy("files", fallback=_Gate(False), echo_status=said.append)
+        self.assertTrue(policy("overwrite /ws/a.py"))
+        self.assertTrue(policy("delete_file /ws/b.py"))
+        self.assertFalse(policy("rm -rf build"))
+        self.assertFalse(policy("rm -rf build"))  # de-duplicated
+        self.assertFalse(policy("write_file /etc/hosts"))
+        self.assertEqual(policy.take_denied(), ["rm -rf build", "write_file /etc/hosts"])
+        self.assertEqual(policy.take_denied(), [])
+        self.assertEqual(len(said), 2)
+        self.assertIn("[auto-approved: overwrite an existing file", said[0])
+
+    def test_approved_commands_pass_once_approved(self):
+        said = []
+        policy = GatePolicy("files", echo_status=said.append)
+        self.assertFalse(policy("rm -rf build"))
+        policy.approve(policy.take_denied())
+        self.assertTrue(policy("rm -rf build"))
+        self.assertIn("[approved:", said[-1])
+        self.assertFalse(policy("rm -rf other"))
+        policy.expire_approvals()
+        self.assertFalse(policy("rm -rf build"))  # a yes lasts one step
+
+    def test_none_mode_defers_to_fallback_and_all_mode_never_asks(self):
+        fb = _Gate(True)
+        none_policy = GatePolicy("none", fallback=fb)
+        self.assertTrue(none_policy("rm -rf build"))
+        self.assertEqual(fb.calls, ["rm -rf build"])
+        self.assertEqual(none_policy.take_denied(), [])
+        self.assertFalse(GatePolicy("none")("rm -rf build"))  # no fallback: deny
+        fb2 = _Gate(False)
+        all_policy = GatePolicy("all", fallback=fb2)
+        self.assertTrue(all_policy("rm -rf build"))
+        self.assertEqual(fb2.calls, [])
+
+    def test_from_config_and_autonomous_gate_wrapping(self):
+        self.assertEqual(GatePolicy.from_config({}).mode, "files")
+        self.assertEqual(GatePolicy.from_config({"autonomous_gates": "ALL"}).mode, "all")
+        self.assertEqual(GatePolicy.from_config({"autonomous_gates": "bogus"}).mode, "files")
+        self.assertIsNone(autonomous_gate({}, None))
+        fb = _Gate(True)
+        policy = autonomous_gate({}, fb)
+        self.assertIsInstance(policy, GatePolicy)
+        self.assertIs(policy.fallback, fb)
+        self.assertIs(autonomous_gate({}, policy), policy)
+
+
+class FindSearchToolTests(unittest.TestCase):
+    def setUp(self):
+        from lmloop.files_index import clear_path_cache
+        clear_path_cache()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "ws"
+        (self.root / "src" / "pkg").mkdir(parents=True)
+        (self.root / "tests").mkdir()
+        (self.root / "src" / "main.py").write_text("x")
+        (self.root / "src" / "pkg" / "util.py").write_text("x")
+        (self.root / "src" / "pkg" / "data.json").write_text("{}")
+        (self.root / "tests" / "test_main.py").write_text("x")
+        (self.root / "README.md").write_text("x")
+
+    def tearDown(self):
+        from lmloop.files_index import clear_path_cache
+        clear_path_cache()
+        self._tmp.cleanup()
+
+    def test_find_files_glob_vs_substring(self):
+        py = find_files("*.py", workspace_root=self.root).splitlines()
+        self.assertEqual(py, ["src/main.py", "src/pkg/util.py", "tests/test_main.py"])
+        self.assertEqual(
+            find_files("main", workspace_root=self.root).splitlines(),
+            ["src/main.py", "tests/test_main.py"],
+        )
+        self.assertEqual(find_files("MAIN", workspace_root=self.root).splitlines(),
+                         ["src/main.py", "tests/test_main.py"])
+        self.assertEqual(find_files("pkg/*.json", workspace_root=self.root).splitlines(),
+                         ["src/pkg/data.json"])
+        self.assertEqual(find_files("**/util.py", workspace_root=self.root).splitlines(),
+                         ["src/pkg/util.py"])
+
+    def test_find_files_scope_cap_and_errors(self):
+        scoped = find_files("*.py", "src", workspace_root=self.root).splitlines()
+        self.assertEqual(scoped, ["src/main.py", "src/pkg/util.py"])
+        capped = find_files("*.py", workspace_root=self.root, limit=2)
+        self.assertTrue(capped.startswith("[2 of 3 matches"), capped)
+        self.assertIn("(no files match", find_files("*.rs", workspace_root=self.root))
+        self.assertIn("outside workspace", find_files("*", "/etc", workspace_root=self.root))
+        self.assertIn("not a directory", find_files("*", "README.md", workspace_root=self.root))
+
+    def test_list_project_paths_full_list_cache(self):
+        from lmloop import files_index
+        with mock.patch.object(files_index, "_MAX_PATHS", 2):
+            files_index.clear_path_cache()
+            short = files_index.list_project_paths(self.root, limit=files_index._MAX_PATHS)
+            self.assertEqual(len(short), 2)
+            full = files_index.list_project_paths(self.root, limit=None)
+            self.assertGreater(len(full), 2)
+            self.assertIn("src/pkg/util.py", full)
+
+    def _argv_with(self, which, **kwargs):
+        seen = {}
+
+        def fake_run(cmd, **_kw):
+            seen["cmd"] = cmd
+            return mock.Mock(stdout="a.py:1:hit\n")
+
+        with mock.patch("lmloop.tools.shutil.which", return_value=which), \
+             mock.patch("lmloop.tools.subprocess.run", side_effect=fake_run):
+            out = search_files("needle", workspace_root=self.root, **kwargs)
+        self.assertIn("hit", out)
+        return seen["cmd"]
+
+    def test_search_files_flags_reach_rg_and_grep(self):
+        rg = self._argv_with("/usr/bin/rg", glob="*.py", case_insensitive=True, context=9, fixed=True)
+        self.assertEqual(rg[0], "rg")
+        self.assertIn("-g", rg)
+        self.assertEqual(rg[rg.index("-g") + 1], "*.py")
+        self.assertIn("-i", rg)
+        self.assertIn("-F", rg)
+        self.assertEqual(rg[rg.index("-C") + 1], "5")  # clamped to MAX_SEARCH_CONTEXT
+        self.assertEqual(rg[-3:], ["-e", "needle", str(self.root.resolve())])
+        plain = self._argv_with("/usr/bin/rg")
+        for flag in ("-g", "-i", "-F", "-C"):
+            self.assertNotIn(flag, plain)
+        grep = self._argv_with(None, glob="*.py", case_insensitive=True, context=2, fixed=True)
+        self.assertEqual(grep[0], "grep")
+        self.assertIn("--include=*.py", grep)
+        self.assertIn("-i", grep)
+        self.assertIn("-F", grep)
+        self.assertEqual(grep[grep.index("-C") + 1], "2")
+
+    def test_dispatch_search_files_coerces_flags(self):
+        seen = {}
+
+        def fake_run(cmd, **_kw):
+            seen["cmd"] = cmd
+            return mock.Mock(stdout="")
+
+        _, impls = build_tools({"confirm_shell": False}, workspace_root=self.root)
+        with mock.patch("lmloop.tools.shutil.which", return_value="/usr/bin/rg"), \
+             mock.patch("lmloop.tools.subprocess.run", side_effect=fake_run):
+            out = dispatch(
+                impls, "search_files",
+                '{"pattern": "x", "case_insensitive": "yes", "fixed": 0, "context": "1"}',
+            )
+        self.assertIn("no matches", out)
+        self.assertIn("-i", seen["cmd"])
+        self.assertNotIn("-F", seen["cmd"])
+        self.assertEqual(seen["cmd"][seen["cmd"].index("-C") + 1], "1")
+
+    def test_coerce_bool(self):
+        self.assertIs(coerce_bool(True), True)
+        self.assertIs(coerce_bool("False"), False)
+        self.assertIs(coerce_bool(" TRUE "), True)
+        self.assertIs(coerce_bool(1), True)
+        self.assertIs(coerce_bool(0), False)
+        self.assertIsNone(coerce_bool("maybe"))
+        self.assertIsNone(coerce_bool(2))
+
+
+class MemoryDisclosureTests(unittest.TestCase):
+    def test_user_disclosure_from_write_tools(self):
+        from lmloop.tools import user_disclosure
+
+        self.assertEqual(
+            user_disclosure(
+                "remember",
+                "Saved learning [uv]\nSay in your reply: Prior learning applied: uv",
+            ),
+            "Prior learning applied: uv",
+        )
+        self.assertEqual(
+            user_disclosure(
+                "log_decision",
+                "Logged decision [abc]\nSay in your reply: Decision referenced: [abc]",
+            ),
+            "Decision referenced: [abc]",
+        )
+        self.assertIsNone(user_disclosure("recall_memory", "Learnings:\n- [uv]"))
+        self.assertIsNone(user_disclosure("remember", "ERROR: missing required argument 'insight'"))
+
+    def test_memory_tool_descriptions_require_disclosure(self):
+        specs, _ = build_tools({"confirm_shell": False})
+        desc = {s["function"]["name"]: s["function"]["description"] for s in specs}
+        self.assertIn("Prior learning applied: <key>", desc["remember"])
+        self.assertIn("Prior learning applied: <key>", desc["recall_memory"])
+        self.assertIn("Decision referenced: [id]", desc["log_decision"])
+        self.assertIn("Decision referenced: [id]", desc["recall_memory"])
+
+    def test_log_decision_cites_id_and_disclosure(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch("lmloop.memory.project_dir", return_value=root):
+                _, impls = build_tools({"confirm_shell": False}, workspace_root=root)
+                out = impls["log_decision"]("use pytest", rationale="fits")
+            self.assertIn("Logged decision [", out)
+            self.assertIn("Decision referenced: [", out)
+            self.assertIn(str(root / "decisions.jsonl"), out)
 
 
 if __name__ == "__main__":

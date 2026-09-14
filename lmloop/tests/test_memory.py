@@ -265,6 +265,7 @@ class KnowledgeGraphTests(unittest.TestCase):
                     "pytest", cfg={"use_graph": True},
                 )
                 self.assertIn("leads_to", text)
+                self.assertIn("[pytest-config]", text)
 
     def test_auto_edges_from_learning(self):
         from unittest.mock import patch
@@ -362,6 +363,14 @@ class KnowledgeGraphTests(unittest.TestCase):
                 self.assertIn("pip", stats)
                 cluster = kg_mod.contradiction_clusters()
                 self.assertIn("pip", cluster)
+                report = kg_mod.inspect_report({"use_graph": True})
+                self.assertIn("nodes:", report)
+                self.assertIn("pip", report)
+                self.assertIn(cluster, report)
+                self.assertEqual(
+                    kg_mod.inspect_report({"use_graph": False}),
+                    kg_mod.MSG_GRAPH_OFF,
+                )
 
     def test_use_graph_false_skips_auto_edges_when_files_exist(self):
         from unittest.mock import patch
@@ -438,6 +447,107 @@ class KnowledgeGraphTests(unittest.TestCase):
                     "context_decisions": 6,
                 })
                 self.assertNotIn("leads_to", off)
+
+
+class MemoryHudTests(unittest.TestCase):
+    def test_hud_line_and_counts(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                for i in range(3):
+                    memory_mod.add_learning(f"insight {i}", key=f"k{i}", confidence=8)
+                memory_mod.add_decision("use pytest", rationale="fits the repo")
+                hud = memory_mod.memory_hud({})
+                self.assertEqual(hud.learnings, 3)
+                self.assertEqual(hud.decisions, 1)
+                self.assertFalse(hud.graph_on)
+                self.assertFalse(hud.checkpoint)
+                self.assertEqual(
+                    hud.line(),
+                    "[Mem: 3 learnings | 1 decision | graph: off | checkpoint: no]",
+                )
+
+    def test_hud_graph_on_only_when_enabled_and_populated(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                empty = memory_mod.memory_hud({"use_graph": True})
+                self.assertFalse(empty.graph_on)
+                self.assertFalse((root / "graph_nodes.jsonl").exists())
+                memory_mod.add_learning("x", key="x", cfg={"use_graph": True})
+                on = memory_mod.memory_hud({"use_graph": True})
+                off = memory_mod.memory_hud({"use_graph": False})
+                self.assertTrue(on.graph_on)
+                self.assertFalse(off.graph_on)
+
+    def test_recent_checkpoint_respects_336h(self):
+        import os
+        import time
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                path = memory_mod.save_checkpoint("fresh", "body")
+                self.assertIsNotNone(memory_mod.recent_checkpoint())
+                hud = memory_mod.memory_hud({})
+                self.assertTrue(hud.checkpoint)
+                self.assertIn("checkpoint: yes", hud.line())
+                old = time.time() - (memory_mod.CHECKPOINT_MAX_AGE_H + 1) * 3600
+                os.utime(path, (old, old))
+                self.assertIsNone(memory_mod.recent_checkpoint())
+                self.assertFalse(memory_mod.memory_hud({}).checkpoint)
+
+    def test_get_learnings_limit_none_returns_all(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                for i in range(25):
+                    memory_mod.add_learning(f"row {i}", key=f"row-{i}", confidence=9)
+                self.assertEqual(len(memory_mod.get_learnings()), 20)
+                self.assertEqual(len(memory_mod.get_learnings(limit=None)), 25)
+                self.assertEqual(len(memory_mod.get_decisions(limit=None)), 0)
+
+    def test_search_memory_includes_keys(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.add_learning("use uv for installs", key="uv-install")
+                text = memory_mod.search_memory("install")
+                self.assertIn("[uv-install]", text)
+                self.assertIn(memory_mod.format_learning_line(
+                    memory_mod.get_learnings(query="install")[0]
+                ), text)
+
+    def test_dump_context_block_empty_and_fenced(self):
+        from unittest.mock import patch
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                self.assertEqual(
+                    memory_mod.dump_context_block({}),
+                    memory_mod.MSG_CONTEXT_EMPTY,
+                )
+                memory_mod.add_learning("keep keys visible", key="visible-key")
+                dumped = memory_mod.dump_context_block({})
+                self.assertEqual(dumped, memory_mod.context_block({}))
+                self.assertIn("<<<untrusted-memory>>>", dumped)
+                self.assertIn("[visible-key]", dumped)
 
 
 if __name__ == "__main__":

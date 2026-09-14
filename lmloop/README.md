@@ -81,6 +81,9 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | Command | What it does | Read / write |
 |---------|--------------|--------------|
 | `lmloop memory [query]` | Peek **learnings** — curated tips (patterns, pitfalls, prefs) in `learnings.jsonl`. Deduped by key; confidence decays over time. | Peek |
+| `lmloop memory list` | Top 5 active learnings (type, key, confidence, insight). | Peek |
+| `lmloop memory decisions` | Top 3 active decisions (ID, decision, rationale). | Peek |
+| `lmloop memory dump` | Exact `context_block` injected into the system prompt (debug). | Peek |
 | `lmloop memory graph` | Peek **knowledge graph** stats (`use_graph` must be true). | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
 | `lmloop decisions` | Peek **decisions** — durable choices with rationale in `decisions.jsonl` (can be superseded). | Peek |
@@ -89,7 +92,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 
 In the REPL:
 
-- **Peek:** `/memory`, `/decisions`, `/history`, `/context` (memory injected into the system prompt). Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle.
+- **Peek:** `/memory` (or `/memory list`) for top learnings, `/memory decisions`, `/memory dump` (injected context), `/decisions`, `/history`. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
 - **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
@@ -113,14 +116,14 @@ Inside the REPL:
 | `/checkpoints [n]` | list saved checkpoints (global `#` matches `/restore`) |
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
-| `/context` | show memory injected into the system prompt |
+| `/context` | alias for `/memory dump` — show memory injected into the system prompt |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
-| `/memory [query \| mine [n] \| graph \| reconcile]` | peek learnings; mine this session (or last n prior files); when `use_graph`, show graph stats or reconcile contradictions |
+| `/memory [list \| decisions \| graph \| dump \| query \| mine [n] \| reconcile]` | peek top learnings; compact decisions; dump injected context; mine this session (or last n prior files); when `use_graph`, show graph stats or reconcile contradictions |
 | `/model <name>` | switch model, or list models with no argument |
-| `/stats` | show token usage and session activity |
+| `/stats` | show token usage, session activity, and the memory HUD (learnings, decisions, graph, checkpoint) |
 | `/new` | reset conversation (memory context re-injected) |
 | `/transcript` | view rendered session in less (`q` to quit) |
 | `/copy [transcript]` | copy last assistant answer to the clipboard (plain text, no live bar); `transcript` copies the full session as markdown |
@@ -138,7 +141,7 @@ REPL UX (prompt_toolkit + rich):
 - **Type `/`** (or Tab) for slash commands with blurbs, e.g. `/ceo — strategy / plan review…`.
 - **Type `@`** for file paths. Project-relative names complete from the git-aware index (plus the current directory, including files git ignores). Prefixes `~/`, `/`, `./`, and `../` complete against the filesystem and show the resolved path in the menu. A unique directory (`@~/Downloads`) lists that directory’s contents — you do not have to type `/` to open it. `/` on a highlighted `@dir/` opens that listing and does not insert another slash. Names with spaces complete quoted (`@"Module 2.docx"`) and also resolve unquoted on submit when the file exists (`@~/Downloads/Module 2 Team.docx`). Typed `@path` tokens (including `~/…` and spaces) are colored in the input; duplicate slashes from completion (`@~//Downloads//file`) are collapsed. On every turn submit (freeform, `/skill`, `/name`, `/continue`, …), existing `@path` refs (`~/…`, absolute, `./`, `../`, quoted or unquoted paths with spaces, or current-dir relative) append a “Referenced files” block that lists **token → resolved path**. PDF, Office (`.docx`/`.xlsx`/`.pptx`), zip, and audio attachments inline extracted text in the message so the model does not need to `read_file` first. The model may still `read_file` / `list_dir` those attached paths **in place** this turn even if they sit outside the workspace — it must not copy them into the project first. Zip `@path`s list archive members. Missing tokens print `[no file at @…]` and are skipped. Image `@path`s are attached as native vision input when the loaded model is a VLM (`vision: auto` in config). Writing an attached outside path, or `cp`/`unzip` of an outside path into the workspace, asks for confirmation.
 - **Ctrl-C** dismisses an open `/` or `@` completion menu first; with no menu, once shows “Ctrl-C again to exit”, twice exits. Ctrl-D exits immediately.
-- **Post-turn footer** shows a context bar, token breakdown, rounds, and tools.
+- **Post-turn footer** shows a context bar, token breakdown, rounds, tools, then a memory HUD `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
 - **Colors** for banners/tools when stdout is a TTY; disable with `NO_COLOR=1` or `lmloop config set color false`.
 - **Streaming** is on by default (SSE). Tokens appear live as markdown (`rich.Live`); a spinner shows until the first token. Disable with `lmloop config set stream false`.
 - **Context window** is auto-detected from LM Studio (`/api/v0/models`); override with `lmloop config set context_length 8192`.
@@ -154,12 +157,13 @@ REPL UX (prompt_toolkit + rich):
 └─────┬──────┘        tool_calls                 └───────────────┘
       │ runs tools locally, feeds results back (multi-round loop)
       ▼
- shell · read/write file · list_dir · search (rg) · web_search · fetch_url
- current_time · remember · log_decision · recall_memory
+ shell · read/write/update/move/delete file · list_dir · find_files · search (rg)
+ web_search · fetch_url · current_time · remember · log_decision · recall_memory
  (ToolDef registry + commands.py + status.py as single sources of truth)
       │
       ▼
  ~/.lmloop/projects/<slug>/          (slug = git remote or dir name)
+ ├── trash/<stamp>/…     pre-image backups before overwrite/edit/move/delete (14d)
  ├── learnings.jsonl     append-only; latest-wins dedup; confidence decay
  ├── decisions.jsonl     event-sourced; supersede retires old decisions
  ├── sessions/*.jsonl    full transcript history
@@ -187,8 +191,17 @@ Design choices, and why:
   `lmloop memory mine` mines past transcripts. Noisy memory is worse than none.
 - **Safety gates in code, not just prompt.** Destructive shell patterns
   (rm -rf, sudo, force-push, DROP TABLE…) require a y/n from you regardless of
-  what the model wants. Pipe/redirection confirms are off by default (set
-  `confirm_shell_syntax true` to enable). Web content is fenced as untrusted data.
+  what the model wants, and so do overwriting, moving, or deleting an existing
+  file (each is backed up to `trash/` first). Pipe/redirection confirms are off
+  by default (set `confirm_shell_syntax true` to enable). Web content is fenced
+  as untrusted data.
+- **Surgical edits, not rewrites.** `update_file` replaces an exact snippet and
+  returns a diff (echoed in the REPL); `write_file` only creates files and asks
+  before overwriting. Local models no longer destroy a file by emitting half of it.
+- **Autonomy without losing the gate.** `/until` and `/graph` auto-approve only
+  the recoverable tier (backed-up file changes inside the workspace) and collect
+  irreversible requests to one y/N at the end of the maker step — the run is not
+  interrupted mid-thought, and nothing irreversible happens without you.
 
 ## Lineage
 
@@ -237,6 +250,7 @@ zsh completion for `config set` is generated from these keys.
 | `confirm_shell` | `true` | Master switch: `false` disables **all** shell confirms |
 | `confirm_destructive` | `true` | y/N for rm -rf, sudo, DROP TABLE, force-push, … |
 | `confirm_shell_syntax` | `false` | y/N for pipes/redirection; off to avoid fatigue |
+| `autonomous_gates` | `files` | Gates inside `until` / `graph` runs. `files`: auto-approve backed-up in-workspace overwrite/edit/move/delete, ask once per maker step for the rest. `none`: ask for everything. `all`: never ask (unattended only). |
 | `shell_timeout_s` | `120` | `run_shell` timeout |
 | `web_timeout_s` | `30` | `web_search` / `fetch_url` timeout |
 | `max_tool_output` | `12000` | Truncate tool results (chars) |
@@ -260,6 +274,9 @@ zsh completion for `config set` is generated from these keys.
 | Zsh completion missing | Ensure `lmloop` is on `PATH`, then re-source `~/.zshrc` (or run `lmloop completion zsh`) |
 | `lmloop --skill …` fails | `--skill` was replaced by the subcommand: `lmloop skill <name> [task]` |
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
+| `DENIED: the user declined to overwrite …` | `write_file` on an existing file asks first. Say `y`, or let the model use `update_file` (the intended path for edits). |
+| A file was overwritten or deleted by mistake | The tool result and the dim REPL line cite the backup under `~/.lmloop/projects/<slug>/trash/<stamp>/`. Copy it back (or ask the model to `move_file` it back). Backups are pruned after 14 days. |
+| `/until` keeps asking y/N | Recoverable file ops auto-approve by default; the ask is for destructive shell or outside-workspace writes, once per maker step. `lmloop config set autonomous_gates all` silences it for unattended runs; `none` asks for everything. |
 | Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
 | "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes, unless a long draft is already on screen (`model stopped without finishing`). |
@@ -268,12 +285,19 @@ zsh completion for `config set` is generated from these keys.
 
 ## Safety
 
-File tools (`read_file`, `write_file`, `list_dir`, `search_files`) are constrained
+File tools (`read_file`, `write_file`, `update_file`, `move_file`, `delete_file`,
+`list_dir`, `find_files`, `search_files`) are constrained
 to the workspace directory captured at session start. Relative paths are resolved
-against that directory (not `$HOME`); the ⚙ tool line shows the resolved path.
+against that directory (not `$HOME`); the ⚙ tool line shows the resolved path(s).
 Paths the user `@`-attached this turn are readable even outside the workspace;
 read them in place (zips list members). Writes to those outside paths, and
 copy/extract of outside files into the workspace, require confirmation.
+Overwriting, moving, or deleting an existing workspace file asks y/N and first
+copies the file to `~/.lmloop/projects/<slug>/trash/<stamp>/<path>`; `update_file`
+(exact-snippet edit, returns a diff) backs up too but does not ask. In `/until`
+and `/graph` runs those backed-up file ops auto-approve, while destructive shell
+and outside-workspace writes are denied during the step and offered as one y/N
+afterwards (`autonomous_gates`).
 Images from `@` / `read_file` attach as vision
 input when `vision` is `auto` (LM Studio VLM flag) or `true`.
 Shell commands without pipes

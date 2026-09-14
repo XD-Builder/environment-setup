@@ -14,6 +14,7 @@ import re
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,11 @@ LEARNING_TYPES = ("pattern", "pitfall", "preference", "architecture", "tool", "o
 MIN_TERM_LEN = 3
 DECAY_DAYS = 30.0
 CHECKPOINT_MAX_AGE_H = 24 * 14
+MEMORY_LIST_LIMIT = 5
+MEMORY_DECISIONS_LIMIT = 3
+MSG_CONTEXT_EMPTY = "(no learnings, decisions, or recent checkpoint in context)"
+MSG_NO_LEARNINGS = "(no learnings yet — run tasks, then /memory mine)"
+MSG_NO_DECISIONS = "(no decisions logged yet)"
 _ACTIVE_SESSION: "Path | None" = None
 _JSONL_WARNED: "set[str]" = set()
 _MEMORY_FENCE_PREFIX = (
@@ -120,8 +126,29 @@ def _query_terms(query: str) -> "list[str]":
     return [t for t in re.split(r"\W+", (query or "").lower()) if len(t) >= MIN_TERM_LEN]
 
 
-def get_learnings(query: str = "", limit: int = 20, slug: "str | None" = None) -> "list[dict]":
-    """Deduped (latest row per key wins), decayed, optionally keyword-filtered."""
+def format_learning_line(row: dict) -> str:
+    """Peek/search line: key, type, confidence, insight."""
+    return f"- [{row['key']}] ({row['type']}, {row['confidence']}/10) {row['insight']}"
+
+
+def format_decision_line(row: dict, *, date: bool = False) -> str:
+    """Peek line: ID, optional date, decision, rationale."""
+    parts = [f"- [{row['id']}]"]
+    if date and row.get("date"):
+        parts.append(row["date"][:10])
+    parts.append(row["decision"])
+    line = " ".join(parts)
+    if row.get("rationale"):
+        line += f"  (why: {row['rationale']})"
+    return line
+
+
+def get_learnings(query: str = "", limit: "int | None" = 20,
+                  slug: "str | None" = None) -> "list[dict]":
+    """Deduped (latest row per key wins), decayed, optionally keyword-filtered.
+
+    ``limit=None`` returns the full active set.
+    """
     rows = read_jsonl(learnings_file(slug))
     by_key: "dict[str, dict]" = {}
     for row in rows:  # file order == chronological, so later rows overwrite
@@ -137,7 +164,7 @@ def get_learnings(query: str = "", limit: int = 20, slug: "str | None" = None) -
         items.sort(key=lambda r: (-score(r), -_effective_confidence(r)))
     else:
         items.sort(key=lambda r: -_effective_confidence(r))
-    return items[:limit]
+    return items if limit is None else items[:limit]
 
 
 def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10,
@@ -160,11 +187,9 @@ def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10
     decisions = decisions[:decision_limit]
     out = []
     if learnings:
-        out.append("Learnings:\n" + "\n".join(
-            f"- ({r['type']}, {r['confidence']}/10) {r['insight']}" for r in learnings))
+        out.append("Learnings:\n" + "\n".join(format_learning_line(r) for r in learnings))
     if decisions:
-        out.append("Decisions:\n" + "\n".join(
-            f"- [{d['id']}] {d['decision']}" for d in decisions))
+        out.append("Decisions:\n" + "\n".join(format_decision_line(d) for d in decisions))
     return "\n\n".join(out) or "(no memory matches)"
 
 
@@ -186,11 +211,17 @@ def add_decision(decision: str, rationale: str = "", supersedes: str = "",
     return row
 
 
-def get_decisions(limit: int = 20, slug: "str | None" = None) -> "list[dict]":
-    """Active set: decide/supersede events not retired by a later supersede."""
+def get_decisions(limit: "int | None" = 20, slug: "str | None" = None) -> "list[dict]":
+    """Active set: decide/supersede events not retired by a later supersede.
+
+    ``limit=None`` returns the full active set (file order). A positive limit
+    returns the most recent N.
+    """
     rows = read_jsonl(decisions_file(slug))
     retired = {r["supersedes"] for r in rows if r.get("supersedes")}
     active = [r for r in rows if r.get("id") not in retired and r.get("decision")]
+    if limit is None:
+        return active
     return active[-limit:]
 
 
@@ -325,6 +356,20 @@ def latest_checkpoint(slug: "str | None" = None) -> "Path | None":
     return files[-1] if files else None
 
 
+def checkpoint_age_h(path: Path) -> float:
+    return (time.time() - path.stat().st_mtime) / 3600
+
+
+def recent_checkpoint(slug: "str | None" = None) -> "Path | None":
+    """Latest checkpoint if it is younger than ``CHECKPOINT_MAX_AGE_H`` (336h)."""
+    cp = latest_checkpoint(slug=slug)
+    if cp is None:
+        return None
+    if checkpoint_age_h(cp) < CHECKPOINT_MAX_AGE_H:
+        return cp
+    return None
+
+
 def list_checkpoints(limit: int = 15, slug: "str | None" = None) -> "list[Path]":
     if limit <= 0:
         return []
@@ -402,6 +447,46 @@ def set_active_session(path: "Path | None") -> "Path | None":
 
 # ---------------------------------------------------------------- context recovery
 
+@dataclass(frozen=True)
+class MemoryHud:
+    """Compact REPL snapshot of project memory (not the context-budget cap)."""
+    learnings: int
+    decisions: int
+    graph_on: bool
+    checkpoint: bool
+
+    def line(self) -> str:
+        learn = "learning" if self.learnings == 1 else "learnings"
+        decide = "decision" if self.decisions == 1 else "decisions"
+        graph = "on" if self.graph_on else "off"
+        check = "yes" if self.checkpoint else "no"
+        return (
+            f"[Mem: {self.learnings} {learn} | {self.decisions} {decide} | "
+            f"graph: {graph} | checkpoint: {check}]"
+        )
+
+
+def _graph_populated(slug: "str | None" = None) -> bool:
+    """True when live graph nodes or edges already exist. Does not create files."""
+    kg = _kg(slug)
+    return bool(kg.nodes() or kg.edges())
+
+
+def memory_hud(cfg: dict, slug: "str | None" = None) -> MemoryHud:
+    """Counts and flags for the per-turn HUD and ``/stats``."""
+    return MemoryHud(
+        learnings=len(get_learnings(limit=None, slug=slug)),
+        decisions=len(get_decisions(limit=None, slug=slug)),
+        graph_on=bool(cfg.get("use_graph")) and _graph_populated(slug),
+        checkpoint=recent_checkpoint(slug=slug) is not None,
+    )
+
+
+def dump_context_block(cfg: dict, slug: "str | None" = None) -> str:
+    """Exact injected ``context_block``, or a note when nothing is injected."""
+    return context_block(cfg, slug=slug) or MSG_CONTEXT_EMPTY
+
+
 def context_block(cfg: dict, slug: "str | None" = None) -> str:
     """Bounded memory snapshot injected into the system prompt at session start."""
     from .knowledge_graph import _node_id
@@ -413,10 +498,7 @@ def context_block(cfg: dict, slug: "str | None" = None) -> str:
     if decisions:
         lines = []
         for d in decisions:
-            line = f"- [{d['id']}] {d['decision']}"
-            if d.get("rationale"):
-                line += f" (why: {d['rationale']})"
-            lines.append(line)
+            lines.append(format_decision_line(d))
             if kg.enabled(cfg):
                 lines.extend(kg.neighbor_lines(_node_id("decision", d["id"])))
         parts.append(_fence_memory(
@@ -427,17 +509,16 @@ def context_block(cfg: dict, slug: "str | None" = None) -> str:
     if learnings:
         lines = []
         for r in learnings:
-            lines.append(f"- ({r['type']}, {r['confidence']}/10) {r['insight']}")
+            lines.append(format_learning_line(r))
             if kg.enabled(cfg):
                 lines.extend(kg.neighbor_lines(_node_id("learning", r["key"])))
         parts.append(_fence_memory(
             "Prior learnings from this project:\n" + "\n".join(lines)
         ))
-    cp = latest_checkpoint(slug=slug)
+    cp = recent_checkpoint(slug=slug)
     if cp:
-        age_h = (time.time() - cp.stat().st_mtime) / 3600
-        if age_h < CHECKPOINT_MAX_AGE_H:
-            parts.append(_fence_memory(
-                f"Most recent checkpoint ({age_h:.0f}h ago):\n{cp.read_text()[:2000]}"
-            ))
+        age_h = checkpoint_age_h(cp)
+        parts.append(_fence_memory(
+            f"Most recent checkpoint ({age_h:.0f}h ago):\n{cp.read_text()[:2000]}"
+        ))
     return "\n\n".join(parts)

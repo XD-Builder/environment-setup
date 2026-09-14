@@ -145,5 +145,24 @@ class ClipboardTests(unittest.TestCase):
             self.assertEqual(write_clipboard("hello"), "denied")
 
 
+class StatsDetailHudTests(unittest.TestCase):
+    def test_stats_detail_includes_memory_hud(self):
+        from lmloop.memory import MemoryHud
+        from lmloop.ui import fresh_stats
+
+        hud = MemoryHud(learnings=3, decisions=1, graph_on=True, checkpoint=True)
+        console = Console(color=False)
+        text = console.stats_detail(
+            fresh_stats(), "m", [], Path("/tmp/s.jsonl"), hud,
+        )
+        self.assertIn("3 learnings, 1 active decisions", text)
+        self.assertIn("graph", text)
+        self.assertIn("checkpoint", text)
+        self.assertIn(
+            "[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]",
+            text,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

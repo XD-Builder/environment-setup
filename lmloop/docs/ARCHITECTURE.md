@@ -122,7 +122,7 @@ Key properties:
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
 - **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). Live refreshes on new tokens only (`auto_refresh` off) and closes when `tool_calls` start, so a long `write_file` argument stream cannot redraw the same preamble into scrollback. A spinner shows until the first token, and again while tool arguments stream. Set `stream: false` for a non-SSE full reply. Within one SSE body, `stream.py` halt-loops repeating thinking (including paraphrases) and exact-repeat content (`_halted`). A halt with no tools is unfinished: gather nudges only when the model has not already produced a draft (empty CoT hang or last-line "let me…"); a halted long answer is kept. Across rounds, `act()` is gather/answer: tools stay on for up to `max_rounds` gather steps; a repeated tool set (exact name+args already run this turn) or that budget forces one tools-off answer. Eval threads use `eval_max_rounds` (default 8) instead of `max_rounds`.
-- **Concurrent reads.** Consecutive side-effect-free tools (`read_file`, `list_dir`, `search_files`, `web_search`, `fetch_url`, `recall_memory`, `current_time`) share a thread pool. `run_shell`, `write_file`, `remember`, `log_decision`, and `graph_add_edge` stay serial and act as barriers. Results stay in `tool_call` order.
+- **Concurrent reads.** Consecutive side-effect-free tools (`read_file`, `list_dir`, `find_files`, `search_files`, `web_search`, `fetch_url`, `recall_memory`, `current_time`) share a thread pool. `run_shell`, `write_file`, `update_file`, `move_file`, `delete_file`, `remember`, `log_decision`, and `graph_add_edge` stay serial and act as barriers. Results stay in `tool_call` order.
 - **`/save` is tools-off.** `act(no_tools=True)` skips `build_tools` so a checkpoint summary cannot emit tool calls.
 
 ### Who calls `act()`
@@ -189,7 +189,7 @@ until goal:
 ```
 
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
-- Eval cannot `write_file`, `remember`, `log_decision`, or `graph_add_edge`. It may `run_shell` to verify.
+- Eval cannot `write_file`, `update_file`, `move_file`, `delete_file`, `remember`, `log_decision`, or `graph_add_edge` (`tools.READONLY_OMIT`). It may `run_shell` to verify; a destructive shell request there is simply `DENIED` under the until/graph `GatePolicy` and never re-asked.
 - `--check` fail (nonzero exit) goes straight back to maker — no eval turn. Check `DENIED:` is `blocked` → gate.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
@@ -236,9 +236,13 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 |------|---------|--------|
 | `run_shell` | Execute shell commands | Destructive patterns (rm -rf, sudo, DROP TABLE…) require user y/N confirmation. `cp`/`mv`/`unzip` (extract) of a path outside the workspace also confirms. Pipe/redirection syntax is off by default (`confirm_shell_syntax`); set that key to enable. |
 | `read_file` | Read file with line numbers; PDF/Office extract as text (and `@path` of those types inlines the extract); zip lists members in place; images attach as vision parts when a VLM is loaded; audio transcribes via whisper CLI | Scoped to the workspace directory captured at session start, plus paths the user attached with `@` on this turn. Relative `path` resolves there; `~` and absolute paths work. The ⚙ line and result header show the resolved path. Max 400 lines per call. |
-| `write_file` | Overwrite file | Scoped to the workspace directory captured at session start. `@` attachments outside the workspace may be written only after y/N confirmation. Creates parent dirs. Result cites the resolved path. |
+| `write_file` | Create a file | Scoped to the workspace directory captured at session start. Overwriting an **existing** file asks y/N (`overwrite <path>`; rides `confirm_destructive`) and backs the old content up first. `@` attachments outside the workspace may be written only after y/N confirmation. Creates parent dirs. Result cites the resolved path (and backup). |
+| `update_file` | Surgical edit: replace an exact `old_string` with `new_string` | Same scope as `write_file`. Must match exactly once unless `replace_all`; 0 or many matches return an `ERROR:` naming the line numbers. Backs up first. Result is a header plus a compact unified diff, which the REPL echoes as a dim hint. |
+| `move_file` | Rename/move a single file inside the workspace | Always asks y/N (`move_file a -> b`). Destination must not exist; directories refused. Backs up first. |
+| `delete_file` | Delete a single file inside the workspace | Always asks y/N (`delete_file <path>`). Directories refused (use gated `rm -r`). Backs up first. |
 | `list_dir` | List directory entries | Scoped to the session workspace, plus directories the user attached with `@` this turn. Includes dotfiles. |
-| `search_files` | Regex search (ripgrep or grep fallback) | Scoped to the session workspace. Max 50 matches. |
+| `find_files` | Find files by glob (`*.py`, `src/*.ts`) or case-insensitive path substring | Git-aware via `files_index.list_project_paths` (honours `.gitignore`). Scoped to the workspace. Cap 200. |
+| `search_files` | Regex search (ripgrep or grep fallback) with optional `glob`, `case_insensitive`, `context` (0–5), `fixed` | Scoped to the session workspace. Max 50 matches. Flags map 1:1 onto `rg` and `grep`. |
 | `web_search` | `ddgs` metasearch (no key), then DuckDuckGo HTML/Lite, Instant Answer, Wikipedia | Optional `ddgs` dep. Content fenced as untrusted. All backends failing → ERROR (do not paraphrase-retry). |
 | `fetch_url` | HTTP(S) fetch: HTML→text + links; PDF/Office extract; images attach on VLMs | Content fenced as untrusted. Returns final URL + HTTP status. TLS verified. Max 1MB download, ~10KB returned. |
 | `remember` | Save a learning to project memory | Writes `~/.lmloop/projects/<slug>/learnings.jsonl`; tool result cites that path |
@@ -247,9 +251,21 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | `current_time` | UTC/local now plus 7/28/90-day lookback dates | No network. OS clock. For relative windows when Clock is stale. |
 | `graph_add_edge` | Record a relationship between existing memory-graph nodes | Only registered when `use_graph` is true. Requires a `note`. |
 
-Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
+Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl; `int_fields` / `bool_fields` coerce the strings local models send). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
 
 Tool output is truncated to 12,000 chars to protect the context window.
+
+### Confirm gates and autonomy
+
+Every gate is one call, `confirm_gate(command: str) -> bool`. The string is either a shell command or `<prefix><detail>` (`overwrite <p>`, `update_file <p>`, `move_file a -> b`, `delete_file <p>`, `write_file <p>` for outside-workspace writes). `tools.confirm_label()` owns the human label and `tools.gate_tier()` owns the recoverability tier for those prefixes; `ui.make_confirm_gate` only prints and asks.
+
+- **Pre-image backups.** Before an existing in-workspace file is overwritten, edited, moved, or deleted, `tools.backup_file` copies it to `~/.lmloop/projects/<slug>/trash/<process-stamp>/<relative path>` (pruned after 14 days). The tool result cites the backup path; the REPL echoes it via `tools.user_notice`.
+- **Interactive turns** use the y/N gate immediately; the user is present.
+- **`/until` and `/graph`** wrap the same gate in `tools.GatePolicy` (`tools.autonomous_gate`, config `autonomous_gates`):
+  - `files` (default): *recoverable* gates (overwrite / update / move / delete inside the workspace, all backed up) auto-approve with one dim `[auto-approved: …]` line. *Irreversible* gates (destructive shell, writes outside the workspace, copy/extract from outside) return `False` during the act — the tool returns `DENIED:` and the model is told not to work around it — and are recorded. After the maker step, `loop.boundary_approval` asks once (`ask_gate`); on yes the run appends an `approve` row (commands as JSON) and re-runs the maker with `Approved for this step: …` in the prompt, and the policy passes exactly those commands for that one step (approvals expire at the next boundary, so a later eval or node cannot reuse the yes). On no, or with no `ask_gate` (piped CLI), the run proceeds to check/eval as before. Denials from read-only evals and `--check` commands are dropped, never re-asked.
+  - `none`: every gate defers to the interactive y/N as before.
+  - `all`: never asks (unattended runs; explicit opt-in).
+  - `confirm_shell: false` still disables all gates everywhere.
 
 ---
 
@@ -316,7 +332,8 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 - Nodes are typed (`learning`, `decision`, `session`, `file`, `skill`, `concept`). Latest row per `(type, key)` wins. Learning/concept nodes reuse confidence decay; others stay live.
 - Edges are typed (`leads_to`, `contradicts`, `in_session`, `references`, `uses_skill`, `related_to`, `supersedes`). Endpoints that decayed away are dropped at read time.
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
-- `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`. `/memory graph` prints counts and an adjacency list. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
+- `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.
+- `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected `context_block`. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
 
 ---
 
@@ -348,7 +365,7 @@ The interactive mode uses `prompt_toolkit` for:
 - **Double Ctrl-C to exit** (first dismisses completion menu, second exits).
 - **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted or unquoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Duplicate slashes in the typed token are collapsed. Missing tokens warn; existing ones are readable this turn **in place** even outside the workspace. PDF/Office/zip/audio attachments inline extracted text in the user message. Copy/extract of those files into the workspace, and writes to them, require confirmation.
 
-Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable.
+Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/memory list`, `/memory decisions`, `/memory graph`, and `/memory dump` inspect hidden state without a model turn. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable. After each agent turn the REPL prints a memory HUD (`memory.MemoryHud.line()`), for example `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`: active learning/decision counts, whether `use_graph` is on and populated, and whether a checkpoint newer than 336 hours exists.
 
 Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input()` without completions.
 
@@ -373,6 +390,9 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop skills new <name> [brief]` | AI-draft a skill, review, then save |
 | `lmloop retro [N]` | Alias for `memory mine` |
 | `lmloop memory [query]` | Peek curated learnings |
+| `lmloop memory list` | Top 5 active learnings |
+| `lmloop memory decisions` | Top 3 active decisions |
+| `lmloop memory dump` | Injected `context_block` (debug) |
 | `lmloop memory mine [N]` | Mine last N sessions into learnings |
 | `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |
 | `lmloop memory reconcile` | Review `contradicts` clusters (requires `use_graph`) |
@@ -390,7 +410,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 2. **File-only memory, computed views.** Append-only JSONL means no corruption, no migrations. You can `cat`, `grep`, or hand-edit every piece of agent memory.
 3. **Bounded context injection.** Local models have small contexts — the budget is respected. Only top-N learnings and active decisions injected at start; model pulls more on demand.
 4. **Self-learning is curated, not automatic.** The `remember` tool has a quality bar (enforced by `skills/retro.md`). Noisy memory is worse than none.
-5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Copy/extract of paths outside the workspace also confirms. Pipe/redirection confirms are opt-in (`confirm_shell_syntax`). Web content is fenced as untrusted data.
+5. **Safety gates in code, not just prompt.** Destructive shell patterns require user confirmation regardless of what the model wants. Copy/extract of paths outside the workspace also confirms, as do overwriting, moving, and deleting existing files (each backed up first). Pipe/redirection confirms are opt-in (`confirm_shell_syntax`). Autonomous until/graph runs auto-approve only the recoverable tier and batch the rest to the cycle boundary (`autonomous_gates`). Web content is fenced as untrusted data.
 6. **Skills as markdown playbooks.** Numbered steps, English conditionals, explicit report format. User skills override packaged ones with the same name.
 
 ---

@@ -63,6 +63,9 @@ class CliRoutingTests(unittest.TestCase):
         self.assertIn("#compdef lmloop", script)
         self.assertIn("_lmloop", script)
         self.assertIn("skills names", script)
+        self.assertIn("list", script)
+        self.assertIn("dump", script)
+        self.assertIn("decisions", script)
 
     def test_completion_bad_shell(self):
         err = io.StringIO()
@@ -148,6 +151,11 @@ class AutoSlashTests(unittest.TestCase):
         self.assertNotIn("/graphs", help_text)
         self.assertIn("/memory", help_text)
         self.assertIn("mine", help_text)
+        self.assertIn("dump", help_text)
+        self.assertIn("list", help_text)
+        mem = next(c for c in cmds if c.name == "/memory")
+        self.assertIn("list", mem.arg_choices)
+        self.assertIn("dump", mem.arg_choices)
         self.assertNotIn("/retro", help_text)
         self.assertIn("/copy", names)
         self.assertIn("/copy", help_text)
@@ -1118,6 +1126,152 @@ class RegistryTests(unittest.TestCase):
         script = out.getvalue()
         for name in cli_subcommand_names():
             self.assertIn(f"'{name}:", script)
+
+
+class MemoryInspectTests(unittest.TestCase):
+    def _console(self):
+        return Console(color=False)
+
+    def test_cli_memory_list_and_decisions_and_dump(self):
+        from lmloop.cli import cmd_memory
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.memory.project_dir", return_value=root):
+                for i in range(6):
+                    memory_mod.add_learning(f"tip {i}", key=f"tip-{i}", confidence=9 - i)
+                memory_mod.add_decision("ship stdlib", rationale="no extra deps")
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    self.assertEqual(cmd_memory({}, ["list"], self._console()), 0)
+                listed = [ln for ln in buf.getvalue().splitlines() if ln.startswith("- [")]
+                self.assertEqual(len(listed), 5)
+                self.assertIn("tip-0", buf.getvalue())
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    self.assertEqual(cmd_memory({}, ["decisions"], self._console()), 0)
+                self.assertIn("ship stdlib", buf.getvalue())
+                self.assertIn("no extra deps", buf.getvalue())
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    self.assertEqual(cmd_memory({}, ["dump"], self._console()), 0)
+                self.assertIn("<<<untrusted-memory>>>", buf.getvalue())
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    self.assertEqual(cmd_memory({"use_graph": False}, ["graph"], self._console()), 0)
+                self.assertIn("use_graph true", buf.getvalue())
+
+    def test_repl_memory_list_is_not_a_query(self):
+        from lmloop.repl import SessionState, _cmd_memory
+        from lmloop import memory as memory_mod
+        from lmloop.ui import fresh_stats
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            with patch("lmloop.memory.project_dir", return_value=root):
+                memory_mod.add_learning("the list command", key="not-a-verb", confidence=9)
+                state = SessionState(
+                    cfg={},
+                    model="m",
+                    messages=[{"role": "system", "content": "s"}],
+                    session_log=log,
+                    stats=fresh_stats(),
+                    console=self._console(),
+                )
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    _cmd_memory(state, "list", lambda _: False)
+                out = buf.getvalue()
+                self.assertIn("[not-a-verb]", out)
+                self.assertNotIn("(no learnings", out)
+
+    def test_repl_stats_includes_hud(self):
+        from lmloop.repl import SessionState, _cmd_stats
+        from lmloop import memory as memory_mod
+        from lmloop.ui import fresh_stats
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            with patch("lmloop.memory.project_dir", return_value=root):
+                memory_mod.add_learning("keep it", key="keep")
+                state = SessionState(
+                    cfg={},
+                    model="m",
+                    messages=[{"role": "system", "content": "s"}],
+                    session_log=log,
+                    stats=fresh_stats(),
+                    console=self._console(),
+                )
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    _cmd_stats(state, "")
+                out = buf.getvalue()
+                self.assertIn(
+                    "[Mem: 1 learning | 0 decisions | graph: off | checkpoint: no]",
+                    out,
+                )
+                self.assertIn("graph", out)
+                self.assertIn("checkpoint", out)
+
+    def test_repl_context_aliases_dump(self):
+        from lmloop.repl import SessionState, _cmd_context, _cmd_memory_dump
+        from lmloop import memory as memory_mod
+        from lmloop.ui import fresh_stats
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            with patch("lmloop.memory.project_dir", return_value=root):
+                memory_mod.add_learning("keep", key="keep")
+                state = SessionState(
+                    cfg={},
+                    model="m",
+                    messages=[{"role": "system", "content": "s"}],
+                    session_log=log,
+                    stats=fresh_stats(),
+                    console=self._console(),
+                )
+                buf_dump = io.StringIO()
+                with redirect_stdout(buf_dump):
+                    _cmd_memory_dump(state)
+                buf_ctx = io.StringIO()
+                with redirect_stdout(buf_ctx):
+                    _cmd_context(state, "")
+                self.assertEqual(buf_dump.getvalue(), buf_ctx.getvalue())
+                self.assertIn("<<<untrusted-memory>>>", buf_ctx.getvalue())
+
+    def test_run_turn_prints_memory_hud(self):
+        from lmloop.repl import SessionState, _run_turn
+        from lmloop.ui import fresh_stats
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            state = SessionState(
+                cfg={},
+                model="m",
+                messages=[{"role": "system", "content": "s"}],
+                session_log=log,
+                stats=fresh_stats(),
+                console=self._console(),
+                workspace_root=root.resolve(),
+            )
+            with patch("lmloop.repl.agent.act", return_value=state.messages), \
+                 patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()) as out:
+                ok = _run_turn(state, "hello", lambda _: False)
+            self.assertTrue(ok)
+            self.assertIn(
+                "[Mem: 0 learnings | 0 decisions | graph: off | checkpoint: no]",
+                out.getvalue(),
+            )
 
 
 if __name__ == "__main__":

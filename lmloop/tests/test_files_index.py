@@ -20,6 +20,7 @@ from lmloop.files_index import (
 from lmloop.prompt import (
     LmloopCompleter,
     _at_slash_action,
+    _command_arg_choices,
     _current_token,
     _in_skill_arg,
     _lex_prompt_line,
@@ -373,6 +374,25 @@ class CompleterTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].text, "/ceo")
         self.assertEqual(matches[0].display_meta_text, "strategy review")
+
+    def test_memory_arg_choices_complete(self):
+        cmds = [
+            SlashCommand(
+                "/memory", "inspect", lambda *_: True,
+                arg_choices=("list", "decisions", "graph", "dump", "mine", "reconcile"),
+            ),
+        ]
+        c = LmloopCompleter(lambda: cmds)
+        docs = Document("/memory li", cursor_position=len("/memory li"))
+        matches = list(c.get_completions(docs, None))
+        texts = [m.text for m in matches]
+        self.assertIn("list", texts)
+        self.assertEqual(
+            _command_arg_choices("/memory d", "d", cmds),
+            ["list", "decisions", "graph", "dump", "mine", "reconcile"],
+        )
+        self.assertIsNone(_command_arg_choices("/memory list extra", "extra", cmds))
+        self.assertIsNone(_command_arg_choices("/memory", "/memory", cmds))
 
     def test_at_completions(self):
         with tempfile.TemporaryDirectory() as d:

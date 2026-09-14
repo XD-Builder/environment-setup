@@ -37,6 +37,7 @@ class SlashCommand:
     accepts_arg: bool = False
     exits: bool = False
     hidden: bool = False
+    arg_choices: tuple = ()
 
 
 @dataclass
@@ -206,6 +207,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
         )
         if footer:
             print(footer)
+        print(memory.memory_hud(state.cfg).line())
         return True
     except server.ServerError as e:
         memory.log_event(state.session_log, "system", f"error: {e}")
@@ -233,11 +235,10 @@ def _cmd_help(state: SessionState, _arg: str) -> bool:
 
 
 def _cmd_stats(state: SessionState, _arg: str) -> bool:
-    learnings = len(memory.get_learnings(limit=100))
-    decisions = len(memory.get_decisions(limit=100))
+    hud = memory.memory_hud(state.cfg)
     print(state.console.stats_detail(
         state.stats, state.model, state.messages, state.session_log,
-        learnings, decisions, state.context_limit, state.context_reserve,
+        hud, state.context_limit, state.context_reserve,
     ))
     return True
 
@@ -266,35 +267,70 @@ def _cmd_model(state: SessionState, arg: str) -> bool:
 
 def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
     parts = (arg or "").split(None, 1)
-    if parts and parts[0] == "mine":
+    verb = parts[0] if parts else "list"
+    if not parts or verb == "list":
+        return _cmd_memory_list(state)
+    if verb == "decisions":
+        return _cmd_memory_decisions(state)
+    if verb == "dump":
+        return _cmd_memory_dump(state)
+    if verb == "mine":
         rest = parts[1] if len(parts) > 1 else ""
         return _cmd_memory_mine(state, rest, confirm_gate)
-    if parts and parts[0] == "graph":
+    if verb == "graph":
         return _cmd_memory_graph(state)
-    if parts and parts[0] == "reconcile":
+    if verb == "reconcile":
         return _cmd_memory_reconcile(state, confirm_gate)
     rows = memory.get_learnings(query=arg, limit=30)
-    for r in rows:
-        state.console.info(
-            f"- [{r['key']}] ({r['type']}, {r['confidence']}/10) {r['insight']}"
-        )
-    if not rows:
-        state.console.info("(no learnings yet — run tasks, then /memory mine)")
+    _emit_rows(
+        state.console,
+        [memory.format_learning_line(r) for r in rows],
+        memory.MSG_NO_LEARNINGS,
+    )
+    return True
+
+
+def _emit_rows(console: Console, lines: list, empty: str) -> None:
+    if lines:
+        for line in lines:
+            console.info(line)
+        return
+    console.info(empty)
+
+
+def _cmd_memory_list(state: SessionState) -> bool:
+    rows = memory.get_learnings(limit=memory.MEMORY_LIST_LIMIT)
+    _emit_rows(
+        state.console,
+        [memory.format_learning_line(r) for r in rows],
+        memory.MSG_NO_LEARNINGS,
+    )
+    return True
+
+
+def _cmd_memory_decisions(state: SessionState) -> bool:
+    rows = memory.get_decisions(limit=memory.MEMORY_DECISIONS_LIMIT)
+    _emit_rows(
+        state.console,
+        [memory.format_decision_line(d) for d in rows],
+        memory.MSG_NO_DECISIONS,
+    )
+    return True
+
+
+def _cmd_memory_dump(state: SessionState) -> bool:
+    state.console.info(memory.dump_context_block(state.cfg))
     return True
 
 
 def _cmd_memory_graph(state: SessionState) -> bool:
-    if not state.cfg.get("use_graph"):
-        state.console.info("knowledge graph is off — `lmloop config set use_graph true`")
-        return True
-    knowledge_graph.ensure_graph(state.cfg)
-    state.console.info(knowledge_graph.graph_stats())
+    state.console.info(knowledge_graph.inspect_report(state.cfg))
     return True
 
 
 def _cmd_memory_reconcile(state: SessionState, confirm_gate) -> bool:
     if not state.cfg.get("use_graph"):
-        state.console.info("knowledge graph is off — `lmloop config set use_graph true`")
+        state.console.info(knowledge_graph.MSG_GRAPH_OFF)
         return True
     knowledge_graph.ensure_graph(state.cfg)
     cluster = knowledge_graph.contradiction_clusters()
@@ -611,14 +647,11 @@ def _cmd_checkpoints(state: SessionState, arg: str) -> bool:
 
 def _cmd_decisions(state: SessionState, _arg: str) -> bool:
     rows = memory.get_decisions(limit=30)
-    if not rows:
-        state.console.info("(no decisions logged yet)")
-        return True
-    for d in rows:
-        line = f"- [{d['id']}] {d['date'][:10]} {d['decision']}"
-        if d.get("rationale"):
-            line += f"  (why: {d['rationale']})"
-        state.console.info(line)
+    _emit_rows(
+        state.console,
+        [memory.format_decision_line(d, date=True) for d in rows],
+        memory.MSG_NO_DECISIONS,
+    )
     return True
 
 
@@ -900,12 +933,7 @@ def _cmd_continue(state: SessionState, arg: str, confirm_gate) -> bool:
 
 
 def _cmd_context(state: SessionState, _arg: str) -> bool:
-    block = memory.context_block(state.cfg)
-    if block:
-        state.console.info(block)
-    else:
-        state.console.info("(no learnings, decisions, or recent checkpoint in context)")
-    return True
+    return _cmd_memory_dump(state)
 
 
 def _cmd_transcript(state: SessionState, _arg: str) -> bool:
@@ -978,6 +1006,7 @@ def _build_slash_commands(confirm_gate) -> list:
         commands.append(SlashCommand(
             f"/{meta.name}", meta.desc, handler,
             arg_hint=meta.arg_hint, accepts_arg=meta.accepts_arg, exits=meta.exits,
+            arg_choices=meta.arg_choices,
         ))
     commands.append(SlashCommand(
         "/retro", "alias for /memory mine",
