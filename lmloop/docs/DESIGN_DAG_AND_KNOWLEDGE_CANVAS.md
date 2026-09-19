@@ -1,17 +1,18 @@
-# Design: DAG workflows, workflow mining, and the knowledge canvas
+# Design: Capacity-aware DAG workflows, flow mining, and the terminal knowledge canvas
 
 **Status:** proposed (nothing here is implemented)
 **Date:** 2026-09-19
-**Depends on:** `graph.py` (authored graphs), `knowledge_graph.py` (opt-in JSONL graph), `memory.py`
+**Depends on:** `graph.py` (authored graphs), `server.py` (model server probing), `knowledge_graph.py`, `memory.py`
 **Companion:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md)
 
-Three features, deliberately in dependency order:
+Four features, in dependency order:
 
-1. **DAG joins** — a node may wait on several predecessors. Sequential execution only.
-2. **Workflow mining** — deterministic statistics over run logs, rule-based improvement
-   proposals, optional LLM draft, human-approved save.
-3. **Knowledge canvas** — a 2D pannable canvas of project memory, served by a
-   loopback-only stdlib HTTP server, with a prompt_toolkit TUI over the same data layer.
+1. **Capacity model** — how many agents this machine's model server can actually serve.
+   A laptop running one local MoE gets **1**. A hosted endpoint gets a configurable cap.
+2. **DAG joins** — a node may wait on several predecessors.
+3. **Bounded parallelism** — fan-out only up to capacity, and only with real isolation.
+4. **Terminal knowledge canvas** — a 2D pannable map of project memory in the terminal.
+   No browser, no HTTP server, no port, no new dependency.
 
 ---
 
@@ -19,32 +20,109 @@ Three features, deliberately in dependency order:
 
 | # | Tempting shortcut | Consequence | Requirement |
 |---|---|---|---|
-| 1 | "DAG means parallel nodes" | Two makers in one workspace: lost updates, interleaved `git` index state, `trash/` stamped per-process, and `memory.py`'s documented **single-writer** JSONL assumption violated. Corruption is silent and only visible days later in `recall_memory` | **R-SEQ**: DAG describes *dependencies*; execution is topological and sequential. Parallelism is a separate, later design requiring one worktree + one container per branch |
-| 2 | Auto-run a mined workflow | The agent writes its own control flow and then executes it. Any mining bug becomes an autonomous action | **R-HUMAN**: proposals are files + a `y/N`, exactly like `skills new`. Nothing mined ever runs unreviewed |
-| 3 | Mine from 3 runs | Overfitting to noise; a proposal that encodes one bad night as policy | **R-N**: minimum sample (`propose_min_runs`, default 5 terminal runs) or the command prints stats and refuses to draft |
-| 4 | Let the LLM invent acceptance commands | Hallucinated `--check 'make verify'` where no such target exists; the gate silently errors to nonzero forever, or worse, to zero | **R-EXEC**: any command in a draft is dry-run validated (`command -v` / `--help` probe) and labeled `unverified` in the draft; the human approves |
-| 5 | Web UI on Flask/FastAPI | Transitive tree (`starlette`, `anyio`, `click`, `h11`, `pydantic`…) into a project whose loop is stdlib `urllib`. Each is a supply-chain surface for a local dev tool | **R-STDLIB**: `http.server` only, zero new runtime dependencies |
-| 6 | Bind `0.0.0.0` "so I can view it from my laptop" | Project memory — learnings, decisions, file paths, and whatever a transcript captured — served unauthenticated to the LAN, and to any coffee-shop network | **R-BIND**: loopback only; a non-loopback bind requires an explicit flag and prints a warning |
-| 7 | "It's localhost, it's safe" | Any web page you visit can `fetch('http://127.0.0.1:8765/api/graph')`, and DNS rebinding defeats naive origin checks | **R-ORIGIN**: `Host` header allowlist, `Origin` rejection, no CORS headers, `X-Frame-Options: DENY`, token-to-cookie exchange |
-| 8 | Token in the URL forever | Leaks into shell history, `ps` output, browser history, and any `Referer` | **R-TOKEN**: one-shot `?t=` exchanged for an `HttpOnly; SameSite=Strict` cookie, then 302 to a clean URL; `Referrer-Policy: no-referrer` |
-| 9 | Pull a graph library from a CDN | Breaks the "everything stays on your machine" promise, and a CDN request tells a third party a canvas was opened | **R-OFFLINE**: assets are files in the package; CSP forbids remote origins |
-| 10 | Render 5k nodes as DOM elements | Multi-second layout, unusable pan/zoom | **R-CAP**: server-side layout + node cap + viewport culling on a single `<canvas>` |
-| 11 | Serve session transcripts in the canvas | Transcripts are the most likely place for a pasted secret to sit | **R-MIN**: v1 serves learning/decision text and node metadata; session nodes expose path + timestamp only |
-| 12 | A long-lived UI daemon | lmloop is a process that exits; a forgotten server is an open port on a laptop for weeks | **R-IDLE**: idle shutdown, foreground process, Ctrl-C stops it |
-| 13 | Write edges from the canvas in v1 | A UI mutation path into append-only memory, without the confirm-gate discipline the tools have | v1 is read-only. Writes are a later design with the same gate story as `graph_add_edge` |
-| 14 | Add node/edge types freely | Old lmloop versions reading new JSONL must not crash | **R-ADD**: new types are additive to the existing frozensets; unknown types already fall through `_graph_node_live` as live |
+| 1 | "DAG means run the ready nodes in parallel" | Two makers in one workspace: lost updates, interleaved `git` index state, `trash/` stamped per process, and `memory.py`'s documented **single-writer** JSONL assumption violated. Corruption is silent and surfaces days later in `recall_memory` | **R-ISO**: parallelism requires isolation — read-only nodes, or one `git worktree` per branch. Default is sequential |
+| 2 | Fan out as wide as the DAG allows | A local server holding one `qwen3.6-A3B` instance has one KV budget. Two concurrent makers either queue (no gain, doubled latency variance, `timeout_s` risk) or force the server to split context, shrinking the window every agent's context bar was computed against | **R-CAP**: effective width = `min(server capacity, isolation capacity, ready nodes, per-graph cap)`; local default is 1 |
+| 3 | Hardcode a concurrency number | Correct on the author's machine only. A hosted endpoint tolerates 8; a laptop tolerates 1 | **R-AUTO**: `auto` resolves from the configured `base_url` and the server's own report, with a hard cap and an explicit override |
+| 4 | Assume a probe failure means "go wide" | An unreachable capability endpoint would silently license 8 concurrent agents against a laptop | **R-FLOOR**: every uncertainty resolves to 1 |
+| 5 | Ignore 429/503 under parallel load | A hosted endpoint rate-limits, every branch retries, and the run burns its step budget on backoff | **R-DECAY**: multiplicative decrease on rate limiting, floor 1, never re-widens inside an invocation |
+| 6 | Stream several agents to one TTY | Interleaved live markdown from three makers is unreadable and corrupts the live-region accounting in `display.py` | **R-TTY**: in parallel mode, children render one compact status line each; full output goes to their session logs |
+| 7 | Auto-merge parallel branches | Silent `git merge` resolution inside an unattended loop is data loss with extra steps | **R-MERGE**: attempt a clean merge; any conflict is `blocked` → HITL gate, never auto-resolved |
+| 8 | Let parallel children append to `learnings.jsonl` | Concurrent appends break the single-writer invariant that makes this memory system safe to `cat` | **R-SHARD**: children write per-branch shards; the parent merges at the join |
+| 9 | Auto-run a mined workflow | The agent writes its own control flow and executes it; a mining bug becomes an autonomous action | **R-HUMAN**: proposals are a file plus `y/N`, exactly like `skills new` |
+| 10 | Mine from 3 runs | Overfitting one bad night into policy | **R-N**: `propose_min_runs` (default 5) or the command prints stats and refuses to draft |
+| 11 | Let the model invent acceptance commands | Hallucinated `make verify` that fails forever, or worse, passes vacuously | **R-EXEC**: commands in a draft are existence-probed and annotated `# unverified`; the human approves |
+| 12 | Web UI for the knowledge graph | A stdlib HTTP server still means a bound port, a token scheme, DNS-rebinding defense, CSP, and a static asset pipeline — a large security and maintenance surface for a local dev tool, and a browser dependency for a project whose premise is a terminal | **R-TERM**: terminal only. The browser UI is rejected, not deferred-with-a-wink |
+| 13 | Render every node every keypress | A thousand-node redraw makes panning feel broken over SSH | **R-DRAW**: server-side deterministic layout, cell bucketing, viewport culling, redraw on input only |
+| 14 | Show session transcripts in the canvas | Transcripts are the likeliest place a pasted secret sits, and a canvas is the likeliest thing to be on screen during a screen share | **R-MIN**: learning/decision text and node metadata only; session nodes show path and timestamp |
+| 15 | Add node/edge types freely | Old lmloop versions reading new JSONL must not crash | **R-ADD**: additive to existing frozensets; unknown types already fall through `_graph_node_live` as live |
+
+### Rejected outright
+
+- **A browser UI on a local port** (R-TERM). Every hazard it carried — bind address,
+  token handling, DNS rebinding, CSP, asset routing, redaction for a shared screen —
+  disappears with it, and the TUI reaches the same data through the same accessor.
+- **Any new runtime dependency.** `prompt_toolkit` and `rich` are already required by
+  the REPL; the canvas uses them and nothing else.
+- **Parallel execution without isolation** (R-ISO).
+- **An LLM router choosing the next node.** Already rejected in
+  [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md); `needs` is authored.
 
 ---
 
-## Part 1 — DAG joins in authored graphs
+## Part 1 — Capacity: how many agents may run at once
 
-### 1.1 What changes
+### 1.1 Where it lives
 
-Today `graph.py` walks one edge per outcome: `next_step` finds `edge_for(node, status)`
-and runs the target. That is a state machine, not a DAG — a node cannot wait for two
-predecessors, so "review and lint both finished, now package" is unexpressible.
+`server.py` already owns "what the model server is" (`LmsClient`, model listing,
+`get_context_limit`, VLM detection). Capacity is the same kind of fact, so it extends
+that type rather than founding a new module:
 
-Add exactly one keyword:
+```python
+@dataclass(frozen=True)
+class ServerCapacity:
+    max_agents: int        # effective, already clamped
+    profile: str           # "local" | "remote"
+    reason: str            # one line for /stats and the run-start banner
+```
+
+`LmsClient.capacity(cfg) -> ServerCapacity`. `graph.py` consumes it; `loop.py` does not
+need it (a single `until` run is one agent by construction).
+
+### 1.2 Resolution rules (deterministic, fail-closed)
+
+```
+max_parallel_agents = "auto" | <int>
+
+1. explicit int            -> clamp(int, 1, parallel_hard_cap)         # default cap 8
+2. auto + local profile    -> loaded model instances reported by the
+                              server, else 1                            # laptop default
+3. auto + remote profile   -> remote_default_parallel (default 4), clamped
+4. any probe error/timeout -> 1                                         # R-FLOOR
+```
+
+**Local profile** = `base_url` host is a loopback address, `*.local`, or an RFC1918
+address. That covers LM Studio on `127.0.0.1:1234` (the shipped default), Ollama, and a
+llama.cpp server on the LAN. **Remote profile** = anything else, e.g. OpenRouter.
+
+For the local profile, "loaded model instances" comes from LM Studio's native
+`/api/v0/models` — the same endpoint `get_context_limit()` already calls, so this costs
+no new request shape. One loaded instance means **one agent**, which is the correct
+answer for a laptop serving `qwen3.6-A3B`: the weights, the KV cache, and the context
+window are one shared budget, and a second concurrent maker does not create a second
+machine. If a user has deliberately loaded two instances, the probe reports two and the
+scheduler may use two — the server's own report is the authority, not a guess.
+
+For the remote profile the ceiling is a **cost and rate-limit** decision, not a hardware
+one, so it is configuration: `remote_default_parallel` (4) under `parallel_hard_cap`
+(8). A user who wants 8 sets `max_parallel_agents: 8`.
+
+### 1.3 Rate-limit decay (R-DECAY)
+
+During a parallel graph invocation, an HTTP 429 or 503 from the model server halves the
+effective width for the remainder of that invocation, floor 1, and prints one status
+line: `[graph · rate limited — capacity 4 → 2 for this run]`. It never re-widens
+mid-run; predictability beats throughput in a loop nobody is watching. The next
+invocation starts from the resolved capacity again.
+
+### 1.4 Surfacing
+
+`/stats` and the graph run-start banner state the resolved capacity and why:
+
+```
+capacity: 1 · local server reports 1 loaded model · sequential
+capacity: 4 · remote endpoint, max_parallel_agents auto · parallel where the DAG allows
+```
+
+A user should never have to guess whether their DAG fanned out.
+
+---
+
+## Part 2 — DAG joins
+
+### 2.1 What changes
+
+Today `graph.py` walks one edge per outcome, so "review and lint both finished, now
+package" is unexpressible. Add one keyword:
 
 ```
 node plan    skill ceo
@@ -61,119 +139,169 @@ edge package -> plan on fail
 ```
 
 `needs a b` means: **`package` may not start until `api` and `ui` each have a latest
-status of `pass` in this run.** Edges still drive traversal; `needs` is a guard.
+status of `pass` in this run.** Edges drive traversal; `needs` is a guard.
 
-### 1.2 Semantics (exact)
+### 2.2 Semantics (exact)
 
 - `NodeDef` gains `needs: tuple[str, ...] = ()`.
 - "Latest status" = the most recent `node` row for that name in this `GraphRun`. A node
-  that later fails and is re-run invalidates the join; a downstream `needs` re-blocks.
-- When traversal reaches a node whose `needs` are unmet, `next_step` returns the
-  **first unmet predecessor that is reachable from the start** and runs that instead —
-  deterministic, topological, sequential (R-SEQ).
-- If an unmet predecessor is unreachable, the graph is invalid and is rejected at parse
-  time, not at runtime.
-- Join handoff: the concatenation of each predecessor's last summary, labeled and
-  clipped to `join_handoff_chars` (default 1500 each), in `needs` order. Deterministic;
-  no model call to merge.
-- `graph_max_steps` counts join-driven entries like any other node entry.
+  that later fails and re-runs invalidates the join; downstream `needs` re-blocks.
+- Reaching a node with unmet `needs` runs the first unmet predecessor reachable from the
+  start — deterministic and topological.
+- An unmet predecessor that is unreachable is a **parse-time** error, not a runtime one.
+- Join handoff: each predecessor's last summary, labeled and clipped to
+  `join_handoff_chars` (default 1500), in `needs` order. No model call merges handoffs.
+- `graph_max_steps` counts join-driven entries like any other entry.
 
-### 1.3 Validation (fail closed, before any model call)
-
-Parse-time errors, all with the node name in the message:
+### 2.3 Validation (fail closed, before any model call)
 
 1. `needs` names an unknown node.
 2. `needs` names the node itself.
-3. `needs` forms a cycle **through `needs` alone** (retry cycles through `edge` stay
-   legal — `qa -> build on fail` must keep working).
-4. A `needs` predecessor is unreachable from the start node.
-5. `mine` nodes may not have `needs` (mine is terminal bookkeeping).
+3. `needs` forms a cycle **through `needs` alone** (retry cycles via `edge` stay legal —
+   `qa -> build on fail` must keep working).
+4. A `needs` predecessor is unreachable from the start.
+5. `mine` nodes may not have `needs`.
 
-Implementation note: reachability and the `needs`-cycle check are a Kahn topological
-sort over the `needs` relation plus a BFS over `edge`s. Both are ~20 lines of stdlib and
-belong in `graph.py` next to the existing validation, not in a new module.
-
-### 1.4 Explicit non-goals
-
-- **Parallel execution.** R-SEQ. Revisit only with `git worktree` + per-branch sandbox
-  containers, which is a larger design than this file.
-- **An LLM router choosing the next node.** Already rejected in
-  [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md); `needs` is authored.
-- **Conditional expressions on edges** (`on pass and coverage>80`). If a condition is
-  worth having, it is an acceptance command with an exit code.
+Kahn topological sort over `needs` plus BFS over `edge`s; both are short stdlib routines
+belonging next to the existing validation in `graph.py`.
 
 ---
 
-## Part 2 — Workflow identification and proposal
+## Part 3 — Bounded parallelism
 
-### 2.1 Deterministic first: `lmloop flow`
+Parallelism is off unless three things are simultaneously true: capacity ≥ 2, an
+isolation mode is configured, and the DAG actually has independent ready nodes.
 
-Everything useful here is computable without a model. A new leaf module
-`workflow.py` reads `until/*.jsonl` and `graphs/*/*.jsonl` and produces a `FlowStats`
-dataclass:
+### 3.1 Isolation modes (`parallel_isolation`)
+
+| Mode | Default | What may run in parallel | Isolation mechanism |
+|---|---|---|---|
+| `off` | ✅ | nothing | — |
+| `readonly` | | Nodes marked `--readonly` (review, qa, research, audit) | `readonly=True` tool set: no `write_file`/`update_file`/`move_file`/`delete_file`/`remember`/`log_decision`. They cannot collide because they cannot write |
+| `worktree` | | Any node | One `git worktree` per branch, one sandbox container per worktree under `--docker`, per-branch memory shards |
+
+`readonly` is the mode most users should want: fan-out review and QA over a shared tree
+is safe by construction and needs no git surgery. `worktree` is for genuine parallel
+implementation and carries the merge problem below.
+
+### 3.2 Scheduler
+
+```
+width = min(capacity.max_agents,
+            isolation_capacity,          # 1 when parallel_isolation == off
+            len(ready_nodes),
+            graph_max_parallel)          # optional per-graph cap
+```
+
+- Ready = `needs` satisfied, inbound edge traversed, not already running.
+- Children are threads (`ThreadPoolExecutor`, already the pattern in
+  `tools.run_tool_calls`), each running `isolated_act` / `run_until` on its own thread
+  and its own session log.
+- **The parent owns the run log.** Children return results; only the parent appends
+  `node` rows, each carrying a `par_group` field. `GraphRun` stays single-writer.
+- A failing branch does not cancel its siblings. All branches in a group complete, the
+  parent records them in declaration order, then edges are applied in that order. This
+  keeps the log replayable and the behavior explainable at 3 AM.
+- Crash mid-group re-runs the whole group on resume (rows are written after completion,
+  matching today's "event written last" rule). Worktrees from a crashed group are
+  detected by name and reused or cleaned on resume.
+
+### 3.3 Display under parallelism (R-TTY)
+
+Live markdown streaming is single-agent by nature. In a parallel group, children run
+with `echo_delta=False`: one line per node, updated in place —
+`[api · maker 3/12 · run_shell pytest -q]` — and the full transcript goes to the session
+log. The join node's output streams normally, because by then only one agent is running.
+
+### 3.4 Worktree mode specifics
+
+- Branch: `lmloop/par/<run-ts>/<node>` created from HEAD via
+  `git worktree add <dir> -b <branch>`; the worktree lives under
+  `~/.lmloop/projects/<slug>/worktrees/<run-ts>/<node>`, **never** inside the project.
+- Each branch's sandbox (when `--docker`) mounts its own worktree, so the container
+  identity hash from the companion doc naturally differs per branch.
+- Memory shards (R-SHARD): children write `learnings.<node>.jsonl` /
+  `decisions.<node>.jsonl` in the project dir; the parent appends them into the canonical
+  files at the join, in declaration order, preserving append-only semantics.
+- Merge (R-MERGE): at the join, the parent attempts `git merge --no-ff` of each branch in
+  declaration order. A conflict aborts the merge (`git merge --abort`), records
+  `blocked`, and raises the existing HITL gate with the conflicting paths listed.
+  lmloop never resolves a conflict.
+- Cleanup: worktrees and branches are removed after a successful join; kept on `blocked`
+  so the human can inspect them; pruned by age with the same 14-day horizon as `trash/`.
+
+### 3.5 Honest defaults for the shipped configuration
+
+With the shipped `base_url` (local LM Studio) and default config, capacity resolves to
+**1**, `parallel_isolation` is **off**, and every graph runs exactly as it does today.
+Nothing about the DAG work changes single-agent behavior — `needs` is a guard that a
+sequential walker honors identically.
+
+---
+
+## Part 4 — Workflow identification and proposal
+
+### 4.1 Deterministic first: `lmloop flow`
+
+A new leaf `workflow.py` reads `until/*.jsonl` and `graphs/*/*.jsonl` into `FlowStats`:
 
 | Metric | Source | Why it matters |
 |---|---|---|
-| Runs by outcome (`pass` / `gate no` / abandoned-paused) | terminal row | Is the loop finishing at all? |
-| Maker cycles per run: median, p90, max | `maker` rows | p90 near `until_max_steps` means the budget, not the goal, is ending runs |
-| Check command → pass rate, mean cycles to first pass | `check` rows | Flaky or impossible gates |
+| Runs by outcome (pass / gate-no / abandoned-paused) | terminal row | Is the loop finishing at all? |
+| Maker cycles per run: median, p90, max | `maker` rows | p90 near `until_max_steps` means the budget ended the run, not the goal |
+| Check command → pass rate, cycles to first pass | `check` rows | Flaky or impossible gates |
 | Eval `blocked` rate | `eval` rows | A checker that cannot see enough evidence |
-| Node transition frequencies per graph | `node` rows | The actual topology, versus the authored one |
-| Gate denials by command shape | `approve` rows + `GatePolicy` denials | Which irreversible actions the loop keeps needing |
-| Skills used per run | `uses_skill` edges | Which playbooks earn their keep |
-| Wall-clock per node | row timestamps | Where the night went |
+| Node transition frequencies | `node` rows | The real topology versus the authored one |
+| Gate denials by command shape | `approve` rows | Which irreversible actions the loop keeps needing |
+| Wall-clock per node, and per `par_group` | timestamps | Whether parallelism actually paid |
+| Capacity used per run | run-start banner row | Did the DAG ever fan out? |
 
-`lmloop flow` prints this. `lmloop flow --json` emits it for scripting. This is the
-"automated workflow identification" deliverable and it has **zero** model calls, so it
-cannot hallucinate.
+`lmloop flow` prints it; `lmloop flow --json` emits it. Zero model calls, so it cannot
+hallucinate.
 
-### 2.2 Rule-based enhancement proposals
+### 4.2 Rule-based enhancement proposals
 
-Also deterministic, also in `workflow.py`, as a list of `(predicate, suggestion)` rows —
-code, not prompt:
+Also deterministic, also `workflow.py`, as `(predicate, suggestion)` rows — code, not
+prompt:
 
 | Rule | Fires when | Suggestion |
 |---|---|---|
-| `budget-bound` | p90 maker cycles ≥ 0.9 × `until_max_steps` and outcome usually paused | Raise `until_max_steps` or split the goal into two `until` nodes |
-| `weak-gate` | `--check` passes on cycle 1 in ≥ 80% of runs | Enable `require_negative_baseline`; the check likely passes before any work |
-| `flaky-gate` | Same check alternates pass/fail with no intervening maker edit | Quarantine the check; add `--accept` for the stable part |
-| `blocked-loop` | Eval `blocked` ≥ 30% | Add an authored `on blocked` edge; the missing edge is costing a HITL gate each time |
-| `repeat-denial` | The same denied command shape in ≥ 3 runs | Pre-approve it via config, or move the work into an acceptance command |
-| `dead-node` | A node never entered across ≥ 5 runs | Remove it from the graph |
-| `hot-cycle` | One `on fail` edge accounts for ≥ 50% of transitions | That node needs a `--accept` list, not more retries |
+| `budget-bound` | p90 cycles ≥ 0.9 × `until_max_steps`, usually paused | Raise the budget or split the goal |
+| `weak-gate` | `--check` passes on cycle 1 in ≥ 80% of runs | Enable `require_negative_baseline` |
+| `flaky-gate` | Same check alternates pass/fail with no intervening edit | Quarantine it; add `--accept` for the stable part |
+| `blocked-loop` | Eval `blocked` ≥ 30% | Author an `on blocked` edge |
+| `repeat-denial` | Same denied command shape in ≥ 3 runs | Pre-approve it, or move the work into an acceptance command |
+| `dead-node` | Never entered across ≥ 5 runs | Remove it |
+| `hot-cycle` | One `on fail` edge ≥ 50% of transitions | That node needs `--accept`, not more retries |
+| `serial-fanout` | Independent nodes always run sequentially while capacity ≥ 2 | Consider `needs` + `parallel_isolation: readonly` |
 
-Output is a bulleted report with the evidence line for each ("`build -> qa on fail`:
-14/26 transitions"). No file is written.
+Every suggestion prints its evidence line (`build -> qa on fail: 14/26 transitions`).
+Nothing is written to disk.
 
-### 2.3 `lmloop graph propose [name]`
+### 4.3 `lmloop graph propose [name]`
 
-Only after the deterministic layer exists, and only when
-`len(terminal_runs) >= propose_min_runs` (default 5), may a draft be generated:
+Only when `terminal_runs >= propose_min_runs` (default 5):
 
-1. `workflow.py` renders a **compact, factual** summary (the tables above, no prose).
-2. One `_chat` call, **no tools**, with a frozen prompt in `lmloop/skills/_graph_author.md`
-   (private, `_`-prefixed, like `_author.md`) asking for graph markdown only.
-3. The draft is parsed by `graph.parse_graph` **before display**. Parse failure → show
-   the error and the raw draft, save nothing.
-4. Every `--check` / `--accept` command in the draft is probed for existence
-   (`command -v <argv0>` through the configured exec backend) and annotated
-   `# unverified: <cmd>` where the probe fails (R-EXEC).
-5. A unified diff against the existing graph of that name (if any) is printed.
+1. `workflow.py` renders a compact factual summary.
+2. One `_chat` call, **no tools**, frozen prompt in `lmloop/skills/_graph_author.md`
+   (private, `_`-prefixed like `_author.md`).
+3. The draft is parsed by `graph.parse_graph` **before display**; parse failure shows the
+   error and saves nothing.
+4. Each `--check` / `--accept` command is existence-probed (`command -v <argv0>` through
+   the active exec backend) and annotated `# unverified: <cmd>` on failure (R-EXEC).
+5. A unified diff against the existing graph of that name is printed.
 6. Saved to `~/.lmloop/graphs/<name>.md` only on `y`. Packaged graphs are never
-   overwritten — the user copy shadows them, which is the existing override rule.
+   overwritten; the user copy shadows them, per the existing override rule.
 
-`propose` becomes a reserved graph name (same pattern as `commands.py`'s reserved skill
-stems) so `lmloop graph propose` can never collide with a graph called `propose`.
+`propose` becomes a reserved graph name, mirroring `commands.py`'s reserved skill stems.
 
-### 2.4 Growing the knowledge network during runs
+### 4.4 Growing the knowledge network as the agent works
 
-Today `knowledge_graph.py` records `in_session`, `references`, and `uses_skill`. Runs
-themselves are invisible to it. Add, deterministically (no model), when `use_graph` is
-on (R-ADD, additive to the frozensets):
+Deterministic, no model, only when `use_graph` is on (R-ADD):
 
 | New node type | Key | Written by |
 |---|---|---|
-| `run` | `until:<ts>` / `graph:<name>:<ts>` | `loop.run_until` / `graph.run_graph` on terminal status |
+| `run` | `until:<ts>` / `graph:<name>:<ts>` | `run_until` / `run_graph` at terminal status |
 | `goal` | slug of the goal text | same |
 
 | New edge type | Meaning |
@@ -182,21 +310,17 @@ on (R-ADD, additive to the frozensets):
 | `verified_by` | `run` → `concept` node for each check/acceptance command |
 | `produced` | `run` → `learning` mined from that run |
 
-This is what makes the canvas a *network that grows as the agent works* rather than a
-static dump of learnings: after a week of `until` runs, the canvas shows which goals
-touched which files, which checks guarded them, and which learnings came out.
-
-Cost control: one node per run and one edge per distinct node/command, written once at
-terminal status — not per cycle. A 24/7 month of hourly runs adds ~700 nodes, which is
-inside the canvas cap.
+One node per run, one edge per distinct target, written once at terminal status — not per
+cycle. Hourly runs for a month add roughly 700 nodes, inside the canvas cap. This is what
+turns the canvas into a network that grows with the work rather than a static dump.
 
 ---
 
-## Part 3 — Knowledge canvas
+## Part 5 — Terminal knowledge canvas
 
-### 3.1 Data layer (shared by both UIs)
+No server, no port, no browser, no new dependency (R-TERM).
 
-One accessor on `KnowledgeGraph`, so the browser and the TUI cannot drift:
+### 5.1 Data layer
 
 ```python
 @dataclass(frozen=True)
@@ -208,7 +332,7 @@ class CanvasNode:
     confidence: int    # effective, post-decay
     ts: str
     degree: int
-    x: float           # layout, computed server-side
+    x: float           # deterministic layout
     y: float
 
 @dataclass(frozen=True)
@@ -220,191 +344,172 @@ class CanvasView:
 ```
 
 `KnowledgeGraph.canvas_view(query="", types=(), limit=canvas_max_nodes) -> CanvasView`.
-Filtering and layout happen **server-side** so the client stays a renderer and the TUI
-gets the same coordinates.
 
-**Layout** is deterministic and dependency-free: nodes are banded by type on the y-axis
-(decisions, learnings, concepts, files, skills, sessions, runs), ordered within a band by
-degree then key, with a seeded jitter derived from `sha1(id)` so positions are stable
-across reloads. No force simulation, no SciPy, no D3 — and stable positions matter more
-than pretty ones when a human is building a mental map over weeks.
+**Layout** is deterministic and dependency-free: nodes band by type on the y-axis
+(decisions, learnings, concepts, files, skills, sessions, runs), order within a band by
+degree then key, with seeded jitter from `sha1(id)`. No force simulation. Stable
+positions across sessions matter more than pretty ones when a human is building a mental
+map over weeks.
 
-### 3.2 Browser UI: `lmloop canvas`
+### 5.2 `lmloop memory canvas` / `/memory canvas`
 
-**Server:** `http.server.ThreadingHTTPServer`, one new module `canvas.py`
-(may import `knowledge_graph`, `memory`, `config`; must not import `agent`, `loop`, or
-`graph`).
+No new command stem — this extends the existing `memory` stem, whose `arg_choices`
+already carry `list` / `decisions` / `dump` / `graph` / `mine` / `reconcile`.
 
-**Startup sequence:**
-
-1. Refuse to start when `use_graph` is false (print the existing `MSG_GRAPH_OFF`).
-2. Bind `127.0.0.1` on `canvas_port` (default `0` = ephemeral, printed). A non-loopback
-   `canvas_bind` requires `--unsafe-bind` and prints a warning naming the exposure (R-BIND).
-3. Generate a 32-byte `secrets.token_urlsafe` token.
-4. Print `http://127.0.0.1:<port>/?t=<token>` and open the browser unless `--no-browser`.
-5. Serve in the foreground. Ctrl-C stops it. Idle beyond `canvas_idle_timeout_m`
-   (default 30) shuts down and says so (R-IDLE).
-
-**Every response carries:**
+A `prompt_toolkit` full-screen application, three panes:
 
 ```
-Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data'; connect-src 'self'; base-uri 'none'; form-action 'none'
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-Referrer-Policy: no-referrer
-Cache-Control: no-store
+┌ canvas ─────────────────────────────────┬ detail ───────────────┐
+│  ·  ·  ▣ ·   ·                          │ learning:venv-python  │
+│     ·  ·  ·  ▣  ·   ·                   │ confidence 8 · 3d ago │
+│  ·  ▣₃ ·                                │                       │
+│                                         │ setup-lmloop.sh reuses│
+│  [decisions] [learnings] [files] …      │ an existing venv …    │
+├─────────────────────────────────────────┤ neighbors:            │
+│ / search  t types  g clusters  q quit   │  → session:20260918   │
+└─────────────────────────────────────────┴───────────────────────┘
 ```
 
-**Request guard, in order, before routing:**
+- **2D canvas pane:** layout coordinates projected to character cells. Arrows / `hjkl`
+  pan, `+` / `-` zoom, `Tab` cycles visible nodes, `Enter` selects. Cells holding several
+  nodes show a count glyph (`▣₃`); selecting one lists them in the detail pane, so
+  nothing is hidden by collision (R-DRAW).
+- **Detail pane:** label, type, effective confidence, age, source, provenance path, and
+  1-hop neighbors as a selectable list — keyboard traversal of the network.
+- **Footer:** `/` search (server-side filter over the same accessor), `t` type filter,
+  `g` jump to `contradiction_clusters()`, `q` quit.
+- Viewport culling means only on-screen cells are composed; redraw happens on input, not
+  on a timer.
+- Read-only. Editing memory from the canvas is a later design with the same gate story as
+  `graph_add_edge`.
+- Degradation: `use_graph` off → print the existing `MSG_GRAPH_OFF`. `prompt_toolkit`
+  unavailable → fall back to today's `/memory graph` text summary rather than failing.
+- Live growth: `r` re-reads the JSONL files. Nodes appearing during a run show up on
+  refresh; there is no watcher thread, no polling, and nothing to leave running.
 
-1. `Host` header must be `127.0.0.1:<port>` or `localhost:<port>` — this is the DNS
-   rebinding defense, and the reason an origin check alone is insufficient (R-ORIGIN).
-2. `Origin`, if present, must match the same; otherwise 403. No CORS headers are ever
-   emitted.
-3. Auth: valid `lmloop_canvas` cookie, or a `?t=` that matches — in which case set
-   `Set-Cookie: lmloop_canvas=<token>; HttpOnly; SameSite=Strict; Path=/` and 302 to
-   `/`, so the token leaves the URL bar immediately (R-TOKEN).
-4. Only `GET` and `HEAD` are routed. Anything else is 405 (v1 is read-only).
+### 5.3 Non-goals
 
-**Routes:**
-
-| Route | Returns |
-|---|---|
-| `GET /` | `index.html` from the package |
-| `GET /static/canvas.js`, `/static/canvas.css` | Package files, `nosniff`, no directory traversal (path is matched against a literal allowlist, not joined from user input) |
-| `GET /api/graph?q=&types=&limit=` | `CanvasView` as JSON, with an `ETag` of the nodes/edges file mtimes+sizes |
-| `GET /api/node/<type>/<key>` | One node's detail plus its 1-hop neighbors |
-| `GET /api/stats` | Counts, contradiction clusters, truncation flag |
-
-**Client:** one `<canvas>`, ~300 lines of dependency-free JS. Pan (drag), zoom (wheel,
-clamped), click-to-select with a side panel, `/` to focus search, arrow keys to walk
-neighbors, and viewport culling so only visible nodes are drawn (R-CAP). Polls
-`/api/graph` every 5s with `If-None-Match`; a 304 costs nothing, so a canvas left open
-beside a running agent updates as the network grows, without SSE or websockets.
-
-**Redaction (`canvas_redact`, default true):** served `detail` strings are passed
-through a small set of named compiled patterns for obvious secret shapes (`AKIA…`,
-`ghp_…`, `sk-…`, `-----BEGIN … PRIVATE KEY-----`, `Bearer <jwt>`), replaced with
-`[redacted]`. This is not a secret scanner and must not be described as one — it is a
-shoulder-surfing and screenshot guard for a UI whose whole purpose is displaying text
-the agent wrote (R-MIN).
-
-### 3.3 Terminal UI: `lmloop canvas --tui`
-
-Same `CanvasView`, `prompt_toolkit` full-screen (already a dependency, no new deps):
-
-- Left: scrollable, selectable node list grouped by type, with confidence and age.
-- Right: selected node's detail, provenance (`ts`, `source`, session path), and 1-hop
-  neighbors as a selectable list — so keyboard traversal of the network works exactly
-  like the browser's arrow-key walk.
-- Bottom: `/` search, `t` type filter, `g` jump to contradiction clusters, `q` quit.
-- No sockets, no port, no token — nothing to expose. This is the right default for a
-  remote/SSH session, and the browser UI is the right default for a local desktop.
-
-### 3.4 Non-goals for the canvas
-
-Editing memory, deleting nodes, running the agent from the UI, multi-project views,
-authentication beyond the loopback token, TLS (loopback only), and websockets.
+Editing, deleting, running the agent from the canvas, multi-project views, a browser UI,
+any network listener, and mouse support beyond what `prompt_toolkit` gives for free.
 
 ---
 
-## Part 4 — Config and commands
+## Part 6 — Config and commands
 
 | Key | Default | Meaning |
 |---|---|---|
+| `max_parallel_agents` | `auto` | `auto` \| int; auto = server-reported instances (local) or `remote_default_parallel` (remote) |
+| `remote_default_parallel` | `4` | Auto width for a non-local `base_url` |
+| `parallel_hard_cap` | `8` | Ceiling for any resolution or override |
+| `parallel_isolation` | `off` | `off` \| `readonly` \| `worktree` |
+| `graph_max_parallel` | `0` | Per-graph override; `0` = no extra cap |
 | `join_handoff_chars` | `1500` | Per-predecessor clip in a join handoff |
-| `propose_min_runs` | `5` | Terminal runs required before `graph propose` will draft |
-| `canvas_port` | `0` | `0` = ephemeral; set a fixed port if you want a stable bookmark |
-| `canvas_bind` | `127.0.0.1` | Non-loopback requires `--unsafe-bind` |
-| `canvas_idle_timeout_m` | `30` | Auto-shutdown |
-| `canvas_max_nodes` | `2000` | Server-side cap; `truncated` is surfaced in the UI |
-| `canvas_open_browser` | `true` | `--no-browser` overrides |
-| `canvas_redact` | `true` | Mask obvious secret shapes in served text |
+| `propose_min_runs` | `5` | Terminal runs required before `graph propose` drafts |
+| `canvas_max_nodes` | `2000` | Cap; `truncated` is surfaced in the footer |
 
-New stems (two, both with README rows and `CommandMeta` entries):
+Commands (one new stem, `flow`; everything else extends existing stems):
 
 | Command | Effect |
 |---|---|
 | `lmloop flow [--json]` | Deterministic workflow stats + rule-based suggestions |
 | `lmloop graph propose [name]` | Draft a graph from mined runs; review; save on `y` |
-| `lmloop canvas [--tui] [--port N] [--no-browser]` | Knowledge canvas |
-| `/flow`, `/canvas` | REPL equivalents |
+| `lmloop memory canvas` / `/memory canvas` | Terminal knowledge canvas |
+| `/flow` | REPL equivalent of `lmloop flow` |
 
 ---
 
-## Part 5 — Task breakdown
+## Part 7 — Task breakdown
+
+### Phase K — capacity
+
+| ID | Task | Files | Tests | Done when |
+|---|---|---|---|---|
+| K1 | `ServerCapacity` + `LmsClient.capacity()` with the four resolution rules | `server.py` | Loopback/`.local`/RFC1918 → local; probe error → 1; explicit int clamped to the hard cap; remote → `remote_default_parallel` | Every uncertain path returns 1 |
+| K2 | Local instance count read from the existing native models response | `server.py` | One instance → 1; two → 2; malformed payload → 1 | No new request shape |
+| K3 | Capacity line in `/stats` and the graph run-start banner | `ui.py`, `status.py`, `graph.py` | Text states the number and the reason | A user never has to guess the width |
+| K4 | R-DECAY: 429/503 halves width for the invocation, floor 1, one status line | `graph.py`, `chat.py` (error classification only) | Decay applied once per event; never re-widens | Rate limiting degrades predictably |
 
 ### Phase D — DAG joins
 
 | ID | Task | Files | Tests | Done when |
 |---|---|---|---|---|
-| D1 | `needs` parsing on `node` lines; `NodeDef.needs` | `graph.py` | `needs a b` parses; `needs` on `mine` rejected; quoted rest unaffected | Existing `company.md` parses unchanged |
-| D2 | Validation: unknown/self/cycle-through-`needs`/unreachable predecessor | `graph.py` | One test per rule, each fail-closed with the node name | No invalid graph reaches a model call |
-| D3 | `next_step` join guard + first-unmet-predecessor selection | `graph.py` | Diamond graph runs `a,b` before `c`; re-failed predecessor re-blocks; `graph_max_steps` counts join entries | Topological order asserted on a diamond and on a re-entry |
-| D4 | Deterministic join handoff with labels and per-predecessor clip | `graph.py` | Two predecessors → both labeled summaries present, each clipped | No model call merges handoffs |
-| D5 | Packaged example graph using a join (small; does not replace `company`) | `graphs/*.md` | Parses; runner test with fakes | `lmloop graph` lists it |
-| D6 | Docs: ARCHITECTURE workflow-graph section, README graph rows, this file → shipped | docs | — | `needs` documented next to `edge` |
+| D1 | `needs` parsing; `NodeDef.needs` | `graph.py` | Parses; rejected on `mine`; `company.md` unchanged | Existing graphs parse identically |
+| D2 | Validation: unknown / self / `needs`-cycle / unreachable | `graph.py` | One test per rule, fail-closed with the node name | No invalid graph reaches a model call |
+| D3 | Join guard in `next_step` + first-unmet-predecessor selection | `graph.py` | Diamond runs `a,b` before `c`; re-failed predecessor re-blocks | Topological order asserted |
+| D4 | Deterministic labeled, clipped join handoff | `graph.py` | Both predecessors present and clipped | No model merges handoffs |
+| D5 | Docs: ARCHITECTURE workflow-graph section, README graph rows | docs | — | `needs` documented beside `edge` |
+
+### Phase P — bounded parallelism
+
+| ID | Task | Files | Tests | Done when |
+|---|---|---|---|---|
+| P1 | Scheduler width computation and ready-set derivation | `graph.py` | width = min of all four inputs; `off` → 1; capacity 1 → sequential regardless of DAG | Default config never fans out |
+| P2 | `readonly` mode: `--readonly` node flag, thread pool, parent-only run-log writes, `par_group` | `graph.py` | Two readonly nodes run concurrently with fake acts; a write tool is absent from their specs; rows in declaration order | Read-only fan-out works with no git involvement |
+| P3 | R-TTY compact child rendering | `graph.py`, `display.py`, `status.py` | Children use `echo_delta=False`; one line per node; join streams normally | No interleaved live markdown |
+| P4 | `worktree` mode: create/reuse/cleanup, per-branch sandbox identity, memory shards | `graph.py`, `snapshot.py` | Worktree outside the project; shard merge order deterministic; crash-resume reuses by name | Parallel writes never share a tree |
+| P5 | R-MERGE: ordered merge, conflict → abort → `blocked` gate listing paths | `graph.py`, `status.py` | Clean merge passes; conflict blocks and leaves the worktree for inspection | lmloop never resolves a conflict |
+| P6 | Docs: parallelism section with the "default is sequential" statement first | docs | — | Defaults are unambiguous |
 
 ### Phase W — workflow mining
 
 | ID | Task | Files | Tests | Done when |
 |---|---|---|---|---|
-| W1 | `workflow.py` leaf: `FlowStats` from until/graph JSONL | `workflow.py` | Fixture logs → exact medians, rates, transition counts; empty history → empty stats, no crash | Pure function over rows, no I/O beyond `memory.read_jsonl` |
-| W2 | Rule engine: seven rules as `(predicate, suggestion)` rows with evidence strings | `workflow.py` | One test per rule firing and not firing | Rules are data, extendable without touching the printer |
-| W3 | `lmloop flow` / `/flow` + `--json` | `commands.py`, `cli.py`, `repl.py`, `ui.py` | Routing; JSON shape is stable | Works with `use_graph` off |
-| W4 | `graph propose`: sample gate, `_graph_author.md`, parse-before-display, command probing, diff, `y/N` save | `graph.py`, `skills/_graph_author.md`, `cli.py`, `repl.py` | Below `propose_min_runs` → refuses and prints stats; unparseable draft → nothing written; `n` → nothing written; packaged graph never overwritten | No path writes a graph without `y` |
-| W5 | Reserved graph name `propose` | `graph.py`, `commands.py` | A graph file named `propose.md` is rejected with a clear message | Stem collision impossible |
-| W6 | Run/goal nodes + `ran_node` / `verified_by` / `produced` edges at terminal status | `knowledge_graph.py`, `loop.py`, `graph.py` | Written once per run, not per cycle; `use_graph` off → nothing written; unknown types tolerated by old readers | A finished run appears in `/memory graph` |
-| W7 | Docs: README memory table rows, ARCHITECTURE memory section | docs | — | New node/edge types documented |
+| W1 | `workflow.py` leaf: `FlowStats` from run logs | `workflow.py` | Fixture logs → exact medians, rates, transitions; empty history → empty stats | Pure function over rows |
+| W2 | Eight rules as data with evidence strings | `workflow.py` | Each rule fires and does not fire | Rules extendable without touching the printer |
+| W3 | `lmloop flow` / `/flow` / `--json` | `commands.py`, `cli.py`, `repl.py`, `ui.py` | Routing; stable JSON shape | Works with `use_graph` off |
+| W4 | `graph propose` with sample gate, parse-before-display, command probing, diff, `y/N` | `graph.py`, `skills/_graph_author.md`, `cli.py`, `repl.py` | Below the minimum → refuses with stats; unparseable → nothing written; `n` → nothing written; packaged never overwritten | No path writes a graph without `y` |
+| W5 | Reserved graph name `propose` | `graph.py`, `commands.py` | `propose.md` rejected clearly | Stem collision impossible |
+| W6 | `run` / `goal` nodes, `ran_node` / `verified_by` / `produced` edges at terminal status | `knowledge_graph.py`, `loop.py`, `graph.py` | Written once per run; `use_graph` off → nothing; old readers tolerate | A finished run appears in `/memory graph` |
 
-### Phase C — canvas
+### Phase C — terminal canvas
 
 | ID | Task | Files | Tests | Done when |
 |---|---|---|---|---|
-| C1 | `CanvasNode` / `CanvasView` + `canvas_view()` with filter, cap, deterministic layout | `knowledge_graph.py` | Same input → identical coordinates across runs; cap sets `truncated`; decayed nodes excluded | Layout is a pure function of the data |
-| C2 | `canvas.py` server: bind, token→cookie, `Host`/`Origin` guard, security headers, GET/HEAD only, idle shutdown | `canvas.py` | Wrong `Host` → 403; missing token → 403; `POST` → 405; token in URL → 302 + cookie; idle → shutdown; non-loopback bind without flag → refuses | Every guard has a test; no live browser needed |
-| C3 | JSON routes + ETag/304 | `canvas.py` | `/api/graph` shape; unchanged mtimes → 304; `/api/node` 1-hop neighbors | Polling costs a 304 |
-| C4 | Static assets: `index.html`, `canvas.js`, `canvas.css`, literal-allowlist routing | `canvas/` | Traversal attempt (`/static/../../config.json`) → 404; no remote URL appears in any asset | `rg -n 'https?://' lmloop/canvas/` is empty |
-| C5 | Client: pan/zoom/select/search/neighbor-walk with viewport culling | `canvas/canvas.js` | Manual check documented; unit-test the pure layout/culling helper if extracted | 2000 nodes pan smoothly |
-| C6 | `canvas_redact` patterns as named compiled constants | `canvas.py` | Each pattern masks; ordinary text untouched | Documented as a screenshot guard, not a scanner |
-| C7 | `--tui` full-screen prompt_toolkit over the same `CanvasView` | `canvas.py` or `canvas_tui.py` | Key bindings; no import of the browser server path | `--tui` opens no socket |
-| C8 | `lmloop canvas` stem, `/canvas`, README + ARCHITECTURE + DEVELOPMENT rows | `commands.py`, `cli.py`, `repl.py`, docs | Routing; `/help` lists it once | Docs state loopback-only and read-only |
+| C1 | `CanvasNode` / `CanvasView` / `canvas_view()` with filter, cap, deterministic layout | `knowledge_graph.py` | Identical coordinates across runs; cap sets `truncated`; decayed nodes excluded | Layout is a pure function of the data |
+| C2 | Projection + cell bucketing + viewport culling as pure helpers | `canvas_tui.py` | Collision bucket yields a count and lists members; culling excludes off-screen cells | Testable without a terminal |
+| C3 | Full-screen app: panes, pan/zoom, select, neighbor walk, search, type filter, clusters, refresh | `canvas_tui.py` | Key bindings dispatch to the helpers; no import of `agent`/`loop`/`graph` | Keyboard traversal works end to end |
+| C4 | `memory canvas` arg + `/memory canvas` + graceful degradation | `commands.py`, `cli.py`, `repl.py` | `use_graph` off → `MSG_GRAPH_OFF`; no `prompt_toolkit` → text summary | No new stem appears in `/help` |
+| C5 | Docs: README memory table row, ARCHITECTURE memory section, DEVELOPMENT module row | docs | — | Docs state terminal-only and read-only |
 
 ### Sequencing
 
-- **W1–W3 first.** Deterministic stats are useful immediately, have no model and no UI,
-  and they are the evidence base everything else needs.
-- **C1 before C2.** The data layer is shared; building the server first guarantees the
-  TUI diverges.
-- **D1–D4 are independent** of both and can land in parallel with either.
-- **W4 (`graph propose`) last** — it is the only part with a model in the loop, and it
-  should be built on statistics that have already been read by a human a few times.
-- **W6 depends on nothing**, but it is most valuable once the canvas exists to show it.
+- **K1–K3 first.** Capacity is small, has no UI, and everything about parallelism is
+  meaningless without it. On the shipped local default it resolves to 1 and proves the
+  no-change claim.
+- **D1–D4 next**, independent of capacity; joins are useful sequentially.
+- **P1–P3 after both**, and `readonly` before `worktree` — most of the value with none of
+  the git risk.
+- **W1–W3 anytime**; they only read logs.
+- **C1 before C2/C3**, so the TUI consumes the shared accessor from the first commit.
+- **W4 last** — the only part with a model in the loop, best built on statistics a human
+  has already read a few times.
 
 ---
 
-## Part 6 — Risk register
+## Part 8 — Risk register
 
 | Risk | Severity | Mitigation | Residual |
 |---|---|---|---|
-| Canvas exposes memory to the network | P0 | R-BIND + R-ORIGIN + R-TOKEN + read-only | A local process running as the same user can read `~/.lmloop` anyway |
-| DNS rebinding into `/api/graph` | P0 | `Host` allowlist, checked before routing | Requires the guard to run on *every* path including static |
-| Mined workflow runs itself | P0 | R-HUMAN: file + `y/N`, never auto-run | A human can still approve a bad graph |
-| Parallel DAG corrupts memory or the tree | P0 | R-SEQ: sequential only, parallelism deferred | Feature request stays open |
-| Hallucinated commands in a draft | P1 | R-EXEC probe + `# unverified` annotation + diff | The human must read the diff |
-| Proposal overfits | P1 | R-N minimum sample + evidence strings on every suggestion | Statistics from an unrepresentative week |
-| Canvas performance | P1 | R-CAP server cap, culling, 304 polling | Very dense graphs still cluster visually |
-| Secret in a learning is displayed | P1 | R-MIN (no transcripts) + `canvas_redact` | Redaction is pattern-based and partial by construction |
-| New node/edge types break old readers | P2 | R-ADD additive frozensets, `.get` readers | Old `/memory graph` shows unfamiliar types |
-| Forgotten canvas server | P2 | R-IDLE timeout + foreground process | A 30-minute window on loopback |
+| Parallel makers corrupt the tree or memory | P0 | R-ISO (`off` default, `readonly` safe by construction, `worktree` otherwise) + R-SHARD | `worktree` mode still needs a human for conflicts |
+| Over-subscribing a laptop model server | P0 | R-CAP + R-AUTO + R-FLOOR: local resolves to 1 | A user forcing `max_parallel_agents: 8` on a laptop gets what they asked for |
+| Silent auto-merge loses work | P0 | R-MERGE: abort and block | Run stalls for a human, by design |
+| Mined workflow runs itself | P0 | R-HUMAN | A human can still approve a bad graph |
+| Rate limiting burns the step budget | P1 | R-DECAY | Throughput drops for the rest of the invocation |
+| Unreadable interleaved output | P1 | R-TTY compact child lines | Debugging a parallel group means reading session logs |
+| Hallucinated commands in a draft | P1 | R-EXEC probe + `# unverified` + diff | The human must read the diff |
+| Proposal overfits | P1 | R-N minimum sample + evidence strings | Statistics from an unrepresentative week |
+| Secret displayed in the canvas | P1 | R-MIN: no transcripts, metadata only for sessions | Learning text is shown as written |
+| Canvas sluggish over SSH | P2 | R-DRAW culling, cap, redraw on input | Very dense graphs cluster visually |
+| New node/edge types confuse old readers | P2 | R-ADD additive frozensets, `.get` readers | Old `/memory graph` shows unfamiliar types |
 
 ---
 
-## Part 7 — What this explicitly does not become
+## Part 9 — What this explicitly does not become
 
-- Not a workflow engine. `needs` is a guard; there are no expressions, retries policies,
-  or timers beyond what `until` already has.
-- Not a dashboard. The canvas has no run controls, no log tailing, no metrics.
-- Not multi-user. One project, one process, loopback, read-only.
-- Not a graph database. Layout and traversal stay linear scans over JSONL that a human
-  can still `cat`, which is the property that made this memory system worth keeping.
+- Not a workflow engine. `needs` is a guard; no expressions, retry policies, or timers
+  beyond what `until` already has.
+- Not a distributed system. Parallelism is threads in one process on one machine, bounded
+  by what the model server says it can serve.
+- Not a dashboard or a web app. The canvas is a terminal view with no listener.
+- Not a graph database. Layout and traversal stay linear scans over JSONL a human can
+  still `cat` — the property that made this memory system worth keeping.

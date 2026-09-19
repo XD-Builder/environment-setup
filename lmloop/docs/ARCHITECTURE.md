@@ -19,8 +19,8 @@ lmloop/
 │   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (shipped opt-in)
 │   ├── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
 │   ├── DESIGN_LLM_CALLING.md   # completions HTTP + act() budgets (shipped)
-│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # exec sandbox + acceptance gates (proposed)
-│   └── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # DAG joins, flow mining, canvas (proposed)
+│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # opt-in --docker exec + acceptance gates (proposed)
+│   └── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # capacity, DAG joins, flow mining, TUI canvas (proposed)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
