@@ -22,7 +22,7 @@ Defects found by re-auditing revision 2 against the code. Each is fixed in the b
 | # | Sev | Defect in revision 2 | Evidence | Fix (section) |
 |---|---|---|---|---|
 | 1 | P0 | **Fan-out was unexpressible**, so the parallel design could never run two nodes. The parser rejects two edges with the same `(src, on)`, and traversal follows one edge at a time; the example graph was a straight chain | `graph.py:120-124`, `GraphRun.next_step` | Multi-target `on pass` edges and a frontier computed from the log (§2) |
-| 2 | P0 | "Children are threads" over **process-wide state**: `memory._ACTIVE_SESSION` (attributes `in_session` edges), `tools._TOOL_DEFS` / `MAX_OUTPUT` (rewritten by every `build_tools`), `config.project_slug()` (resolved from `Path.cwd()`), and `KeyboardInterrupt` (delivered only to the main thread, so Ctrl-C would hang until every branch finished) | `memory.py:33,440`, `tools.py:959-961`, `config.py:189-191` | Children are subprocesses with their own globals, cwd, and signal handling (§3.2) |
+| 2 | P0 | "Children are threads" over **process-wide state**: `memory._ACTIVE_SESSION` (attributes `in_session` edges), `tools._TOOL_DEFS` / `MAX_OUTPUT` (rewritten by every `build_tools`), `config.project_slug()` (resolved from `Path.cwd()`), and `KeyboardInterrupt` (delivered only to the main thread, so Ctrl-C would hang until every branch finished) | `memory.py:33,440`, `tools.py:958-961`, `config.py:189-191` | Children are subprocesses with their own globals, cwd, and signal handling (§3.2) |
 | 3 | P0 | Per-branch trees resolve a **different project slug**: no remote → directory name; a local-clone remote → a filesystem path parsed as `owner-repo`. Branch memory would silently land in another project's directory | `config.project_slug` regex over `remote get-url` | `LMLOOP_PROJECT_SLUG` pins the parent's slug in every child (§3.2) |
 | 4 | P0 | Capacity was **per process**: two terminals each resolve 1 and put two concurrent requests on a single-slot laptop | Design gap | Host-wide slot semaphore on `flock`, acquired per HTTP request in `chat.py` (§1.3) |
 | 5 | P1 | Capacity counted loaded instances only, ignoring **parallel slots**, and ignored that slot-based servers may **split** the context window across slots. The context bar and the 80% pressure warning would be computed against a window the agent does not have | `LmsClient.context_limit` returns the instance's full `context_length` | Slots config + fail-closed split context (§1.2) |
@@ -35,6 +35,93 @@ Defects found by re-auditing revision 2 against the code. Each is fixed in the b
 | 12 | P2 | Flow mining referenced data nobody records: declined/dropped gate denials (only approvals are logged), a "banner row" that is display-only, and "no intervening edit" with no tree identity | `loop.boundary_approval`, `run_until` | `denied`, `capacity`, `width`, `tree` fields on rows (§4.1) |
 | 13 | P2 | `graph propose` probed commands with `command -v` via `run_shell`, but simple commands exec argv and `command` is a shell builtin | `run_shell` argv path | `shutil.which` on host; `sh -c` under docker (§4.3) |
 | 14 | P2 | Canvas text still said "server-side"; `verified_by` concept keys were raw command strings, which can carry tokens (`curl -H 'Authorization: …'`) | Leftover wording; key design | "In the accessor"; hashed command keys (§4.4, §5) |
+
+---
+
+## Architecture overview
+
+Target state with **both** proposals implemented (this doc and
+[DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md)). The shipped
+system is in [ARCHITECTURE.md](ARCHITECTURE.md#system-overview). Blue dashed boxes are
+new modules or types; orange dashed boxes are existing modules that change.
+
+```mermaid
+flowchart TB
+  classDef new fill:#eef6ff,stroke:#3b82f6,stroke-dasharray:5 3
+  classDef mod fill:#fff7ed,stroke:#f97316,stroke-dasharray:5 3
+  classDef ext fill:#f5f5f5,stroke:#999
+
+  user(["User · terminal<br/>or OS supervisor for 24/7"])
+
+  subgraph parent["lmloop parent process — the only writer of project state"]
+    entry["cli.py / repl.py<br/>--docker · --docker-persist · flow · memory canvas"]:::mod
+    graphpy["graph.py<br/>frontier scheduler · needs joins · fan-out groups"]:::mod
+    loop["loop.py<br/>until + baseline · accept · keep · probe"]:::mod
+    agent["agent.py<br/>act()"]
+    tools["tools.py<br/>run_shell → backend"]:::mod
+    chat["chat.py<br/>ServerError.status"]:::mod
+    cap["server.ServerCapacity<br/>profile · instances × slots · context split"]:::new
+    slots["server.ModelSlots<br/>flock, one slot per HTTP request"]:::new
+    execb["exec.py<br/>LocalBackend · DockerBackend"]:::new
+    snap["snapshot.py<br/>temp-index commits"]:::new
+    wf["workflow.py<br/>FlowStats · rules · propose"]:::new
+    canvas["canvas_tui.py<br/>terminal 2D canvas"]:::new
+    mem["memory.py · knowledge_graph.py<br/>O_EXCL logs · shard merge · run nodes"]:::mod
+  end
+
+  subgraph kids["Child processes — parallel groups only"]
+    child["python -m lmloop.child<br/>own globals, cwd, signals<br/>LMLOOP_PROJECT_SLUG pinned"]:::new
+  end
+
+  model[("Model server<br/>local LM Studio (default) · remote e.g. OpenRouter")]:::ext
+  slotdir[("~/.lmloop/slots/<br/>slot-i.lock per base_url")]:::ext
+  state[("~/.lmloop/projects/slug/<br/>JSONL memory · run logs · shards")]:::ext
+  host[("Host shell")]:::ext
+  ctr[("Sandbox containers<br/>--docker only")]:::ext
+  repo[("Workspace git repo<br/>refs/lmloop/*")]:::ext
+  clones[("Branch clones<br/>~/.lmloop/.../clones/")]:::ext
+
+  user --> entry
+  entry --> graphpy
+  entry --> loop
+  entry --> agent
+  entry --> wf
+  entry --> canvas
+  graphpy --> loop
+  graphpy --> cap
+  graphpy -->|"spawn spec · read result"| child
+  loop --> agent
+  loop --> tools
+  agent --> tools
+  agent --> chat
+  child --> chat
+  chat --> slots
+  slots --> slotdir
+  chat -->|"HTTP"| model
+  cap -->|"native models API"| model
+  tools --> execb
+  execb -->|"default"| host
+  execb -->|"--docker"| ctr
+  loop --> snap
+  graphpy --> snap
+  snap --> repo
+  graphpy -->|"clone mode"| clones
+  child -->|"cwd"| clones
+  loop --> mem
+  graphpy --> mem
+  mem --> state
+  wf -->|"reads run logs"| state
+  canvas --> mem
+```
+
+How to read it:
+
+- **Default path** (no flags, local model): `entry → loop/graph → agent → chat → slots →
+  model` with `execb → host`. Capacity resolves to 1, so `child` never spawns; the only
+  visible change is the slot lock, which also serializes two terminals.
+- **Every model call from every process** crosses `ModelSlots`. That is the one place
+  host-wide concurrency is enforced, whatever `graph.py` decided.
+- **Children never write project state.** Arrows into `state` come only from the parent.
 
 ---
 
@@ -107,6 +194,31 @@ any probe error / missing field       -> 1                                     #
   window produces truncation or server errors mid-run, while underestimating only
   compacts early.
 
+```mermaid
+flowchart TD
+  start(["LmsClient.capacity(cfg)"]) --> explicit{"max_parallel_agents<br/>is an int?"}
+  explicit -->|"yes"| clamp["clamp to 1..parallel_hard_cap"]
+  explicit -->|"auto"| prof{"base_url host is loopback,<br/>*.local, or RFC1918?"}
+  prof -->|"no: remote"| remote["remote_default_parallel<br/>clamped to hard cap"]
+  prof -->|"yes: local"| probe{"native models API<br/>reachable and model found?"}
+  probe -->|"no"| one(["1 — R-FLOOR"])
+  probe -->|"yes"| inst["instances = len(loaded_instances)"]
+  inst --> slotsq{"local_parallel_slots"}
+  slotsq -->|"int"| s_int["slots = configured value"]
+  slotsq -->|"auto + server reports slots"| s_rep["slots = reported value"]
+  slotsq -->|"auto + not reported"| s_one["slots = 1"]
+  s_int --> mult["max_calls = instances × slots<br/>clamped to hard cap"]
+  s_rep --> mult
+  s_one --> mult
+  mult --> ctx{"slot_context"}
+  ctx -->|"split (default)"| div["per-agent context =<br/>context_length / slots"]
+  ctx -->|"unified"| full["per-agent context =<br/>context_length"]
+  clamp --> out(["ServerCapacity"])
+  remote --> out
+  div --> out
+  full --> out
+```
+
 For a laptop serving one `qwen3.6-A3B` instance with default settings this resolves to
 **1**. A smaller model loaded with four slots resolves to 4 — at a quarter of the window
 each unless the server is known to use a unified cache. On local hardware, extra slots
@@ -135,6 +247,33 @@ class ModelSlots:
   hold a model slot; only generation does. This covers every caller uniformly: REPL
   turns, `until`, graph children, `memory mine`, skill drafting.
 - `chat.py` stays a leaf: `ModelSlots` lives in `server.py`, which `chat.py` already imports.
+Two terminals against a single-slot laptop server. The lock is held only while tokens
+are generated, never while tools run:
+
+```mermaid
+sequenceDiagram
+  participant A as Terminal A · until
+  participant L as slot-0.lock
+  participant B as Terminal B · REPL
+  participant M as LM Studio · 1 slot
+
+  A->>L: flock LOCK_EX|LOCK_NB
+  L-->>A: acquired
+  A->>M: POST /chat/completions (stream)
+  B->>L: flock LOCK_EX|LOCK_NB
+  L-->>B: busy
+  Note over B: poll every 250ms<br/>after 2s: [waiting for model slot · 1/1 busy]
+  M-->>A: stream ends
+  A->>L: release
+  A->>A: run_shell pytest -q (no slot held)
+  B->>L: flock
+  L-->>B: acquired
+  B->>M: POST /chat/completions
+  M-->>B: answer
+  B->>L: release
+  Note over A,B: if either process dies holding the lock,<br/>the kernel releases it — no stale lock files
+```
+
 - Mismatched explicit overrides across processes (one says 2, another 1) yield the larger
   slot set; that is the user's explicit choice, documented as such.
 - Non-POSIX platforms (no `fcntl`): capacity is forced to 1 and enforcement is in-process
@@ -202,6 +341,20 @@ edge package -> plan on fail
 - An old binary reading a graph file with a multi-target edge fails at **parse time**
   ("edge extra tokens…") before running anything — fail-closed across versions.
 
+The example graph as the scheduler sees it. Solid edges are `on pass`; `package`
+waits in the frontier until both of its `needs` have passed:
+
+```mermaid
+flowchart LR
+  plan["plan<br/>skill ceo"] --> api["api<br/>until --check tests/api"]
+  plan --> ui["ui<br/>until --check tests/ui"]
+  plan --> docs["docs<br/>skill review --readonly"]
+  api --> package["package<br/>skill review<br/>needs api ui"]
+  ui --> package
+  package -->|"pass"| mine["mine"]
+  package -.->|"fail"| plan
+```
+
 ### 2.2 Execution model: a frontier, replayed from the log
 
 `GraphRun` computes a **frontier** (set of pending node names) by replaying its rows; no
@@ -218,6 +371,25 @@ new persisted state is needed, so resume keeps working the way it does today.
 6. Frontier empty and nothing waiting → the run is done (then `mine`, as today).
 7. `mine` nodes run only when they are the sole runnable frontier member, and running one
    ends the run — today's semantics.
+
+```mermaid
+flowchart TD
+  replay(["Resume or step: replay run-log rows"]) --> frontier["frontier = pending nodes<br/>unrouted = failures with no edge"]
+  frontier --> empty{"frontier empty and<br/>no unrouted failures?"}
+  empty -->|"yes"| done(["done → mine if configured"])
+  empty -->|"no"| split["split into runnable (needs met)<br/>and waiting (needs unmet)"]
+  split --> anyrun{"any runnable?"}
+  anyrun -->|"no"| unsat["waiting nodes unsatisfiable<br/>or unrouted failures"]
+  unsat --> gate(["one HITL gate listing all of them"])
+  anyrun -->|"yes"| width{"width ≥ 2 and group<br/>eligible under isolation mode?"}
+  width -->|"no"| one["run first runnable<br/>in declaration order"]
+  width -->|"yes"| group["run up to width runnable nodes<br/>as child processes"]
+  one --> rows["parent appends node row(s)<br/>in declaration order"]
+  group --> settle["settle: all children finish<br/>batch gate approvals, one retry"]
+  settle --> rows
+  rows --> route["pass → add every pass target<br/>fail/blocked → add single target or mark unrouted"]
+  route --> frontier
+```
 
 Sequential execution (the default, and always with capacity 1) runs runnable frontier
 nodes one at a time in declaration order. A graph without fan-out or `needs` behaves
@@ -290,6 +462,42 @@ CLI stem. The spec carries the node definition, handoff, workspace path, frozen
   reader threads only update status lines and touch no lmloop globals. Child stderr goes
   to a per-child log file.
 
+One `readonly` group of two, with a denial and a Ctrl-C-free happy path:
+
+```mermaid
+sequenceDiagram
+  participant P as Parent · graph.py
+  participant C1 as Child · docs
+  participant C2 as Child · qa
+  participant S as ModelSlots
+  participant R as Run log
+
+  P->>P: width = min(capacity, eligible, graph_max_parallel)
+  par spawn with start_new_session=True
+    P->>C1: python -m lmloop.child --spec docs.json
+  and
+    P->>C2: python -m lmloop.child --spec qa.json
+  end
+  C1->>S: acquire slot per model request
+  C2->>S: acquire slot per model request
+  C1-->>P: stdout progress events (JSON lines)
+  C2-->>P: stdout progress events (JSON lines)
+  Note over P: one status line per child<br/>no interleaved live markdown
+  C1-->>P: result.json: pass, denied=[]
+  C2-->>P: result.json: pass, denied=[rm -rf build]
+  P->>P: settle group, boundary_approval once for all denials
+  opt user approves
+    P->>C2: re-run qa once with approvals
+    C2-->>P: result.json
+  end
+  P->>R: node rows in declaration order, par_group=g1
+  P->>P: write skill-use edges, route frontier
+```
+
+On Ctrl-C the parent, which is the only process attached to the terminal's signal,
+sends SIGINT to each child's process group, waits `child_grace_s`, SIGKILLs any
+survivor, and appends a pause row; resume re-runs the whole group.
+
 ### 3.3 One writer per file (R-ONEWRITER)
 
 - The **run log** is written only by the parent, one `node` row per child in declaration
@@ -329,6 +537,34 @@ CLI stem. The spec carries the node definition, handoff, workspace path, frozen
 6. **Cleanup:** clones and branches are removed after a successful apply, kept on
    `blocked`, and pruned after 14 days.
 
+```mermaid
+sequenceDiagram
+  participant W as Main working tree
+  participant P as Parent
+  participant K as Clone api / Clone ui
+  participant X as Scratch clone
+
+  P->>W: snapshot → commit S (includes uncommitted + untracked)
+  P->>K: git clone --local, fetch S, checkout -b lmloop/par/run/node S
+  Note over K: children work in their clone<br/>own sandbox if --docker, no published ports
+  K-->>P: child exits with result.json
+  P->>K: add -A, commit (parent-side, deterministic)
+  P->>X: clone at S, merge api branch, merge ui branch
+  alt any conflict
+    X-->>P: conflict paths
+    P->>P: merge --abort, node blocked, HITL gate, keep clones
+  else clean merge → commit R
+    P->>W: fresh snapshot tree == S tree?
+    alt tree changed during the group
+      P->>P: blocked (someone edited the main tree)
+    else unchanged
+      P->>W: git diff --binary S R | git apply
+      Note over W: HEAD and index untouched —<br/>looks like one agent's uncommitted edits
+      P->>K: remove clones and branches
+    end
+  end
+```
+
 ### 3.5 Honest defaults
 
 With the shipped local `base_url` and default config: capacity 1, `parallel_isolation:
@@ -339,6 +575,30 @@ colliding on a laptop.
 ---
 
 ## Part 4 — Workflow identification and proposal
+
+```mermaid
+flowchart LR
+  classDef model fill:#fef2f2,stroke:#ef4444
+  classDef human fill:#f0fdf4,stroke:#22c55e
+
+  logs[("until/*.jsonl<br/>graphs/*/*.jsonl")] --> stats["workflow.FlowStats<br/>pure function over rows"]
+  stats --> rules["rule table<br/>9 predicate → suggestion rows"]
+  rules --> report(["lmloop flow<br/>report with evidence lines"])
+  stats --> json(["lmloop flow --json"])
+
+  stats --> gatecheck{"terminal runs ≥<br/>propose_min_runs?"}
+  gatecheck -->|"no"| refuse(["print stats, refuse to draft"])
+  gatecheck -->|"yes"| draft["one _chat, no tools<br/>_graph_author.md"]:::model
+  draft --> parse{"graph.parse_graph ok?"}
+  parse -->|"no"| err(["show error + raw draft, save nothing"])
+  parse -->|"yes"| probecmd["probe argv0 of each command<br/>annotate misses as unverified"]
+  probecmd --> diff["unified diff vs existing graph"]
+  diff --> yn{"user y/N"}:::human
+  yn -->|"n"| nothing(["nothing written"])
+  yn -->|"y"| save[("~/.lmloop/graphs/name.md<br/>shadows packaged, never overwrites")]
+```
+
+Only the red node calls a model, and only the green node can write a file.
 
 ### 4.1 `lmloop flow` (deterministic)
 
@@ -433,6 +693,26 @@ class CanvasView:
     nodes: tuple[CanvasNode, ...]
     edges: tuple[tuple[str, str, str], ...]
     truncated: bool; total_nodes: int
+```
+
+```mermaid
+flowchart LR
+  subgraph files["~/.lmloop/projects/slug/"]
+    n[("graph_nodes.jsonl")]
+    e[("graph_edges.jsonl")]
+    l[("learnings.jsonl · decisions.jsonl")]
+  end
+  n --> kg["KnowledgeGraph<br/>latest row per key, decay"]
+  e --> kg
+  l --> kg
+  kg --> view["canvas_view(query, types, limit)<br/>filter · cap · deterministic layout"]
+  view --> cv[("CanvasView<br/>nodes with x, y · edges · truncated")]
+  cv --> proj["project to cells<br/>bucket collisions · cull viewport"]
+  proj --> canvasp["Canvas pane"]
+  cv --> detail["Detail pane<br/>node + 1-hop neighbors"]
+  keys(["keys: hjkl · +/- · Tab · Enter · / · t · g · r"]) --> proj
+  keys --> detail
+  keys -->|"r: reload"| kg
 ```
 
 `KnowledgeGraph.canvas_view(query="", types=(), limit=canvas_max_nodes)`. Filtering and

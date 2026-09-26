@@ -49,6 +49,114 @@ requested. `--docker-persist` implies `--docker`. Once the flag is present there
 fallback to the host. Git snapshots (§1.6) default on in **both** modes, because the
 default mode has no container at all.
 
+## Architecture
+
+The combined target architecture for both proposals is in the companion doc
+([Architecture overview](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md#architecture-overview));
+the current system is in [ARCHITECTURE.md](ARCHITECTURE.md#system-overview). This
+section shows only what this proposal adds. Dashed boxes are new.
+
+### Target components
+
+Every command-running caller goes through one backend instance chosen once per process
+(R-SAME). The snapshot writer sits beside it, on the host, in both modes.
+
+```mermaid
+flowchart TB
+  classDef new fill:#eef6ff,stroke:#3b82f6,stroke-dasharray:5 3
+  classDef ext fill:#f5f5f5,stroke:#999
+
+  cliflags["cli.py<br/>--docker · --docker-persist · --docker-image"]
+
+  subgraph callers["Command callers"]
+    runshell["tools.run_shell<br/>maker + eval tool"]
+    runcheck["loop.run_check<br/>--check"]
+    accept["acceptance runner<br/>--accept · --keep · baseline"]:::new
+    probe["probe runner<br/>eval_probe"]:::new
+  end
+
+  factory["exec.build_backend()"]:::new
+  local["LocalBackend<br/>subprocess on host<br/>(today's code, moved)"]:::new
+  docker["DockerBackend<br/>docker CLI over subprocess"]:::new
+  snap["snapshot.py<br/>temp-index commit → refs/lmloop/*"]:::new
+
+  hostsh[("Host shell<br/>cwd = workspace")]:::ext
+  ctr[("Sandbox container<br/>bind mount + shadow volumes")]:::ext
+  roctr[("Probe container<br/>workspace :ro, network none")]:::ext
+  gitrefs[("Project .git<br/>refs/lmloop/run/step")]:::ext
+
+  cliflags --> factory
+  factory -->|"no flag (default)"| local
+  factory -->|"--docker"| docker
+  runshell --> factory
+  runcheck --> factory
+  accept --> factory
+  probe --> factory
+  local --> hostsh
+  docker -->|"docker exec"| ctr
+  docker -->|"docker run --rm, probe only"| roctr
+  snap --> gitrefs
+```
+
+### Activation and preflight
+
+```mermaid
+flowchart TD
+  start(["lmloop invoked"]) --> flag{"--docker or<br/>--docker-persist?"}
+  flag -->|"no (default)"| localb["LocalBackend<br/>docker never probed"]
+  flag -->|"yes"| pf["Preflight: 9 checks<br/>§1.3"]
+  pf -->|"any hard failure"| abort(["Abort, nonzero exit<br/>before first model call"])
+  pf -->|"pass (warnings allowed)"| mode{"persist?"}
+  mode -->|"no"| eph["Ephemeral container<br/>name has pid, removed at exit"]
+  mode -->|"yes"| per["Persist container<br/>reattach if digest + config hash match"]
+  localb --> run(["Run: REPL / until / graph"])
+  eph --> run
+  per --> run
+```
+
+### Trust boundaries under `--docker`
+
+```mermaid
+flowchart LR
+  classDef ext fill:#f5f5f5,stroke:#999
+  classDef warn fill:#fff7ed,stroke:#f97316
+  classDef ok fill:#f0fdf4,stroke:#22c55e
+
+  lms[("Model server · host")]:::ext
+  lmloop["lmloop process · host<br/>agent · memory · gates"]
+  cmd["Container · bridge<br/>shell commands<br/>host uid:gid · caps dropped · cgroup limits<br/>shadow volumes: .venv · node_modules"]
+
+  subgraph reach["What the container touches"]
+    direction TB
+    ws[("1 · Workspace git repo — bind mount, read-write<br/>protected by snapshots, not by the container")]:::warn
+    ports["2 · Published ports — 127.0.0.1 only<br/>3000-3010 · 8000-8010"]:::ok
+    hostsvc[("3 · Host services on 0.0.0.0 — reachable<br/>bridge gateway is not isolation")]:::warn
+    inet(("4 · Internet — egress allowed")):::warn
+  end
+
+  lan(("LAN"))
+
+  lms <-->|"HTTP"| lmloop
+  lmloop -->|"docker exec"| cmd
+  cmd --> ws
+  cmd --> ports
+  cmd -.-> hostsvc
+  cmd -.-> inet
+  lan -.-x|"no route"| ports
+```
+
+| Target | In `bridge` | In `none` |
+|---|---|---|
+| 1 · Workspace | Read-write. The container does **not** protect it; snapshots do (§1.6) | Same |
+| 2 · Published ports | Host loopback only, so the LAN has no route to the agent's test servers | Not published |
+| 3 · Host services on 0.0.0.0 | **Reachable** through the bridge gateway, and via `host.docker.internal` on Docker Desktop | Unreachable |
+| 4 · Internet | **Egress allowed**, so exfiltration is possible | Blocked |
+
+The agent itself stays on the host and talks to the model server directly; the container
+never needs to reach it. Orange targets are the honest part of R-NET: `bridge` limits
+inbound exposure, and only `none` removes 3 and 4 — at the cost of package installs and
+any command that needs the network.
+
 ---
 
 ## Part 0 — Requirements from the adversarial review
@@ -132,6 +240,42 @@ class ExecBackend:          # method contract, not an ABC
 | Restart policy | none | `sandbox_persist_restart` (default `unless-stopped`) |
 | Teardown | `docker rm -f` in `finally` + `atexit` | Only via `lmloop sandbox rm/reset` |
 | Orphans | Next start sweeps `lmloop.mode=ephemeral` containers whose pid is dead | Digest/config-hash mismatch refuses; age/size warns |
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  state "Ephemeral (--docker)" as E {
+    [*] --> ESweep: start
+    ESweep: sweep dead-pid orphans
+    ESweep --> ECreate
+    ECreate: docker run --init, name has pid
+    ECreate --> ERun
+    ERun: exec commands
+    ERun --> ERemoved: normal exit, exception, atexit
+    ERemoved: docker rm -f
+    ERemoved --> [*]
+    ERun --> EOrphan: kill -9
+    EOrphan: leaked container
+    EOrphan --> ESweep: next --docker start
+  }
+  state "Persist (--docker-persist)" as P {
+    [*] --> PCheck: start
+    PCheck: labels match workspace, digest, config hash?
+    PCheck --> PCreate: absent
+    PCheck --> PRun: match
+    PCheck --> PRefused: mismatch
+    PCreate: docker run --init, restart unless-stopped
+    PCreate --> PRun
+    PRun: exec commands, age and layer warnings
+    PRun --> PIdle: lmloop exits
+    PIdle: container keeps running
+    PIdle --> PCheck: next run reattaches
+    PRefused: abort with sandbox reset hint
+    PRefused --> PReset: lmloop sandbox reset
+    PReset: rm -f then recreate, deps volumes kept
+    PReset --> PRun
+  }
+```
 
 `lmloop.config_hash` is `sha8` of the normalized values that are baked in at creation
 (image, network, ports, memory, cpus, pids, env allowlist, shadow dirs). Changing any of
@@ -273,6 +417,39 @@ Guards:
 | Maker prose | Zero |
 | Other shell exits | Evidence for the checker, never a verdict |
 
+The `until` cycle with every new step in place. Every failure returns to the maker
+(through a fresh snapshot) with the evidence that caused it; nothing but deterministic
+exits and a `STATUS: pass` can reach `done`.
+
+```mermaid
+flowchart TD
+  classDef new fill:#eef6ff,stroke:#3b82f6,stroke-dasharray:5 3
+
+  start(["until goal"]) --> base{"require_negative_baseline<br/>or --keep present?"}
+  base -->|"yes, first cycle only"| bl["Baseline:<br/>run --check, --accept, --keep<br/>record once"]:::new
+  base -->|"no"| snap
+  bl -->|"flag on and all check/accept already pass"| blocked1(["blocked: nothing to prove"])
+  bl -->|"a --keep already fails"| blocked2(["blocked: invariant broken before work"])
+  bl -->|"ok"| snap["Snapshot → refs/lmloop/run/step"]:::new
+  snap --> maker["Maker act()<br/>full tools, maker backend"]
+  maker --> hascheck{"--check set?"}
+  hascheck -->|"yes"| check["Run --check"]
+  hascheck -->|"no"| eval["Eval act(), read-only tools<br/>+ shell evidence table"]
+  check -->|"nonzero"| snap
+  check -->|"exit 0"| acc
+  eval -->|"STATUS: fail"| snap
+  eval -->|"STATUS: blocked / missing"| gate(["HITL gate"])
+  eval -->|"STATUS: pass"| acc["Run --accept and --keep"]:::new
+  acc -->|"any nonzero"| snap
+  acc -->|"all exit 0"| trans{"baseline required and<br/>no fail → pass transition?"}:::new
+  trans -->|"yes"| snap
+  trans -->|"no"| pr{"eval_probe on and<br/>context ≥ probe_min_context?"}
+  pr -->|"no"| done(["done: pass"])
+  pr -->|"yes"| probe["Probe: no-tools act proposes ≤ 2 argv commands<br/>docker: :ro sibling container<br/>host: pre-probe snapshot"]:::new
+  probe -->|"any nonzero"| snap
+  probe -->|"all exit 0, or skipped"| done
+```
+
 ### 2.2 Acceptance and invariant commands
 
 ```
@@ -289,17 +466,20 @@ node build until --check 'pytest -q' --keep 'ruff check .' refactor the parser
 4. They should tolerate repeated execution (build caches, `.pytest_cache`) — they run at
    baseline and at every passing cycle. The README states this.
 
-### 2.3 Baseline (`require_negative_baseline`, default false)
+### 2.3 Baseline
 
-Baseline covers `--check` and `--accept`, but **not** `--keep`:
+The baseline runs when `require_negative_baseline` (default false) is on **or** any
+`--keep` command is present. The transition rule covers `--check` and `--accept`, but
+**not** `--keep`:
 
 1. Before the first maker step, run `--check`, every `--accept`, and every `--keep`; record
    exits once in a `baseline` row. Resume never re-runs it.
 2. With the flag on, reaching `done/pass` requires at least one of `--check` / `--accept`
    to have been nonzero at baseline and zero at the end.
-3. If they all already pass at baseline, stop with `blocked`: *"check/acceptance commands
-   already pass — nothing to prove; tighten them, or use --keep for invariants"*.
-4. A `--keep` command that **fails at baseline** stops with `blocked` too: *"invariant
+3. With the flag on, if they all already pass at baseline, stop with `blocked`:
+   *"check/acceptance commands already pass — nothing to prove; tighten them, or use
+   --keep for invariants"*.
+4. Flag on or off, a `--keep` command that **fails at baseline** stops with `blocked`: *"invariant
    already broken before any work: <cmd>"* — otherwise the maker is blamed for a
    pre-existing failure and burns cycles on it.
 
