@@ -52,7 +52,14 @@ def generate_skill_draft(cfg: dict, model: str, name: str, brief: str) -> str:
 # this module.
 
 def _accumulate_usage(stats: "dict | None", usage: dict) -> None:
-    if not stats or not usage:
+    if not stats:
+        return
+    if not usage:
+        # A halted stream closes before the server's usage chunk. Zero the
+        # per-round numbers so the round line / footer do not repeat the
+        # previous round; context fill falls back to the estimate.
+        stats["last_prompt_tokens"] = 0
+        stats["last_completion_tokens"] = 0
         return
     stats["prompt_tokens"] = stats.get("prompt_tokens", 0) + int(usage.get("prompt_tokens") or 0)
     stats["completion_tokens"] = stats.get("completion_tokens", 0) + int(usage.get("completion_tokens") or 0)
@@ -158,6 +165,15 @@ def _should_nudge_continue(content: str, turn_tools: int, nudges: int,
         return False
     # After tools, or first-round plan-only (no tools yet).
     return True
+
+
+def _is_noise(text: str) -> bool:
+    """True when halted content carries no letters or digits (``.``, ``-``, …).
+
+    A repetition halt on punctuation-only output is the model stalling, not
+    a draft worth keeping; treat it like an empty round.
+    """
+    return not any(ch.isalnum() for ch in (text or ""))
 
 
 def _should_nudge_halt(content: str, nudges: int, max_nudges: int) -> bool:
@@ -420,6 +436,8 @@ class RoundDisplay:
         # A halt is an unfinished round, not an answer. Do not promote
         # looping reasoning into content (that made gather stop).
         if halted and not tool_calls:
+            if _is_noise(content):
+                content = ""  # punctuation loop: nothing to keep, log, or show
             if self.thinking is not None and self.thinking.active:
                 retired = self.thinking.erase()
                 if retired.strip() and self.on_thinking:

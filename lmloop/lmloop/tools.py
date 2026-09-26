@@ -564,7 +564,11 @@ def _numbered_chunk(text: str, label: str, start_line: int, max_lines: int) -> s
     start = max(1, start_line)
     chunk = lines[start - 1: start - 1 + max_lines]
     numbered = [f"{start + i:5d}| {line}" for i, line in enumerate(chunk)]
-    header = f"[{label}: lines {start}-{start + len(chunk) - 1} of {len(lines)}]"
+    end = start + len(chunk) - 1
+    header = f"[{label}: lines {start}-{end} of {len(lines)}]"
+    if end < len(lines):
+        # Name the exact next window so the model neither overlaps nor skips.
+        header += f"\n[continue with start_line={end + 1}]"
     return _truncate(header + "\n" + "\n".join(numbered))
 
 
