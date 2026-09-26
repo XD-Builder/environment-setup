@@ -911,6 +911,16 @@ class FileEditToolTests(unittest.TestCase):
         self.assertEqual([b.read_text() for b in backups], ["v1\n", "v2\n", "v3\n"])
         self.assertIn(str(backups[2]), out)  # result cites the exact pre-image
 
+    def test_read_file_header_names_next_start_line(self):
+        f = self.root / "long.md"
+        f.write_text("\n".join(f"l{i}" for i in range(1, 608)) + "\n")
+        first = read_file("long.md", workspace_root=self.root)
+        self.assertIn("lines 1-400 of 607]", first)
+        self.assertIn("[continue with start_line=401]", first)
+        rest = read_file("long.md", start_line=401, workspace_root=self.root)
+        self.assertIn("lines 401-607 of 607]", rest)
+        self.assertNotIn("continue with", rest)
+
     def test_update_file_preserves_crlf_and_matches_lf_snippet(self):
         f = self.root / "win.txt"
         f.write_bytes(b"a\r\nb\r\nc\r\n")
