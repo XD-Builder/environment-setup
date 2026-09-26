@@ -1,7 +1,7 @@
 # Design: Capacity-aware DAG workflows, flow mining, and the terminal knowledge canvas
 
 **Status:** proposed (nothing here is implemented)
-**Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 3)
+**Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 4)
 **Depends on:** `graph.py`, `server.py`, `chat.py`, `memory.py`, `knowledge_graph.py`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) (the canvas and parallel children
@@ -16,6 +16,14 @@ Four features, in dependency order:
 3. **Bounded parallelism** — fan-out up to capacity, in child processes, with real isolation.
 4. **Terminal knowledge canvas** — a 2D map of project memory in the terminal. No browser,
    no listener, no new dependency.
+
+## Review log (round 4)
+
+| # | Sev | Change | Why | Where |
+|---|---|---|---|---|
+| 1 | P1 | Graph nodes no longer need `--check`: `until` and `skill` nodes derive a check plan exactly like `/until`, stored in the `node` row's `verify` field and reused on re-entry | The packaged `company` graph hardcoded `pytest -q`, which cannot pass outside pytest projects (including lmloop) | §2.1 example, companion doc §2.1 |
+| 2 | P2 | `probe_model` removed; `eval_model` also serves check proposals | The per-cycle probe is deferred in the companion doc | §1.5 |
+| 3 | P2 | Flow mining measures check-plan quality per source, and rules suggest project changes rather than more flags | Inference makes "which source gave a useful gate" the question worth answering | §4.1, §4.2 |
 
 ## Review log (round 3)
 
@@ -294,7 +302,7 @@ killed. Width never re-widens within an invocation.
 | Lever | Design |
 |---|---|
 | `run_token_budget` (default `0` = off) | The parent sums `total_tokens` from its own calls and every child's reported usage; crossing the budget pauses the run exactly like `graph_max_steps`, and `/continue` resumes. Step budgets bound iterations; this bounds money |
-| Per-role models | `eval_model`, `probe_model`, `mine_model` (empty = main model), same `base_url`. `isolated_act` already takes the model as a parameter. A different checker model also decorrelates the errors that make same-model auditing weak |
+| Per-role models | `eval_model` (checker and check proposals) and `mine_model` (empty = main model), same `base_url`. `isolated_act` already takes the model as a parameter. A different checker model also decorrelates the errors that make same-model auditing weak |
 | Cache-stable prefixes | The system prompt is assembled volatile-last; parallel siblings receive the **same frozen `clock_now`** from the parent, so their system prompts are byte-identical and one cached prefix serves them all. Revision 2 would have given each child its own clock and a cold cache |
 | Explicit cache breakpoints | `prompt_cache: off` (default) \| `system`. `system` marks the system message with a provider cache breakpoint for providers that require explicit annotation; automatic-prefix providers need only stability. Off by default because a one-shot run pays the cache-write premium with no reads |
 
@@ -323,7 +331,7 @@ Two additive changes to the line format:
 ```
 node plan    skill ceo
 node api     until --check 'pytest -q tests/api' implement the API
-node ui      until --check 'pytest -q tests/ui' implement the UI
+node ui      until implement the UI
 node docs    skill review --readonly check the docs match the API
 node package skill review needs api ui
 node mine    mine
@@ -340,6 +348,10 @@ edge package -> plan on fail
   the existing duplicate-edge check is unchanged; `EdgeDef.dst` becomes `dsts: tuple`.
 - **`needs a b`** on a node: it may run only when `a` and `b` each have a latest status of
   `pass` in this run.
+- **Checks are optional on every node.** `api` pins a narrow check because that node owns
+  one test directory; `ui` states only its goal and gets a derived plan (companion doc
+  §2.1). Pin a check when a node's scope is narrower than the project's test suite;
+  otherwise let lmloop derive it.
 - An old binary reading a graph file with a multi-target edge fails at **parse time**
   ("edge extra tokens…") before running anything — fail-closed across versions.
 
@@ -349,7 +361,7 @@ waits in the frontier until both of its `needs` have passed:
 ```mermaid
 flowchart LR
   plan["plan<br/>skill ceo"] --> api["api<br/>until --check tests/api"]
-  plan --> ui["ui<br/>until --check tests/ui"]
+  plan --> ui["ui<br/>until (derived checks)"]
   plan --> docs["docs<br/>skill review --readonly"]
   api --> package["package<br/>skill review<br/>needs api ui"]
   ui --> package
@@ -584,7 +596,7 @@ flowchart LR
   classDef human fill:#f0fdf4,stroke:#22c55e
 
   logs[("until/*.jsonl<br/>graphs/*/*.jsonl")] --> stats["workflow.FlowStats<br/>pure function over rows"]
-  stats --> rules["rule table<br/>9 predicate → suggestion rows"]
+  stats --> rules["rule table<br/>10 predicate → suggestion rows"]
   rules --> report(["lmloop flow<br/>report with evidence lines"])
   stats --> json(["lmloop flow --json"])
 
@@ -623,6 +635,7 @@ metrics whose inputs were never recorded; these row fields make them computable:
 | Transition frequencies | Real topology vs authored |
 | Denials by command shape | Recurring irreversible needs |
 | Wall-clock and tokens per node and group | Where time and money went; whether parallelism paid |
+| Check-plan outcomes per source and tier | Which sources (Makefile, `DEVELOPMENT.md`, memory, history, model) yield checks that discriminate (fail → pass), get dropped at baseline, or only ever act as keeps |
 
 `lmloop flow` prints; `--json` emits. No model calls.
 
@@ -631,12 +644,13 @@ metrics whose inputs were never recorded; these row fields make them computable:
 | Rule | Fires when | Suggestion |
 |---|---|---|
 | `budget-bound` | p90 cycles ≥ 0.9 × `until_max_steps`, usually paused | Raise the budget or split the goal |
-| `weak-gate` | `--check` passes at baseline or on cycle 1 in ≥ 80% of runs | Enable `require_negative_baseline`, or use `--keep` if it is an invariant |
-| `flaky-gate` | Same check changes result between two rows with **identical `tree`** | Quarantine it; add a stable `--accept` (disabled when snapshots are off) |
+| `checker-only` | ≥ 50% of runs finish on eval because no check could prove the goal | The project lacks goal-level tests; document a narrow test command in `AGENTS.md` / `DEVELOPMENT.md`, or add tests |
+| `flaky-gate` | Same check changes result between two rows with **identical `tree`** | Quarantine it; prefer a narrower, stable check (disabled when snapshots are off) |
 | `blocked-loop` | Eval `blocked` ≥ 30% | Author an `on blocked` edge |
-| `repeat-denial` | Same denied shape in ≥ 3 runs | Pre-approve, or move it into an acceptance command |
+| `repeat-denial` | Same denied shape in ≥ 3 runs | Pre-approve it, or make it one of the project's documented checks |
 | `dead-node` | Never entered in ≥ 5 runs | Remove it |
-| `hot-cycle` | One `on fail` edge ≥ 50% of transitions | Add `--accept`, not more retries |
+| `hot-cycle` | One `on fail` edge ≥ 50% of transitions | That node needs a sharper check (none of its planned checks failed at baseline), not more retries |
+| `bad-source` | A source's commands are dropped at baseline (unrunnable or timed out) in ≥ 3 runs | Fix or remove that command where it is documented; it is misleading every inferred plan |
 | `serial-fanout` | Independent nodes always sequential while capacity ≥ 2 | Fan-out edge + `parallel_isolation: readonly` |
 | `slow-parallel` | Group wall-clock ≥ 0.8 × sum of members' solo times | Width isn't paying on this server; lower it |
 
@@ -670,7 +684,7 @@ When `use_graph` is on, written by the parent at terminal status, once per run:
 | New edge | Meaning |
 |---|---|
 | `ran_node` | `run` → skill/concept entered |
-| `verified_by` | `run` → command concept for each check/acceptance command |
+| `verified_by` | `run` → command concept for each planned check, with its source and tier on the edge note |
 | `produced` | `run` → learning mined from it |
 
 Hashed command keys keep a `curl -H 'Authorization: …'` check out of node keys and
@@ -763,7 +777,7 @@ full-screen application:
 | `graph_max_parallel` | `0` | Extra per-invocation cap; `0` = none |
 | `child_grace_s` | `10` | Interrupt grace before SIGKILL |
 | `run_token_budget` | `0` | Pause after this many tokens; `0` = off |
-| `eval_model` / `probe_model` / `mine_model` | `""` | Per-role model on the same endpoint |
+| `eval_model` / `mine_model` | `""` | Per-role model on the same endpoint |
 | `prompt_cache` | `off` | `off` \| `system` |
 | `join_handoff_chars` | `1500` | Per-predecessor clip |
 | `propose_min_runs` | `5` | Runs required before drafting |
@@ -818,7 +832,7 @@ full-screen application:
 |---|---|---|---|---|
 | W1 | Row fields `denied`, `capacity`, `width`, `tree`, `usage` | `loop.py`, `graph.py` | Present when applicable; old readers ignore them | Every metric has a recorded input |
 | W2 | `workflow.py` `FlowStats` | `workflow.py` | Fixture logs → exact values; empty history → empty stats | Pure function over rows |
-| W3 | Nine rules as data with evidence | `workflow.py` | Each fires and does not fire; `flaky-gate` off without `tree` | Rules extendable without touching the printer |
+| W3 | Ten rules as data with evidence | `workflow.py` | Each fires and does not fire; `flaky-gate` off without `tree` | Rules extendable without touching the printer |
 | W4 | `lmloop flow` / `/flow` / `--json` | `commands.py`, `cli.py`, `repl.py`, `ui.py` | Routing; stable JSON | Works with `use_graph` off |
 | W5 | `graph propose` + reserved name + `which`-based probing | `graph.py`, `skills/_graph_author.md`, `cli.py`, `repl.py`, `commands.py` | Below minimum refuses; unparseable writes nothing; `n` writes nothing; packaged never overwritten | No graph written without `y` |
 | W6 | `run`/`goal`/command-concept nodes and edges | `knowledge_graph.py`, `loop.py`, `graph.py` | Once per run; hashed command keys; `use_graph` off → nothing | Runs appear in `/memory graph` |

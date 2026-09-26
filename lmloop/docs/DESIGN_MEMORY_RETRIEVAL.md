@@ -274,7 +274,7 @@ identifier hits. Both were verified against sqlite 3.45.
 | `decision` | `decisions.jsonl` | decide row | not retired by a later supersede |
 | `checkpoint` | `checkpoints/*.md` | file | always |
 | `turn` | `sessions/*.jsonl` | user or assistant message (tool and system rows skipped — truncated, noisy) | always |
-| `handoff` | `until/*.jsonl`, `graphs/*/*.jsonl` | maker / node summary | always |
+| `handoff` | `until/*.jsonl`, `graphs/*/*.jsonl` | maker / node summary, and each `check` row's per-command `results` | always |
 
 `handoff` docs are the cheapest high-value addition: each is a model-written summary of
 what a cycle changed and what remains — exactly "what did we try".
@@ -366,6 +366,22 @@ remote defaults off. The index file itself sits beside the JSONL it is derived f
 has the same permissions — it creates no new at-rest exposure.
 
 ---
+
+### 5.6 Serving check inference
+
+The companion doc derives check plans partly from memory (step 4: `tool` / `operational`
+learnings containing a backticked command) and history (step 5: commands that went
+fail → pass in earlier runs). Both are queries this index answers directly:
+
+- `MemoryIndex.command_candidates()` — active `learning` docs of type `tool` or
+  `operational`, restricted to those whose body has a backtick span that `ShellCommand`
+  parses, ordered `user-stated` first, then by effective confidence. The tier comes from
+  the learning's `source`, never from the ranking.
+- `handoff` docs include each `check` row's per-command `results`, so
+  "commands that proved a goal here before" is a filter on indexed run rows, not a new
+  scan of every run log.
+- The scan fallback (Layer B) answers both by reading the same JSONL, so inference never
+  depends on the index existing.
 
 ## Part 6 — Layer E: semantic rerank (opt-in)
 
@@ -469,6 +485,7 @@ and run handoffs when enabled.
 | D5 | Wire `search_memory` and `context_block` to the index, graph decoration via `GraphView`, `recall_sessions` gating by profile | `memory.py`, `knowledge_graph.py`, `tools.py` | Remote profile + `auto` → no session snippets; local → snippets present | Same output shape as today plus "Past sessions" |
 | D6 | Read-only access for children and canvas; parent-only writes | `memory_index.py`, `child.py`, `canvas_tui.py` | A read-only connection cannot write; concurrent read during parent write succeeds under WAL | R-ONEWRITER holds |
 | D7 | `memory reindex` / `memory index` commands, `/stats` line | `commands.py`, `cli.py`, `repl.py`, `ui.py` | Routing; status fields | Users can see and reset the index |
+| D8 | `command_candidates()` and proven-history query for check inference, with scan fallback | `memory_index.py`, `memory.py` | `user-stated` learning ranked first; unparsable backtick span excluded; identical results with index off | Check inference reads memory in milliseconds |
 
 ### Phase E — semantic rerank (opt-in)
 

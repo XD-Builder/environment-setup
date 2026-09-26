@@ -1,7 +1,7 @@
 # Design: Execution sandbox and verification hardening
 
 **Status:** proposed (nothing here is implemented)
-**Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 3)
+**Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 4)
 **Depends on:** `tools.run_shell`, `tools.GatePolicy`, `loop.run_until`, `graph.run_graph`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
 [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md)
@@ -11,8 +11,23 @@ Two questions drive this file:
 1. Should autonomous shell execution leave the host? **Only when the user asks for it
    on the command line.** The default stays exactly what ships today: local execution,
    local model, no container runtime anywhere in the path.
-2. How does the loop stop believing the model? **Deterministic check commands with a
-   recorded baseline.** An adversarial LLM auditor is a supplement, not the mechanism.
+2. How does the loop stop believing the model — **without making the user type
+   commands?** lmloop **derives** a check plan from the goal, the project, and memory,
+   baselines it, and lets exit codes decide. Typed `--check` / `--keep` remain the exact
+   override. An LLM checker decides only when no command can prove the goal.
+
+## Review log (round 4)
+
+| # | Sev | Defect in revision 3 | Evidence | Fix (section) |
+|---|---|---|---|---|
+| 1 | P0 | **Shipped:** a check command that cannot start (`pytest` not installed) is classified `fail`, so the maker loops trying to fix code that is not broken until `until_max_steps` | Reproduced on this repo: `ERROR: [Errno 2] No such file or directory: 'pytest'` → `fail` | Spawn errors and exit 126/127 are `blocked` (§2.5) |
+| 2 | P0 | **Shipped:** the packaged `company` graph hardcodes `--check 'pytest -q'`, which cannot pass in any non-pytest project — including lmloop itself, whose tests run under `unittest` | `graphs/company.md`, `DEVELOPMENT.md` | `company` drops the hardcoded check and infers one (§2.1, task V10) |
+| 3 | P1 | The design made typed commands the **only** authority, so a plain-language goal got the weakest gate (model-only eval). The UX tax fell on exactly the users who most need verification | Revision 3 §2 | Derived check plans with trust tiers (§2.1–§2.4) |
+| 4 | P1 | Three command flags (`--check`, `--accept`, `--keep`) differing only in whether eval also runs — a distinction users should never have to learn | Revision 3 §2.2 | `--accept` removed; when eval runs is derived from the baseline (§2.4) |
+| 5 | P2 | `require_negative_baseline` was a flag guarding behavior that should be the default | Revision 3 §2.3 | Reclassification is automatic; the key is gone (§2.4) |
+| 6 | P2 | Per-cycle adversarial probe costs a serialized model call per passing cycle on a single-slot laptop, for a same-model signal | Capacity model in the companion doc | Deferred; the once-per-run proposal in §2.1 step 7 covers the useful half (§2.9) |
+
+## Review log (round 3)
 
 ## Review log (round 3)
 
@@ -27,9 +42,9 @@ diff intent, not just text.
 | 3 | P0 | `sh -lc 'timeout … <quoted command>'` breaks shell-syntax commands (`timeout` tries to exec a program literally named `a \| b`) and `-l` sources login profiles nondeterministically | Quoting analysis | Two argv shapes, no login shell (§1.2) |
 | 4 | P0 | Host-built `.venv` / `node_modules` in the bind mount are **wrong-platform** binaries inside a Linux container (Mach-O on macOS); container-built ones then break the host. Revision 2 filed this under "performance" | Platform ABI | Per-workspace named volumes shadow dependency dirs (§1.5) |
 | 5 | P1 | `bridge` described as host isolation. It is not: a bridged container reaches host services bound to 0.0.0.0 through the gateway, Docker Desktop always resolves `host.docker.internal`, revision 2 *added* `--add-host` on purpose, and outbound internet (exfiltration) is unrestricted | Docker networking | R-NET rewritten honestly; no `--add-host`; `none` recommended for untrusted input (§1.4) |
-| 6 | P1 | Probe called "read-only" but the readonly tool set still includes `run_shell`, shell redirects and `pip install` mutate, and a `max_rounds=1` act may call tools itself | `tools.READONLY_OMIT` keeps `run_shell` | Probe act is `no_tools`; probe commands are simple argv only; under `--docker` they run in a sibling container with the workspace mounted `:ro`, which is actually enforceable (§2.5) |
-| 7 | P1 | Negative baseline blocks legitimate refactor goals, where tests are **supposed** to pass before and after | Rule analysis | `--keep` invariants vs `--accept` transitions; baseline also covers `--check` (§2.3) |
-| 8 | P1 | "Unverified: last shell exited N" is biased: a trailing `grep` no-match (exit 1) is framed as a failure, contradicting R-SCOPE | Rule analysis | Neutral "Shell evidence" table of the last three commands (§2.4) |
+| 6 | P1 | Probe called "read-only" but the readonly tool set still includes `run_shell`, shell redirects and `pip install` mutate, and a `max_rounds=1` act may call tools itself | `tools.READONLY_OMIT` keeps `run_shell` | Probe act is `no_tools`; probe commands are simple argv only; under `--docker` they run in a sibling container with the workspace mounted `:ro`, which is actually enforceable (the probe is now deferred, §2.9) |
+| 7 | P1 | Negative baseline blocks legitimate refactor goals, where tests are **supposed** to pass before and after | Rule analysis | `--keep` invariants; since round 4, automatic reclassification of passing checks (§2.4) |
+| 8 | P1 | "Unverified: last shell exited N" is biased: a trailing `grep` no-match (exit 1) is framed as a failure, contradicting R-SCOPE | Rule analysis | Neutral "Shell evidence" table of the last three commands (§2.7) |
 | 9 | P1 | "Downgrade is safe" was false for graphs: `GraphRun.next_step` returns `("run", defn.start)` for an unknown role, so an old binary would **restart the whole graph** | `graph.py:377` | Graph logs get no new roles; verification folds into the `node` row, as eval already does (§3.3) |
 | 10 | P1 | Persist container keeps old limits/network after config changes | Lifecycle analysis | `lmloop.config_hash` label; mismatch refuses with the reset hint (§1.2) |
 | 11 | P1 | Two containers on one workspace (persist + ephemeral, or two processes) and host port collisions were possible | Lifecycle analysis | Preflight refuses a second live container per workspace and checks port availability (§1.3) |
@@ -60,7 +75,9 @@ section shows only what this proposal adds. Dashed boxes are new.
 ### Target components
 
 Every command-running caller goes through one backend instance chosen once per process
-(R-SAME). The snapshot writer sits beside it, on the host, in both modes.
+(R-SAME). `checks.py` only *reads* the workspace to build a plan; the plan's commands run
+through the same backend as the maker. The snapshot writer sits beside it, on the host,
+in both modes.
 
 ```mermaid
 flowchart TB
@@ -71,10 +88,10 @@ flowchart TB
 
   subgraph callers["Command callers"]
     runshell["tools.run_shell<br/>maker + eval tool"]
-    runcheck["loop.run_check<br/>--check"]
-    accept["acceptance runner<br/>--accept · --keep · baseline"]:::new
-    probe["probe runner<br/>eval_probe"]:::new
+    runcheck["check-plan runner<br/>baseline · per-cycle plan · targeted tests"]:::new
   end
+
+  infer["checks.py<br/>goal text · project files · repo docs<br/>memory · run history"]:::new
 
   factory["exec.build_backend()"]:::new
   local["LocalBackend<br/>subprocess on host<br/>(today's code, moved)"]:::new
@@ -83,19 +100,18 @@ flowchart TB
 
   hostsh[("Host shell<br/>cwd = workspace")]:::ext
   ctr[("Sandbox container<br/>bind mount + shadow volumes")]:::ext
-  roctr[("Probe container<br/>workspace :ro, network none")]:::ext
+  proj[("Workspace files<br/>manifests · CI · AGENTS.md · DEVELOPMENT.md")]:::ext
   gitrefs[("Project .git<br/>refs/lmloop/run/step")]:::ext
 
   cliflags --> factory
   factory -->|"no flag (default)"| local
   factory -->|"--docker"| docker
   runshell --> factory
+  infer -->|"read only"| proj
+  infer -->|"CheckPlan"| runcheck
   runcheck --> factory
-  accept --> factory
-  probe --> factory
   local --> hostsh
   docker -->|"docker exec"| ctr
-  docker -->|"docker run --rm, probe only"| roctr
   snap --> gitrefs
 ```
 
@@ -172,11 +188,11 @@ any command that needs the network.
 | R-LIM | `--pids-limit`, `--memory`, `--cpus`, `--cap-drop ALL`, `no-new-privileges` | A runaway in a container still exhausts the host and can OOM-kill LM Studio |
 | R-PIN | Images by `@sha256:` only, everywhere a reference is accepted | Floating tags are non-deterministic builds |
 | R-UID | Host uid/gid, created `HOME`, host-side ownership probe | Root-owned files in the user's repo |
-| R-SAME | Check, acceptance, and probe commands use the maker's backend | A host-side gate certifies work done somewhere else |
+| R-SAME | Every planned check command uses the maker's backend | A host-side gate certifies work done somewhere else |
 | R-FAIL | Preflight failure aborts before the first model call | Silent fallback to the host is the failure this file prevents |
 | R-SECRET | No credential mounts, no docker socket, empty env passthrough by default | Prompt injection via `fetch_url` can exfiltrate anything mounted |
 | R-ABI | Dependency directories are shadowed by per-workspace named volumes | Host and container binaries are not interchangeable |
-| R-DET | Authority lives in deterministic commands; the probe can only downgrade | Same-model auditing has correlated errors |
+| R-DET | Authority lives in deterministic commands; model-proposed checks can only downgrade | Same-model auditing has correlated errors |
 | R-SCOPE | Exit-code authority applies only to designated commands | A blanket rule teaches `\|\| true` |
 | R-DRIFT | Persist mode verifies image digest and config hash, warns on age and layer size | A long-lived container stops resembling what was pinned |
 | R-INIT | `--init` in every container | `sleep infinity` as PID 1 never reaps zombies |
@@ -405,90 +421,158 @@ Guards:
 
 ## Part 2 — Verification hardening
 
-### 2.1 What is authoritative
+The user types a goal in plain language. lmloop finds the deterministic checks itself,
+shows them, and uses exit codes as the authority. Typed commands remain the exact
+override, never the price of admission.
+
+```
+lmloop until make the flow command emit valid JSON             # inferred plan
+/until fix the flaky timeout in loop.py                        # inferred plan
+lmloop until make `npm test` pass without breaking `npm run lint`   # commands in the prose
+lmloop until --check 'pytest -q tests/api' implement the API   # explicit: no inference
+```
+
+### 2.1 From a goal to a check plan
+
+A new module `checks.py` turns a goal plus the workspace into a `CheckPlan`: an ordered,
+de-duplicated list of `PlannedCheck(cmd, role, source, tier, reason)`. It is
+deterministic — file reads and `ShellCommand` parsing only. The one model call (step 7)
+is made by `loop.py`, which passes the result in; `checks.py` never imports `agent`.
+
+**Resolution order** — earlier steps win on duplicates (compared by normalized argv):
+
+1. **Flags.** `--check` / `--keep` present → use exactly those; inference is skipped for
+   the whole run. Explicit means exact.
+2. **Commands in the goal.** Backtick spans, plus quoted spans after a cue verb
+   ("run", "make", "until", "keep"), accepted only when `ShellCommand` parses them and
+   `argv[0]` resolves (`shutil.which`, a workspace path, or a project runner). A bare
+   `<runner> <target>` phrase without backticks ("make test pass") is accepted only when
+   that target exists in the project (`test:` in the Makefile, `scripts.test` in
+   `package.json`). No NLP: cue words and project facts only. Role is `keep` after
+   "keep", "still", "without breaking", "don't break"; otherwise `check`. The goal text
+   reaches the maker unchanged.
+3. **Project files and repo docs** (table below).
+4. **Memory.** Learnings of type `tool` or `operational` that contain a backticked
+   command — the `qa` skill already tells the model to save test commands this way.
+5. **History.** Commands that went fail → pass in an earlier run on this project
+   (`workflow.py`, companion doc): gates proven to discriminate.
+6. **Change-targeted narrowing** (after the first maker step, not at planning time):
+   changed files mapped to tests by convention (`tests/test_<stem>.py`,
+   `<stem>.test.ts`, `<stem>_test.go`). Used as a fast inner-loop check; the full plan
+   still gates `done`. On a laptop this is the difference between a 5-second and a
+   5-minute cycle.
+7. **Model proposal**, only when baseline (§2.4) leaves no command able to *prove* the
+   goal: one no-tools call proposes ≤ 2 goal-specific commands, e.g.
+   `lmloop flow --json | python3 -m json.tool` for "emit valid JSON".
+
+**Project sources**, each a small reader returning candidates with a human-readable
+reason:
+
+| Source | Reads | Yields | Parser (stdlib only) |
+|---|---|---|---|
+| `pyproject.toml`, `setup.cfg`, `tox.ini`, `pytest.ini` | pytest/tox config, `tests/` | `<python> -m pytest -q`, preferring `.venv/bin/python` | `tomllib` on 3.11+; section-header scan on 3.10, which lmloop supports and which has no `tomllib` |
+| `package.json` | `scripts.test`, `lint`, `typecheck`, `build` | `<pm> run <script>`, package manager from the lockfile | `json` |
+| `Makefile`, `justfile` | targets `test`, `check`, `lint` | `make test`, `just test` | line scan for `^target:` |
+| `Cargo.toml`, `go.mod`, `mix.exs`, `Gemfile` + `Rakefile`, `gradlew`, `pom.xml`, `deno.json` | presence | `cargo test`, `go test ./...`, `mix test`, … | presence |
+| `.pre-commit-config.yaml` | presence | `pre-commit run --all-files` as `keep` | presence |
+| `.github/workflows/*.yml` | single-line `run:` values | each, if runnable locally | line scan; multi-line `run: \|` blocks and steps with `${{ }}`, services, or secrets are skipped — no YAML dependency, and CI-only steps are not local gates |
+| `AGENTS.md`, `CLAUDE.md`, `.cursor/rules/*.mdc`, `CONTRIBUTING.md`, `DEVELOPMENT.md`, `README.md` | fenced `bash` / `sh` / `console` blocks under a heading containing test, lint, check, verify, or qa | lines containing a runner token (`pytest`, `unittest`, `test`, `lint`, `ruff`, `mypy`, `tsc`, `eslint`, `cargo test`, `go test`, …) | markdown line scan; setup lines without a runner token are ignored |
+
+**Worked example — this repository.** It has no manifest, so a manifest-only design would
+find nothing. `lmloop/DEVELOPMENT.md` › "Setup and tests" holds
+`cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v`, which the
+repo-docs reader picks up; the setup line beside it (`bash lmloop/setup-lmloop.sh`) has no
+runner token and is ignored. Contrast the packaged `company` graph, whose hardcoded
+`--check 'pytest -q'` cannot pass here at all (§2.5).
+
+### 2.2 Trust tiers
+
+| Tier | Sources | Effect |
+|---|---|---|
+| **Authoritative** | Flags; commands in the goal; project files; repo docs; `user-stated` memory; proven history | Exit codes gate `done` |
+| **Advisory** | Model proposals; `observed` / `inferred` memory; CI lines not confirmed runnable | Can only **downgrade**: a nonzero exit sends the cycle back to the maker; a zero never finishes the run on its own |
+
+This replaces revision 3's "never LLM-authored" rule with something usable: the model may
+*suggest* checks, but a suggestion cannot certify work — unless the user accepts it in the
+plan, at which point it is user-typed.
+
+### 2.3 Showing the plan
+
+Interactive (REPL `/until`, or `lmloop until` on a TTY), printed once before the first
+maker step:
+
+```
+until · check plan for "make the flow command emit valid JSON"
+  check     cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
+            from DEVELOPMENT.md › Setup and tests
+  advisory  lmloop flow --json | python3 -m json.tool
+            proposed for this goal
+  Enter run · e edit · s skip checks (checker only)
+```
+
+- **Enter** is the default; the common case costs one keypress.
+- **e** opens the plan as editable lines; edited lines become user-typed (authoritative).
+- **Unattended** (piped stdin, OS supervisor, graph child): no prompt, ever. Authoritative
+  checks apply, advisory ones stay advisory, and the plan is printed once for the log.
+- The plan is stored on the until meta row (`checks: [{cmd, role, source, tier}]`), so
+  resume reuses it rather than re-inferring against a changed tree. Graph nodes store
+  theirs in the `node` row's `verify` field and reuse it on re-entry.
+
+### 2.4 Baseline, and when the checker runs
+
+`until_baseline: auto` (default) runs a baseline whenever the plan is non-empty:
+
+1. **Once**, before the first maker step, run every planned command; record a `baseline`
+   row. Resume never re-runs it.
+2. **Drop the unrunnable.** An inferred command that fails with an environment error
+   (§2.5) or times out is removed from the plan with a note. A *user-typed* one blocks
+   instead: *"check not runnable here: <cmd>"*.
+3. **Reclassify.** An inferred `check` that already passes becomes a `keep` — it cannot
+   prove the goal, but it must not regress. A failing one stays a `check`: it can prove
+   the goal. This is what lets a refactor goal ("tidy the parser without changing
+   behavior") work with no flags at all.
+4. **Decide.**
+
+| After the maker's step | Outcome |
+|---|---|
+| At least one `check` went fail → pass, all `keep`s pass, all advisory pass | **done** — deterministic proof, no checker model call (today's `--check` behavior) |
+| No `check` left (all already passed, or none found) | The **eval checker** judges the goal, *and* every `keep` and advisory command must pass |
+| A **user-typed** `--check` already passed at baseline | Warn *"this check already passes, so it cannot show the change"*; eval also judges the goal |
+| A `keep` fails at baseline | **blocked** — *"invariant already broken before any work: <cmd>"* |
+
+This subsumes revision 3's `require_negative_baseline` flag: the rule it enforced is now the
+default behavior, and it no longer needs a key or an explanation.
+
+`until_baseline: off` restores today's semantics exactly (checks gate directly, no
+reclassification) for users who want them.
+
+### 2.5 Environment errors are `blocked`, not `fail` (shipped defect)
+
+`loop.check_status_from_output` returns `fail` for anything that is not `DENIED:` and has
+no `[exit code: 0]` — including `ERROR: [Errno 2] No such file or directory: 'pytest'`.
+Verified on this repository: the packaged `company` graph's build node runs
+`--check 'pytest -q'`, `pytest` is not installed, the result is `fail`, and the maker is
+sent back to "fix" code that is not broken until `until_max_steps` runs out.
+
+Fix: a spawn error (`ERROR:` from `run_shell`), exit **126** (not executable), or **127**
+(not found) maps to `blocked`, with the command named in the gate message. The maker
+cannot fix an environment by editing source; a human can. `ModuleNotFoundError` inside
+a Python runner exits 1 and cannot be distinguished deterministically, which is why the
+baseline (§2.4) drops inferred commands that fail before any work. This fix is small,
+independent of everything else here, and should land first.
+
+### 2.6 What is authoritative, in one table
 
 | Signal | Authority |
 |---|---|
-| `--check <cmd>` exit code | **Authoritative** (shipped) |
-| `--accept <cmd>` exit codes (new) | **Authoritative** — must pass at the end |
-| `--keep <cmd>` exit codes (new) | **Authoritative** — invariants that must pass at the end |
-| Baseline transition (new, opt-in) | **Authoritative when enabled** |
-| Eval `STATUS:` | Necessary, not sufficient |
-| Probe (new, opt-in) | Downgrade-only |
+| `check`-role commands in the plan | **Authoritative** — fail → pass proves the goal |
+| `keep`-role commands in the plan | **Authoritative** — must pass at the end |
+| Advisory commands | Downgrade-only |
+| Eval `STATUS:` | Decides only when no `check` can prove the goal; necessary, never sufficient on its own when keeps exist |
 | Maker prose | Zero |
-| Other shell exits | Evidence for the checker, never a verdict |
+| Other shell exits | Evidence for the checker (§2.7), never a verdict |
 
-The `until` cycle with every new step in place. Every failure returns to the maker
-(through a fresh snapshot) with the evidence that caused it; nothing but deterministic
-exits and a `STATUS: pass` can reach `done`.
-
-```mermaid
-flowchart TD
-  classDef new fill:#eef6ff,stroke:#3b82f6,stroke-dasharray:5 3
-
-  start(["until goal"]) --> base{"require_negative_baseline<br/>or --keep present?"}
-  base -->|"yes, first cycle only"| bl["Baseline:<br/>run --check, --accept, --keep<br/>record once"]:::new
-  base -->|"no"| snap
-  bl -->|"flag on and all check/accept already pass"| blocked1(["blocked: nothing to prove"])
-  bl -->|"a --keep already fails"| blocked2(["blocked: invariant broken before work"])
-  bl -->|"ok"| snap["Snapshot → refs/lmloop/run/step"]:::new
-  snap --> maker["Maker act()<br/>full tools, maker backend"]
-  maker --> hascheck{"--check set?"}
-  hascheck -->|"yes"| check["Run --check"]
-  hascheck -->|"no"| eval["Eval act(), read-only tools<br/>+ shell evidence table"]
-  check -->|"nonzero"| snap
-  check -->|"exit 0"| acc
-  eval -->|"STATUS: fail"| snap
-  eval -->|"STATUS: blocked / missing"| gate(["HITL gate"])
-  eval -->|"STATUS: pass"| acc["Run --accept and --keep"]:::new
-  acc -->|"any nonzero"| snap
-  acc -->|"all exit 0"| trans{"baseline required and<br/>no fail → pass transition?"}:::new
-  trans -->|"yes"| snap
-  trans -->|"no"| pr{"eval_probe on and<br/>context ≥ probe_min_context?"}
-  pr -->|"no"| done(["done: pass"])
-  pr -->|"yes"| probe["Probe: no-tools act proposes ≤ 2 argv commands<br/>docker: :ro sibling container<br/>host: pre-probe snapshot"]:::new
-  probe -->|"any nonzero"| snap
-  probe -->|"all exit 0, or skipped"| done
-```
-
-### 2.2 Acceptance and invariant commands
-
-```
-lmloop until --check 'pytest -q' --accept 'pytest -q tests/test_new_feature.py' \
-             --keep 'ruff check .' <goal>
-node build until --check 'pytest -q' --keep 'ruff check .' refactor the parser
-```
-
-1. Run **after** `--check` passes (or eval says `pass` when there is no check), through
-   the maker's backend (R-SAME), under the `GatePolicy` with denials dropped.
-2. All `--accept` and `--keep` commands must exit 0; the first nonzero flips the cycle to
-   `fail` with `Acceptance failed: <cmd> exited N` and clipped output in the handoff.
-3. **Never LLM-authored.** `graph propose` may suggest one in a draft a human approves.
-4. They should tolerate repeated execution (build caches, `.pytest_cache`) — they run at
-   baseline and at every passing cycle. The README states this.
-
-### 2.3 Baseline
-
-The baseline runs when `require_negative_baseline` (default false) is on **or** any
-`--keep` command is present. The transition rule covers `--check` and `--accept`, but
-**not** `--keep`:
-
-1. Before the first maker step, run `--check`, every `--accept`, and every `--keep`; record
-   exits once in a `baseline` row. Resume never re-runs it.
-2. With the flag on, reaching `done/pass` requires at least one of `--check` / `--accept`
-   to have been nonzero at baseline and zero at the end.
-3. With the flag on, if they all already pass at baseline, stop with `blocked`:
-   *"check/acceptance commands already pass — nothing to prove; tighten them, or use
-   --keep for invariants"*.
-4. Flag on or off, a `--keep` command that **fails at baseline** stops with `blocked`: *"invariant
-   already broken before any work: <cmd>"* — otherwise the maker is blamed for a
-   pre-existing failure and burns cycles on it.
-
-A refactor goal is expressed with `--keep` only and the flag off; a feature goal uses
-`--accept` with the flag on. Revision 2 had no way to say the former and would have
-blocked every legitimate refactor.
-
-### 2.4 Shell evidence for the checker (deterministic, always on)
+### 2.7 Shell evidence for the checker (deterministic, always on)
 
 Appended to the eval prompt, computed from the maker's tool transcript:
 
@@ -499,29 +583,50 @@ Shell evidence (last 3 maker commands, most recent last):
   exit 0  ruff check .
 ```
 
-Neutral wording, no verdict. The checker sees exit codes it would otherwise have to ask
-for, without being told that a `grep` no-match is a failure.
+Neutral wording, no verdict: the checker sees exit codes without being told that a
+`grep` no-match is a failure.
 
-### 2.5 Adversarial probe (`eval_probe`, default false)
+### 2.8 The cycle, end to end
 
-Only after eval says `pass` **and** acceptance passes:
+```mermaid
+flowchart TD
+  classDef new fill:#eef6ff,stroke:#3b82f6,stroke-dasharray:5 3
 
-- One isolated `act()` with **`no_tools=True`** and a frozen prompt: output ≤
-  `eval_probe_max_cmds` (default 2) commands in one fenced block. It proposes, it does
-  not execute.
-- Parse: each line through `ShellCommand`; any line with shell syntax (`needs_shell()`)
-  or a destructive classification is dropped. No lines left → `probe/skipped`, never a
-  block.
-- Execution:
-  - `--docker`: in a sibling `docker run --rm` of the same image with the workspace
-    mounted **`:ro`**, the same shadow volumes `:ro`, `--network none`, and the same
-    limits. Read-only is enforced by the kernel, not by hope.
-  - Host: a snapshot ref is taken immediately before the probe, and the row records it.
-    The host cannot enforce read-only; the design says so instead of claiming it.
-- Any nonzero exit → cycle `fail`, output to the maker. A probe can never produce `pass`.
-- Skipped below `probe_min_context` (default 8192), and counted against the capacity
-  model in the companion doc — on a single-slot local server it is a full serialized
-  model call per passing cycle.
+  goal(["until: natural-language goal"]) --> flags{"--check / --keep<br/>given?"}
+  flags -->|"yes"| exact["plan = exactly those<br/>(authoritative)"]
+  flags -->|"no"| infer["checks.py: goal text → project files →<br/>repo docs → memory → history"]:::new
+  infer --> show["show plan once<br/>Enter run · e edit · s skip<br/>(no prompt when unattended)"]:::new
+  exact --> base
+  show --> base["baseline once: run every command"]:::new
+  base --> env{"environment error?"}
+  env -->|"inferred"| drop["drop from plan, note it"]
+  env -->|"user-typed"| blk1(["blocked: not runnable here"])
+  env -->|"no"| cls["already passing check → keep<br/>failing check stays check<br/>failing keep → blocked"]:::new
+  drop --> cls
+  cls --> none{"any check left<br/>that can prove the goal?"}
+  none -->|"no"| propose["model proposes ≤ 2 advisory commands"]:::new
+  none -->|"yes"| snap
+  propose --> snap["snapshot → refs/lmloop/run/step"]
+  snap --> maker["maker act()"]
+  maker --> narrow["targeted tests for changed files<br/>(fast inner loop)"]:::new
+  narrow -->|"fail"| snap
+  narrow -->|"pass or none"| runplan["run the whole plan"]
+  runplan --> decide{"a check went fail → pass,<br/>keeps and advisory pass?"}
+  decide -->|"yes"| done(["done: deterministic proof"])
+  decide -->|"any check / keep / advisory fails"| snap
+  decide -->|"no check exists; keeps pass"| ev["eval act(), read-only<br/>+ shell evidence"]
+  ev -->|"STATUS: pass"| done2(["done: checker + keeps"])
+  ev -->|"STATUS: fail"| snap
+  ev -->|"blocked / missing"| gate(["HITL gate"])
+```
+
+### 2.9 Adversarial probe — deferred
+
+The revision-3 probe (a no-tools act proposing ≤ 2 falsifying commands, run read-only
+under `--docker`) is **deferred**, not deleted. Step 7 of §2.1 covers the useful half —
+goal-specific commands when nothing else can prove the goal — at one model call per run
+instead of one per passing cycle, which matters on a single-slot laptop. Revisit if
+`lmloop flow` shows runs finishing on checker-only `pass` and later regressing.
 
 ---
 
@@ -545,8 +650,11 @@ Sandbox keys are **inert unless `--docker` was passed**.
 | `sandbox_persist_disk_warn_gb` | `5` | Warn past this writable-layer size |
 | `autonomous_snapshot` | `git` | **Host runs too**; `git` \| `off` |
 | `snapshot_max_file_mb` | `20` | Untracked files above this are excluded and listed |
-| `require_negative_baseline` | `false` | §2.3 |
-| `eval_probe` / `eval_probe_max_cmds` / `probe_min_context` | `false` / `2` / `8192` | §2.5 |
+| `check_inference` | `auto` | `auto`: infer a check plan when no `--check`/`--keep` is given (§2.1) \| `off`: today's behavior |
+| `until_baseline` | `auto` | `auto`: baseline and reclassify whenever the plan is non-empty (§2.4) \| `off`: checks gate directly |
+
+Revision 3's `require_negative_baseline` and `eval_probe*` keys are gone: the first is now
+default behavior (§2.4), the second is deferred (§2.9).
 
 ### 3.2 Flags and the one new stem
 
@@ -567,13 +675,16 @@ exec: docker · persist · lmloop-sbx-repo-1a2b3c4d · age 2d · layer 1.4G · b
 
 Verified against the resume code, not assumed:
 
-- **Until logs** may gain roles `baseline` and `accept`, because `UntilRun.next_role`
-  falls back to `"maker"` for unknown `(role, status)` pairs: an old binary re-runs a
-  maker step, which is harmless.
+- **Until logs** may gain the role `baseline`, because `UntilRun.next_role` falls back to
+  `"maker"` for unknown `(role, status)` pairs: an old binary re-runs a maker step, which
+  is harmless. Plan results ride on the existing `check` rows (one row per cycle, with
+  per-command exits in a `results` field), and the plan itself on the meta row's `checks`
+  field — so the common path adds **no** role an old binary has not seen.
 - **Graph logs gain no new roles.** `GraphRun.next_step` returns `("run", defn.start)`
   for an unknown role, so a new role would make an old binary restart the entire graph.
-  Acceptance and probe outcomes fold into the existing `node` row's `status` (exactly how
-  skill eval is already folded), with details in an optional `verify` field.
+  Check-plan outcomes fold into the existing `node` row's `status` (exactly how skill
+  eval is already folded), with the plan and per-command results in an optional `verify`
+  field.
 - New optional fields everywhere: `snapshot_ref`, `backend`
   (`local` / `docker:ephemeral` / `docker:persist`), `verify`. Readers use `.get`.
 
@@ -590,7 +701,7 @@ Verified against the resume code, not assumed:
 | S3 | `DockerBackend` argv: names, labels, `--init`, both exec shapes, 124 mapping, env identity | `exec.py` | Exact argv asserted against a fake `subprocess`; shell script passed as one argv element; no `-l` anywhere | Quoting is structural, not escaped |
 | S4 | Lifecycle: ephemeral teardown + orphan sweep; persist attach, restart policy, digest and config-hash labels | `exec.py` | Simulated `kill -9` orphan reaped; changed memory limit → refuse with reset hint | R-REAP / R-DRIFT are tests |
 | S5 | Preflight (nine checks) + abort wiring | `exec.py`, `cli.py`, `status.py` | Each check fails independently; second container per workspace refused; busy port refused | A dead daemon aborts before the first token |
-| S6 | Same-backend enforcement for check / accept / keep / probe | `loop.py`, `graph.py`, `tools.py` | `run_check` cannot run locally while the maker is containerized | R-SAME is a unit test |
+| S6 | Same-backend enforcement for every planned check, baseline, and targeted test | `loop.py`, `graph.py`, `tools.py` | `run_check` cannot run locally while the maker is containerized | R-SAME is a unit test |
 | S7 | Loopback-only port publishing + steering line; network table in `/sandbox status` | `exec.py`, `steer.py` | Every `-p` argument starts with `127.0.0.1:`; no `--add-host` in any argv | R-NET is a test |
 | S8 | Shadow volumes + `reset --deps` | `exec.py` | Each listed dir gets a volume mount; volume name stable per workspace | Host `.venv` never visible in the container |
 | S9 | `sandbox` stem, `/sandbox`, `/stats` exec line; image build + digest persistence | `commands.py`, `cli.py`, `repl.py`, `ui.py`, `sandbox/Dockerfile`, `config.py` | Routing; `/stats` says `local (host)` by default; tag never persisted | `/help` lists `sandbox` once |
@@ -607,18 +718,24 @@ Verified against the resume code, not assumed:
 
 | ID | Task | Files | Tests | Done when |
 |---|---|---|---|---|
-| V1 | `--accept` / `--keep` parsing on CLI, `/until`, graph nodes | `loop.py`, `graph.py`, `cli.py`, `repl.py` | Quoted commands survive `shlex`; repeats accumulate; fail-closed parse errors | Round-trips through `parse_graph` |
-| V2 | Runner; until `accept` row; graph folds into `node` status + `verify` field | `loop.py`, `graph.py`, `status.py` | Eval pass + acceptance fail → maker; graph log has no new role | An eval `pass` cannot finish a run alone |
-| V3 | Baseline with `--keep` semantics | `loop.py`, `status.py` | All pass → blocked; broken `--keep` → blocked; fail→pass → done; resume never re-runs baseline | Refactor and feature goals both expressible |
-| V4 | Shell-evidence table | `loop.py`, `agent.py` (transcript accessor) | Last three commands with exits; no verdict words | Checker sees exits, unbiased |
-| V5 | Probe: `no_tools` act, argv-only parse, `:ro` sibling container under docker, pre-probe snapshot on host | `loop.py`, `exec.py`, `status.py` | Shell-syntax line dropped; destructive dropped; `:ro` + `--network none` in argv; nonzero → fail; nothing parsable → skipped | Probe can only downgrade, and cannot write under docker |
-| V6 | Docs + flip this file to `Status: shipped` | docs | — | Until flow shows baseline/accept/keep/probe |
+| V0 | **Environment errors → `blocked`** in `check_status_from_output` (spawn `ERROR:`, exit 126/127), naming the command in the gate | `loop.py`, `status.py` | `pytest` missing → blocked, not fail; exit 1 still fail; `DENIED:` still blocked | The shipped `company` graph stops looping on a missing binary |
+| V1 | `checks.py`: `CheckPlan`, goal-text extraction (backticks, cue verbs, project-backed bare targets) | `checks.py`, `tools.py` (`ShellCommand` reuse) | `` `npm test` `` extracted; "make test pass" only when a `test:` target exists; "keep" cue → keep; unparsable span ignored | No command is invented from prose |
+| V2 | Project readers: Python (tomllib or 3.10 scan), `package.json` + lockfile, Makefile/justfile, presence-based ecosystems, pre-commit, single-line CI `run:`, repo-doc fenced blocks with runner tokens | `checks.py` | Fixture repo per ecosystem; this repo yields the `DEVELOPMENT.md` unittest command and ignores the setup line; multi-line CI blocks skipped | Every source has a fixture test |
+| V3 | Memory and history sources; tiers | `checks.py`, `memory.py`, `workflow.py` | `user-stated` learning → authoritative; `observed` → advisory; proven history command ranked first | Tier comes from the source, never from the model |
+| V4 | Plan display, Enter/e/s, unattended no-prompt path, plan on meta row / `verify` field, reuse on resume | `loop.py`, `graph.py`, `repl.py`, `ui.py`, `status.py` | Piped stdin never prompts; edited lines become authoritative; resume does not re-infer | One keypress in the common case |
+| V5 | Baseline: drop unrunnable inferred commands, block unrunnable typed ones, reclassify passing checks to keeps, decision table | `loop.py` | Every row of the §2.4 table; refactor goal with no flags finishes via eval + keeps; `until_baseline: off` equals today | Natural-language goals get deterministic gates without flags |
+| V6 | `--check` repeatable + `--keep` on CLI, `/until`, graph nodes; inference disabled when either is given | `loop.py`, `graph.py`, `cli.py`, `repl.py` | Quoted commands survive `shlex`; repeats accumulate; parse errors fail closed | Explicit flags are exact |
+| V7 | Change-targeted narrowing after the first maker step | `checks.py`, `loop.py` | Changed `loop.py` → `tests/test_loop.py` runs first; no mapping → skipped | Inner loop is fast; `done` still needs the full plan |
+| V8 | Model proposal when nothing can prove the goal: one no-tools call, ≤ 2 commands, advisory | `loop.py`, `status.py` | Only runs when §2.4 leaves no `check`; output parsed through `ShellCommand`; destructive dropped | A suggestion can fail a cycle but never finish one |
+| V9 | Shell-evidence table | `loop.py`, `agent.py` (transcript accessor) | Last three commands with exits; no verdict words | Checker sees exits, unbiased |
+| V10 | Docs: README until section rewritten around plain-language goals; ARCHITECTURE goal-loop; packaged `company` graph drops its hardcoded `--check 'pytest -q'` | docs, `graphs/company.md` | `company` parses and infers on a non-Python fixture | The packaged graph works outside Python projects |
 
 ### Sequencing
 
-R1 → S1 → V1–V4 → S2–S9 → V5. R1 first because the default mode is the host and it has
-no other net; S1 creates the seam with no user-visible change; V1–V4 need no sandbox;
-V5 last because its enforceable half depends on S3.
+V0 → R1 → V1–V6 → S1 → V7–V9 → S2–S9. V0 is a one-function fix for a live defect. R1
+next, because the default mode is the host and has no other net. V1–V6 are the UX change
+users feel. S1 creates the sandbox seam with no user-visible change; the rest of Phase S
+is opt-in and can follow whenever `--docker` is wanted.
 
 ---
 
@@ -634,7 +751,9 @@ V5 last because its enforceable half depends on S3.
 | Exfiltration via egress in `bridge` | P1 | Documented; `none` for untrusted input | `bridge` allows egress by design |
 | Container reaches host services | P1 | Documented honestly; no `--add-host` | Host services bound to 0.0.0.0 remain reachable in `bridge` |
 | Persist drift (image, config, layer) | P1 | R-DRIFT | Age/size are warnings, not enforcement |
-| Probe mutates the host workspace | P1 | argv-only, destructive-dropped, pre-probe snapshot | Host read-only is not enforceable; recoverable instead |
+| Inferred check is the wrong gate (too broad, too slow, flaky) | P1 | Shown before the run; baseline drops unrunnable and slow ones; reclassification stops a passing suite from certifying anything; `lmloop flow` reports which sources produce useful gates | A plausible-but-wrong inferred check wastes cycles until a human edits the plan |
+| Repo docs contain a destructive command under a "test" heading | P1 | Every planned command still runs under the `GatePolicy`; destructive ones are `DENIED` like any other | A non-destructive but slow command (full e2e suite) can be selected; baseline timeout drops it |
+| Model-proposed command certifies bad work | P1 | Advisory tier: downgrade-only unless the user accepts it | A weak proposal adds a cycle, never a false pass |
 | Old binary resumes a new log | P1 | R-COMPAT: no new graph roles | Old until binary re-runs one maker step |
 | Runaway process / host exhaustion | P1 | R-TMO, R-LIM, R-INIT | Disk is not limited; layer size is reported |
 | Missing passwd entry breaks a tool | P2 | Git identity via env; documented | ssh-style tools may fail in the container |
@@ -655,7 +774,12 @@ the style of `test_tools.py`'s existing `Popen` patching. No test needs a daemon
   label, digest, or config-hash mismatch → refuse.
 - Snapshot (real `git` in a temp repo — fast, no network): untracked captured; index and
   tree untouched; oversize excluded; clean tree → no ref.
-- Compat: an until log with `baseline`/`accept` rows resumes to `maker` under the old
+- Compat: an until log with a `baseline` row resumes to `maker` under the old
   `next_role` table; a graph log written by the new code contains only existing roles.
-- Verification: acceptance fail after eval pass → maker; baseline all-pass → blocked;
-  broken `--keep` → blocked; probe shell-syntax line dropped; probe nonzero → fail.
+- Inference: one fixture repo per source in §2.1, plus this repository itself (no
+  manifest; `DEVELOPMENT.md` fenced block). No test executes an inferred command against
+  the real tree — plans are asserted, then run against fakes.
+- Verification: environment error → blocked; inferred passing check → keep; failing
+  check fail→pass → done without eval; no check left → eval + keeps; advisory nonzero →
+  maker; advisory zero alone never finishes; typed `--check` passing at baseline → warning
+  + eval.
