@@ -3,7 +3,9 @@
 **Status:** proposed (nothing here is implemented)
 **Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 3)
 **Depends on:** `graph.py`, `server.py`, `chat.py`, `memory.py`, `knowledge_graph.py`
-**Companion:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md)
+**Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
+[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) (the canvas and parallel children
+read memory through the index and `GraphView` defined there)
 
 Four features, in dependency order:
 

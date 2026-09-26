@@ -20,7 +20,8 @@ lmloop/
 │   ├── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
 │   ├── DESIGN_LLM_CALLING.md   # completions HTTP + act() budgets (shipped)
 │   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # opt-in --docker exec + acceptance gates (proposed)
-│   └── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # capacity, DAG joins, flow mining, TUI canvas (proposed)
+│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # capacity, DAG joins, flow mining, TUI canvas (proposed)
+│   └── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())

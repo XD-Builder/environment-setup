@@ -3,7 +3,8 @@
 **Status:** proposed (nothing here is implemented)
 **Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 3)
 **Depends on:** `tools.run_shell`, `tools.GatePolicy`, `loop.run_until`, `graph.run_graph`
-**Companion:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)
+**Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
+[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md)
 
 Two questions drive this file:
 
