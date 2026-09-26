@@ -25,7 +25,7 @@ Two questions drive this file:
 | 3 | P1 | The design made typed commands the **only** authority, so a plain-language goal got the weakest gate (model-only eval). The UX tax fell on exactly the users who most need verification | Revision 3 §2 | Derived check plans with trust tiers (§2.1–§2.4) |
 | 4 | P1 | Three command flags (`--check`, `--accept`, `--keep`) differing only in whether eval also runs — a distinction users should never have to learn | Revision 3 §2.2 | `--accept` removed; when eval runs is derived from the baseline (§2.4) |
 | 5 | P2 | `require_negative_baseline` was a flag guarding behavior that should be the default | Revision 3 §2.3 | Reclassification is automatic; the key is gone (§2.4) |
-| 6 | P2 | Per-cycle adversarial probe costs a serialized model call per passing cycle on a single-slot laptop, for a same-model signal | Capacity model in the companion doc | Deferred; the once-per-run proposal in §2.1 step 7 covers the useful half (§2.9) |
+| 6 | P2 | Per-cycle adversarial probe costs a serialized model call per passing cycle on a single-slot laptop, for a same-model signal | `model_concurrency` is 1 on a laptop (companion doc §1.2) | Deferred; the once-per-run proposal in §2.1 step 7 covers the useful half (§2.9) |
 
 ## Review log (round 3)
 
@@ -190,7 +190,7 @@ any command that needs the network.
 | R-UID | Host uid/gid, created `HOME`, host-side ownership probe | Root-owned files in the user's repo |
 | R-SAME | Every planned check command uses the maker's backend | A host-side gate certifies work done somewhere else |
 | R-FAIL | Preflight failure aborts before the first model call | Silent fallback to the host is the failure this file prevents |
-| R-SECRET | No credential mounts, no docker socket, empty env passthrough by default | Prompt injection via `fetch_url` can exfiltrate anything mounted |
+| R-SECRET | No credential mounts, no docker socket, no environment passthrough in v1 | Prompt injection via `fetch_url` can exfiltrate anything mounted |
 | R-ABI | Dependency directories are shadowed by per-workspace named volumes | Host and container binaries are not interchangeable |
 | R-DET | Authority lives in deterministic commands; model-proposed checks can only downgrade | Same-model auditing has correlated errors |
 | R-SCOPE | Exit-code authority applies only to designated commands | A blanket rule teaches `\|\| true` |
@@ -205,12 +205,13 @@ any command that needs the network.
   project whose loop is deliberately `urllib`-only. The CLI over `subprocess` suffices.
 - **A `signal_task_complete` tool** — `until`/`graph` already ignore prose; the REPL has
   a human reading every reply.
-- **Podman/nerdctl backend classes** — `sandbox_docker_bin` covers CLI-compatible runtimes.
+- **Podman/nerdctl backend classes** — `LMLOOP_DOCKER` covers CLI-compatible runtimes.
 - **An in-process daemon** — 24/7 means an OS supervisor invoking
   `lmloop --docker-persist until …`.
 - **Mounting `~/.lmloop`** — memory stays host-side because the agent process does.
-- **User-configurable extra mounts in v1** — every extra mount is a new exfiltration and
-  corruption surface; the one bind mount plus shadow volumes is the whole contract.
+- **User-configurable extra mounts or environment passthrough in v1** — each is a new
+  exfiltration and corruption surface; the one bind mount plus shadow volumes is the whole
+  contract.
 
 ---
 
@@ -254,7 +255,7 @@ class ExecBackend:          # method contract, not an ABC
 | Name | `lmloop-sbx-<slug>-<sha8>-<pid>` | `lmloop-sbx-<slug>-<sha8>` |
 | Labels | `lmloop.mode`, `lmloop.pid`, `lmloop.workspace`, `lmloop.image_digest`, `lmloop.config_hash` | same |
 | Create | At start, after preflight | First use; reattached while running |
-| Restart policy | none | `sandbox_persist_restart` (default `unless-stopped`) |
+| Restart policy | none | `PERSIST_RESTART` (default `unless-stopped`) |
 | Teardown | `docker rm -f` in `finally` + `atexit` | Only via `lmloop sandbox rm/reset` |
 | Orphans | Next start sweeps `lmloop.mode=ephemeral` containers whose pid is dead | Digest/config-hash mismatch refuses; age/size warns |
 
@@ -295,7 +296,7 @@ stateDiagram-v2
 ```
 
 `lmloop.config_hash` is `sha8` of the normalized values that are baked in at creation
-(image, network, ports, memory, cpus, pids, env allowlist, shadow dirs). Changing any of
+(image, network, and the sandbox constants — so an upgrade that changes a constant also triggers the reset hint). Changing any of
 them makes an existing persist container refuse with "config changed — run
 `lmloop sandbox reset`" rather than silently running with stale limits.
 
@@ -330,7 +331,7 @@ papered over with `nss_wrapper` in v1.
 
 ### 1.3 Preflight (only with `--docker`; fail fast before any model call)
 
-1. `sandbox_docker_bin` on PATH.
+1. `LMLOOP_DOCKER` on PATH.
 2. `docker version --format '{{.Server.Version}}'` succeeds within 10s.
 3. The image reference contains `@sha256:` and is present locally.
 4. Workspace is not `/`, not `$HOME`, and no path component is a Docker socket.
@@ -339,9 +340,9 @@ papered over with `nss_wrapper` in v1.
 6. No **other** running container carries this `lmloop.workspace` label (one sandbox per
    workspace, whatever its mode).
 7. Our own container, if present, matches `lmloop.image_digest` and `lmloop.config_hash`.
-8. Every host port in `sandbox_ports` is free on `127.0.0.1` (bind-and-close test).
-9. Persist only: age ≤ `sandbox_persist_max_age_d`, writable layer ≤
-   `sandbox_persist_disk_warn_gb` — **warn and continue**.
+8. Every host port in `SANDBOX_PORTS` is free on `127.0.0.1` (bind-and-close test).
+9. Persist only: age ≤ `PERSIST_MAX_AGE_D`, writable layer ≤
+   `PERSIST_DISK_WARN_GB` — **warn and continue**.
 
 ### 1.4 Networking, stated honestly
 
@@ -376,7 +377,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 Dependency directories are a **correctness** problem, not a performance one. A `.venv`
 built on macOS contains Mach-O binaries that cannot run in a Linux container, and a
-`.venv` built in the container breaks the host. `sandbox_shadow_dirs` (default
+`.venv` built in the container breaks the host. `SANDBOX_SHADOW_DIRS` (default
 `.venv,node_modules`) mounts a named volume `lmloop-dep-<sha8>-<dir>` over each listed
 path inside the container:
 
@@ -407,7 +408,7 @@ name goes into the run row; recovery is `git checkout refs/lmloop/…` or
 
 Guards:
 
-- **Size:** untracked files larger than `snapshot_max_file_mb` (default 20) are excluded
+- **Size:** untracked files larger than `SNAPSHOT_MAX_FILE_MB` (default 20) are excluded
   via a pathspec, and the row lists what was skipped. An agent that writes a 2 GB
   artifact must not bloat `.git` by 2 GB per cycle.
 - **Clean tree:** when `write-tree` equals `HEAD^{tree}`, no ref is written and the row
@@ -512,7 +513,7 @@ until · check plan for "make the flow command emit valid JSON"
 
 - **Enter** is the default; the common case costs one keypress.
 - **e** opens the plan as editable lines; edited lines become user-typed (authoritative).
-- **Unattended** (piped stdin, OS supervisor, graph child): no prompt, ever. Authoritative
+- **Unattended** (piped stdin, OS supervisor, a graph run with no TTY): no prompt, ever. Authoritative
   checks apply, advisory ones stay advisory, and the plan is printed once for the log.
 - The plan is stored on the until meta row (`checks: [{cmd, role, source, tier}]`), so
   resume reuses it rather than re-inferring against a changed tree. Graph nodes store
@@ -634,24 +635,32 @@ instead of one per passing cycle, which matters on a single-slot laptop. Revisit
 
 ### 3.1 Config keys
 
+Five user-facing keys, per the [roadmap's config budget](DESIGN_ROADMAP.md#3-config-budget).
 Sandbox keys are **inert unless `--docker` was passed**.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `sandbox_image` | `""` | Must contain `@sha256:`; written by `lmloop sandbox build` |
-| `sandbox_docker_bin` | `docker` | `podman` works here |
-| `sandbox_network` | `bridge` | `bridge` \| `none` \| `host` (§1.4) |
-| `sandbox_ports` | `3000-3010,8000-8010` | Published on `127.0.0.1` when `bridge` |
-| `sandbox_memory` / `sandbox_cpus` / `sandbox_pids` | `4g` / `2` / `512` | cgroup limits |
-| `sandbox_env_passthrough` | `""` | Comma-separated allowlist |
-| `sandbox_shadow_dirs` | `.venv,node_modules` | Named-volume shadows (R-ABI) |
-| `sandbox_persist_restart` | `unless-stopped` | Persist mode only |
-| `sandbox_persist_max_age_d` | `7` | Warn past this age |
-| `sandbox_persist_disk_warn_gb` | `5` | Warn past this writable-layer size |
+| `sandbox_network` | `bridge` | `bridge` \| `none` \| `host` (§1.4) — a real security choice |
 | `autonomous_snapshot` | `git` | **Host runs too**; `git` \| `off` |
-| `snapshot_max_file_mb` | `20` | Untracked files above this are excluded and listed |
-| `check_inference` | `auto` | `auto`: infer a check plan when no `--check`/`--keep` is given (§2.1) \| `off`: today's behavior |
+| `check_inference` | `auto` | `auto`: derive a check plan when no `--check`/`--keep` is given (§2.1) \| `off`: today's behavior |
 | `until_baseline` | `auto` | `auto`: baseline and reclassify whenever the plan is non-empty (§2.4) \| `off`: checks gate directly |
+
+Named constants in `exec.py` / `snapshot.py`, not config — sensible for everyone, easier to
+test, impossible to misconfigure:
+
+| Constant | Value |
+|---|---|
+| `SANDBOX_PORTS` | `3000-3010`, `8000-8010`, published on `127.0.0.1` when `bridge` |
+| `SANDBOX_MEMORY` / `SANDBOX_CPUS` / `SANDBOX_PIDS` | `4g` / `2` / `512` |
+| `SANDBOX_SHADOW_DIRS` | `.venv`, `node_modules` |
+| `PERSIST_RESTART` | `unless-stopped` |
+| `PERSIST_MAX_AGE_D` / `PERSIST_DISK_WARN_GB` | 7 / 5 — warnings only |
+| `SNAPSHOT_MAX_FILE_MB` | 20 |
+
+The container runtime binary comes from the environment variable `LMLOOP_DOCKER` (default
+`docker`), so Podman users set it once in their shell rather than in lmloop's config.
+Environment-variable passthrough into the container is **not** offered in v1 (R-SECRET).
 
 Revision 3's `require_negative_baseline` and `eval_probe*` keys are gone: the first is now
 default behavior (§2.4), the second is deferred (§2.9).

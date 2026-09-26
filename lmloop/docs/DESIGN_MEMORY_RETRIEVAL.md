@@ -1,10 +1,11 @@
 # Design: Fast, ranked memory retrieval
 
 **Status:** proposed (nothing here is implemented)
-**Date:** 2026-09-26
+**Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: single process; config budget; embeddings deferred)
 **Depends on:** `memory.py`, `knowledge_graph.py`, `skills.system_prompt`, `loop.isolated_act`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
-[DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)
+[DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
+[DESIGN_ROADMAP.md](DESIGN_ROADMAP.md)
 
 The question: what can the persistence layer do so that recall is fast and good enough
 to feel like a frontier tool's memory — without giving up what makes lmloop's memory
@@ -19,7 +20,7 @@ none of them changes the source of truth.
 | **B. Matching and ranking** | Substring false positives, no term weighting, narrow decision search | none | none |
 | **C. Prompt-stable injection** | Memory block changes between `until` cycles and defeats prefix caching | none | none |
 | **D. FTS5 derived index** | Linear scans; sessions and run handoffs are not searchable at all | `index.sqlite3` (deletable) | none (stdlib `sqlite3`) |
-| **E. Semantic rerank (opt-in)** | Paraphrases: "flaky test" vs "intermittent failure" | vectors table in the same index | none (pure-Python cosine) |
+| **E. Semantic rerank (deferred)** | Paraphrases: "flaky test" vs "intermittent failure" | vectors table in the same index | none (pure-Python cosine) |
 
 ---
 
@@ -81,9 +82,9 @@ The graph path is the real problem, and it is algorithmic, not a storage choice:
 | 4 | Pass the query string to `MATCH` | Verified: `loop.py` and `it's` are FTS5 **syntax errors**. A model-issued `recall_memory("fix loop.py")` would fail | **R-QUOTE**: tokenize in Python, quote every token, never pass raw text to `MATCH` |
 | 5 | Assume FTS5 exists | It is compiled into essentially every modern build, but not guaranteed | **R-FALLBACK**: no FTS5 → Layer B scan path, same output format |
 | 6 | Index transcripts and search them everywhere | Recall snippets go into the prompt. With a **remote** `base_url` that sends months-old transcript text — including anything pasted into it — to a third party | **R-PRIV**: session recall defaults on for the local profile, off for remote |
-| 7 | Parallel children writing the index | Concurrent writers break the single-writer invariant and contend on locks | **R-ONEWRITER**: only the parent writes; children open read-only |
+| 7 | Assume one process touches the index | A REPL and an `until` run in two terminals both sync the index on every query | **R-SERIAL**: every sync runs in `BEGIN IMMEDIATE` with a busy timeout, so SQLite serializes writers; the index is derived, so a lost race costs a re-sync, never data. The canvas opens read-only |
 | 8 | A vector database, or numpy for cosine | A daemon or a native dependency for a problem that fits in one file. Verified: pure-Python cosine over 200 × 768 candidates is ~7 ms | **R-STDLIB**: stdlib only; rerank a bounded candidate set |
-| 9 | Embeddings on by default | On a laptop the embedding model competes for the single slot and the RAM (capacity floors to 1); on remote it costs money and ships memory text off the machine | **R-OPTIN**: embeddings off by default; remote embeddings need a second explicit flag |
+| 9 | Embeddings on by default | On a laptop the embedding model competes for the single slot and the RAM (`model_concurrency` is 1 locally); on remote it costs money and ships memory text off the machine | **R-OPTIN**: embeddings off by default; remote embeddings need a second explicit flag |
 | 10 | Rebuild the memory block for every cycle "so it's fresh" | The system prompt changes whenever a maker `remember`s, which defeats provider prefix caching (billed) and local prompt caching (seconds of re-prefill on a laptop) | **R-STABLE**: freeze the memory block per run, like the clock |
 | 11 | Store decayed confidence in the index | Decay is a function of *now*; a stored value is wrong the next day | Store `ts` and base confidence; compute effective confidence at query time, as today |
 | 12 | SQLite WAL on a network filesystem | WAL needs shared memory; on NFS/SMB it corrupts or refuses | `memory_index: auto` detects failure to enter WAL and falls back to the scan path |
@@ -133,7 +134,7 @@ flowchart TB
   classDef mod fill:#fff7ed,stroke:#f97316,stroke-dasharray:5 3
   classDef ext fill:#f5f5f5,stroke:#999
 
-  subgraph parent["Parent process — the only writer"]
+  subgraph parent["lmloop process"]
     tools["tools.py<br/>remember · log_decision · recall_memory"]
     mem["memory.py<br/>append_jsonl · Layer B scoring · fallback"]:::mod
     kg["knowledge_graph.py<br/>GraphView, backfill once"]:::mod
@@ -142,8 +143,8 @@ flowchart TB
     emb["embeddings via /v1/embeddings<br/>through ModelSlots (opt-in)"]:::new
   end
 
-  subgraph kids["Child processes and canvas"]
-    ro["read-only: sqlite3 URI mode=ro"]
+  subgraph kids["Other processes"]
+    ro["second terminal: same code, writes serialized by SQLite<br/>canvas: sqlite3 URI mode=ro"]
   end
 
   jsonl[("~/.lmloop/projects/slug/*.jsonl<br/>sessions/ · until/ · graphs/")]:::ext
@@ -181,8 +182,8 @@ or `graph`.
 | **Write path.** `on_learning` / `on_decision` / `record_skill_use` check existence against a view rather than calling `nodes()` before each `add_node`/`add_edge` | Several full scans per `remember` | One |
 | **Parse cache.** `read_jsonl` keeps parsed rows per path keyed on `(inode, size, mtime_ns)` plus a hash of the first 4 KB; if the file only grew, parse the tail from the saved offset | Full parse on every call | Tail parse; cold only once per process |
 
-The parse cache is per process. That is fine for the parent; parallel children start cold,
-which is one reason Layer D is persistent.
+The parse cache is per process. Every new `lmloop until` or graph run starts cold, which is
+one reason Layer D is persistent.
 
 **Expected effect** on the measured 3k-learning case: `context_block` from 1.27 s to tens
 of milliseconds, and `/memory graph` from quadratic to linear. These are targets for the
@@ -229,8 +230,6 @@ cycles. The memory block gets the same treatment:
 - `run_until` / `run_graph` compute `memory_block = memory.context_block(cfg)` **once** at
   run start and pass it to every `isolated_act`, alongside `clock_now`.
   `skills.system_prompt(..., memory_block=...)` uses it verbatim when given.
-- Parallel children receive the parent's frozen block in their spec, so siblings' system
-  prompts are byte-identical (the companion doc's shared-clock rule, extended).
 - Ordering inside the block is deterministic: confidence, then key.
 - The REPL is unchanged: it already builds its system prompt once per session.
 
@@ -342,13 +341,14 @@ flowchart TD
 
 ### 5.4 Writers, readers, and failure modes
 
-- **Only the parent writes** (R-ONEWRITER), inside `BEGIN IMMEDIATE`; `sync()` is called
-  from the parent's `recall_memory`, `context_block`, and after `remember` / `log_decision`.
-- **Children and the canvas** open `file:index.sqlite3?mode=ro` with `uri=True`. A child's
-  own appends (in `clone` mode, to shards) are merged by the parent and indexed then.
-- **No FTS5, WAL refused (network FS), corrupt file, or schema version mismatch** → log
-  one line, delete the index file (it is derived), and use the Layer B scan path for the
-  rest of the process. `/stats` shows `memory index: fts5 · 1.2 MB · 4,310 docs` or
+- **Writers serialize** (R-SERIAL): `sync()` runs inside `BEGIN IMMEDIATE` with a 2000 ms
+  busy timeout. A REPL and an `until` run in two terminals simply take turns; whichever
+  syncs second finds nothing new. JSONL itself keeps its existing one-writer-per-project
+  assumption — the index adds no new one.
+- **The canvas** opens `file:index.sqlite3?mode=ro` with `uri=True`; it never writes.
+- **No FTS5, WAL refused (network FS), corrupt file, or schema version mismatch** → log one
+  line, delete the index file (it is derived), and use the Layer B scan path for the rest
+  of the process. `/stats` shows `memory index: fts5 · 1.2 MB · 4,310 docs` or
   `memory index: scan (reason)`.
 - Rebuild from scratch is always correct: `lmloop memory reindex`.
 
@@ -383,7 +383,12 @@ fail → pass in earlier runs). Both are queries this index answers directly:
 - The scan fallback (Layer B) answers both by reading the same JSONL, so inference never
   depends on the index existing.
 
-## Part 6 — Layer E: semantic rerank (opt-in)
+## Part 6 — Layer E: semantic rerank (deferred)
+
+**Deferred** until the FTS5 index has real usage and recall is shown to miss paraphrases
+that matter. The design below is kept so the decision to build it starts from a spec, not
+a blank page. Its keys are not part of the config budget until then.
+
 
 - `memory_embeddings: off` (default) | `on`. With a remote `base_url`, it additionally
   requires `memory_embeddings_remote: true` (R-OPTIN).
@@ -413,8 +418,8 @@ fail → pass in earlier runs). Both are queries this index answers directly:
 | **A. Hot-path fixes** | Largest measured win (seconds → milliseconds on the graph path); no new artifact or dependency; fixes `/memory graph` from quadratic to linear | Still O(history) per cold process; only helps the graph path and repeated reads |
 | **B. Matching and ranking** | Removes substring false positives; stemming-lite and IDF; identifier-exact hits; decision rationale searchable; no dependency | Still a full scan per query; no paraphrase matching; hand-rolled scoring must be kept simple |
 | **C. Prompt-stable injection** | One contract change; turns the whole system prompt into a cacheable prefix for a run; cuts cost on remote and re-prefill seconds locally | Mid-run learnings reach later prompts only via `recall_memory` |
-| **D. FTS5 index** | Millisecond ranked search at any realistic size; phrase/prefix/identifier queries; **makes sessions and run handoffs searchable**; stdlib; derived and deletable; persistent across processes (children start warm) | A binary artifact beside readable files; sync logic to get right (rewrite detection, partial lines); FTS5/WAL not guaranteed everywhere, so the fallback must stay tested; transcript search raises a privacy question (handled by R-PRIV) |
-| **E. Semantic rerank** | Paraphrase-level recall, the core of how frontier memory feels; no numpy; lazy and bounded | Competes for the laptop's single slot and RAM; first queries pay embedding latency; vectors tied to a model; remote use costs money and ships text off-machine; cannot find what FTS5 misses |
+| **D. FTS5 index** | Millisecond ranked search at any realistic size; phrase/prefix/identifier queries; **makes sessions and run handoffs searchable**; stdlib; derived and deletable; persistent across processes (each new run starts warm) | A binary artifact beside readable files; sync logic to get right (rewrite detection, partial lines); FTS5/WAL not guaranteed everywhere, so the fallback must stay tested; transcript search raises a privacy question (handled by R-PRIV) |
+| **E. Semantic rerank** (deferred) | Paraphrase-level recall, the core of how frontier memory feels; no numpy; lazy and bounded | Competes for the laptop's single slot and RAM; first queries pay embedding latency; vectors tied to a model; remote use costs money and ships text off-machine; cannot find what FTS5 misses |
 | *Rejected:* SQLite as source of truth | Simpler queries | Loses append-only, human-readable, hand-repairable memory |
 | *Rejected:* vector DB / numpy / sqlite-vec | Faster at millions of vectors | A daemon or native dependency for thousands of rows; violates the dependency rule |
 | *Rejected:* embedding the codebase | Semantic code search | Expensive to keep current; ripgrep in `search_files` already covers exact search; least valuable for small-context local models |
@@ -423,17 +428,17 @@ fail → pass in earlier runs). Both are queries this index answers directly:
 
 ## Part 8 — Config and commands
 
+Two user-facing keys, per the [roadmap's config budget](DESIGN_ROADMAP.md#3-config-budget):
+
 | Key | Default | Meaning |
 |---|---|---|
 | `memory_index` | `auto` | `auto` (FTS5 if available and WAL works, else scan) \| `on` (fail loudly if unavailable) \| `off` |
-| `recall_sessions` | `auto` | `auto` = on for local profile, off for remote \| `on` \| `off` |
-| `recall_session_snippets` | `3` | Max transcript snippets per recall |
-| `index_full_sweep_s` | `60` | Minimum seconds between full directory sweeps |
-| `memory_embeddings` | `off` | `off` \| `on` |
-| `memory_embeddings_remote` | `false` | Required in addition when `base_url` is remote |
-| `embedding_model` | `""` | Model id for `/v1/embeddings` |
-| `embed_rerank_k` | `200` | Candidates reranked |
-| `rerank_alpha` | `0.5` | BM25 weight in the blend |
+| `recall_sessions` | `auto` | `auto` = on for local `base_url`, off for remote \| `on` \| `off` |
+
+Named constants: at most 3 transcript snippets per recall, a full directory sweep at most
+every 60 s, a 2000 ms busy timeout. Layer E's keys (`memory_embeddings`,
+`memory_embeddings_remote`, `embedding_model`, rerank size and blend) are added only if and
+when that layer is built.
 
 Commands extend the existing `memory` stem's `arg_choices` — no new stem:
 
@@ -472,7 +477,6 @@ and run handoffs when enabled.
 | ID | Task | Files | Tests | Done when |
 |---|---|---|---|---|
 | C1 | `memory_block` parameter on `system_prompt` / `isolated_act`; computed once in `run_until` / `run_graph` | `skills.py`, `loop.py`, `graph.py` | A `remember` in cycle 1 leaves cycle 2's system prompt byte-identical | Stable prefix for the whole run |
-| C2 | Children receive the frozen block in their spec | `graph.py`, `child.py` | Sibling system prompts byte-identical | Shared cache prefix across a group |
 
 ### Phase D — index
 
@@ -483,11 +487,11 @@ and run handoffs when enabled.
 | D3 | `sync()` freshness classification, complete-line offsets, directory mtime listing, full sweep | `memory_index.py` | Append, rewrite, truncate, delete, partial trailing line, new session file | Hand edits propagate on the next query |
 | D4 | Query builder with R-QUOTE, two-table merge, snippets, caps | `memory_index.py` | `loop.py`, `it's`, `"quoted"`, empty query, only stopwords; snippet length cap | No input can produce an FTS5 syntax error |
 | D5 | Wire `search_memory` and `context_block` to the index, graph decoration via `GraphView`, `recall_sessions` gating by profile | `memory.py`, `knowledge_graph.py`, `tools.py` | Remote profile + `auto` → no session snippets; local → snippets present | Same output shape as today plus "Past sessions" |
-| D6 | Read-only access for children and canvas; parent-only writes | `memory_index.py`, `child.py`, `canvas_tui.py` | A read-only connection cannot write; concurrent read during parent write succeeds under WAL | R-ONEWRITER holds |
+| D6 | Serialized writers across processes; read-only canvas | `memory_index.py`, `canvas_tui.py` | Two processes syncing concurrently both succeed and agree; a read-only connection cannot write; a read during a write succeeds under WAL | R-SERIAL holds |
 | D7 | `memory reindex` / `memory index` commands, `/stats` line | `commands.py`, `cli.py`, `repl.py`, `ui.py` | Routing; status fields | Users can see and reset the index |
 | D8 | `command_candidates()` and proven-history query for check inference, with scan fallback | `memory_index.py`, `memory.py` | `user-stated` learning ranked first; unparsable backtick span excluded; identical results with index off | Check inference reads memory in milliseconds |
 
-### Phase E — semantic rerank (opt-in)
+### Phase E — semantic rerank (deferred; build only on evidence)
 
 | ID | Task | Files | Tests | Done when |
 |---|---|---|---|---|
@@ -507,7 +511,7 @@ row for `memory_index.py`. DEVELOPMENT: module ownership and the lazy-import rul
 2. **C1** — one contract change with an immediate latency and cost win on every `until` run.
 3. **B1–B3** — better recall everywhere, and the fallback path the index needs anyway.
 4. **D1–D7** — the index, built on B's tokenizer and A's `GraphView`.
-5. **E1–E3** — only after D exists, and only for users who opt in.
+5. **E1–E3** — deferred; only after D has usage data showing paraphrase misses.
 
 ---
 
