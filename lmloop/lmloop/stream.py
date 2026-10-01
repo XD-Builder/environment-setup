@@ -307,6 +307,7 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
     reasoning_halted = False
     tools_started = False
     halt_drain = 0
+    broke_early = False
     while True:
         raw = resp.readline()
         if not raw:
@@ -383,6 +384,7 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
         ):
             # Close the body so a thinking/content loop cannot run until
             # context-full. Late tool_calls after this point are dropped.
+            broke_early = True
             break
 
     if not saw_data:
@@ -390,7 +392,13 @@ def _read_sse(resp, on_delta=None, on_activity=None, on_reasoning=None,
 
     content = "".join(content_parts)
     reasoning_text = "".join(reasoning_parts)
-    halted = content_halted or reasoning_halted
+    # A looping *answer* is unfinished. Looping *thinking* is unfinished only
+    # when we had to cut the body, or the model never got past it to an
+    # answer; if it then wrote content and the stream ended on its own, the
+    # round completed normally and must not be reported as stopped early.
+    halted = content_halted or (
+        reasoning_halted and (broke_early or not content.strip())
+    )
     has_named_tools = any(
         ((tool_acc[i].get("function") or {}).get("name") or "").strip()
         for i in tool_acc

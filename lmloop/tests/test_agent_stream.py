@@ -663,6 +663,65 @@ class ContinueNudgeTests(unittest.TestCase):
         self.assertTrue(any("stopped without finishing" in str(x) for x in echoed))
         self.assertFalse(any("thinking loop" in str(x) for x in echoed))
 
+    def test_act_halted_punctuation_loop_is_dropped_and_nudged(self):
+        """Six '.' lines tripped the halter in a real session and were kept as
+        the answer with 'stopped without finishing'. Noise is an empty round."""
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.7, "timeout_s": 5, "stream": True,
+            "confirm_shell": False, "max_continue_nudges": 2,
+        }
+        messages = [{"role": "user", "content": "review the docs"}]
+        echoed = []
+        calls = {"n": 0}
+
+        def fake_chat(*_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return (
+                    {"role": "assistant", "content": ".\n\n.\n\n.\n\n.\n\n.\n\n.",
+                     "_halted": True},
+                    {},
+                )
+            return ({"role": "assistant", "content": "Here is the review."}, {})
+
+        with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
+             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
+            agent.act(
+                cfg, "m", messages,
+                echo=echoed.append, echo_delta=False,
+                echo_tool=lambda n, a, *r: None,
+            )
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(any("thinking loop" in str(x) for x in echoed))
+        self.assertFalse(any("stopped without finishing" in str(x) for x in echoed))
+        dot_only = [m for m in messages
+                    if m.get("content") and set(m["content"]) <= {".", "\n"}]
+        self.assertEqual(dot_only, [])  # the dot string is not kept in the thread
+        self.assertEqual(messages[-1].get("content"), "Here is the review.")
+
+    def test_is_noise(self):
+        self.assertTrue(agent._is_noise(""))
+        self.assertTrue(agent._is_noise(".\n\n.\n\n."))
+        self.assertTrue(agent._is_noise("--- ---"))
+        self.assertTrue(agent._is_noise("."))
+        self.assertFalse(agent._is_noise("1."))
+        self.assertFalse(agent._is_noise("Let me"))
+
+    def test_accumulate_usage_without_usage_zeros_last_round(self):
+        """A halted stream closes before the usage chunk; the round line must
+        not repeat the previous round's numbers."""
+        stats = {"prompt_tokens": 100, "completion_tokens": 10,
+                 "last_prompt_tokens": 27300, "last_completion_tokens": 274}
+        agent._accumulate_usage(stats, {})
+        self.assertEqual(stats["last_prompt_tokens"], 0)
+        self.assertEqual(stats["last_completion_tokens"], 0)
+        self.assertEqual(stats["prompt_tokens"], 100)  # totals untouched
+        agent._accumulate_usage(stats, {"prompt_tokens": 5, "completion_tokens": 1})
+        self.assertEqual(stats["last_prompt_tokens"], 5)
+        self.assertEqual(stats["prompt_tokens"], 105)
+
     def test_should_nudge_halt_empty_vs_draft(self):
         self.assertTrue(agent._should_nudge_halt("", nudges=0, max_nudges=2))
         self.assertTrue(agent._should_nudge_halt(
@@ -1112,6 +1171,43 @@ class ChatStreamTests(unittest.TestCase):
             msg, _usage = agent._chat_stream(cfg, "m", [], None)
         self.assertIn(tail.strip(), msg["content"])
         self.assertFalse(msg.get("_halted"))
+
+    def test_reasoning_loop_then_complete_answer_is_not_halted(self):
+        """Seen in real sessions: thinking looped, the model still wrote a
+        complete reply, the stream ended normally — yet the round was flagged
+        halted and the REPL said 'stopped without finishing'."""
+        loops = [
+            {"choices": [{"delta": {"reasoning_content":
+                f"Let me reconsider the premium pricing tier again, attempt {i}.\n"}}]}
+            for i in range(8)
+        ]
+        answer = "Premium. This pricing aligns with our target segment's higher income."
+        body = _sse(
+            *loops,
+            {"choices": [{"delta": {"content": answer}}]},
+            {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+            None,
+        )
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertEqual(msg["content"], answer)
+        self.assertTrue(stream_mod._looping_text(msg["_reasoning"], paraphrased=True))
+        self.assertFalse(msg.get("_halted"))
+        self.assertEqual(usage.get("completion_tokens"), 5)
+
+    def test_reasoning_loop_with_no_answer_stays_halted(self):
+        loops = [
+            {"choices": [{"delta": {"reasoning_content":
+                f"Let me reconsider the premium pricing tier again, attempt {i}.\n"}}]}
+            for i in range(8)
+        ]
+        body = _sse(*loops, None)
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.7, "timeout_s": 5}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)):
+            msg, _usage = agent._chat_stream(cfg, "m", [], None)
+        self.assertTrue(msg.get("_halted"))
+        self.assertFalse((msg.get("content") or "").strip())
 
     def test_halt_aborts_sse_after_drain_without_tools(self):
         block = (
