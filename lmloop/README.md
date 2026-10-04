@@ -92,7 +92,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 
 In the REPL:
 
-- **Peek:** `/memory` (or `/memory list`) for top learnings, `/memory decisions`, `/memory dump` (injected context), `/decisions`, `/history`. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
+- **Peek:** `/memory` (or `/memory list`) for top learnings, `/memory decisions`, `/memory dump` (injected context only), `/context` (files in this conversation, then that same block), `/decisions`, `/history`. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
 - **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
@@ -116,7 +116,7 @@ Inside the REPL:
 | `/checkpoints [n]` | list saved checkpoints (global `#` matches `/restore`) |
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
-| `/context` | alias for `/memory dump` — show memory injected into the system prompt |
+| `/context` | files held in this conversation, then the injected memory block (`/memory dump` is the block alone) |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |

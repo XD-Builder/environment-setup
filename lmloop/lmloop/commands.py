@@ -43,7 +43,7 @@ COMMANDS: tuple = (
     CommandMeta("restore", "reload a prior session (shows last result) or checkpoint",
                 accepts_arg=True, arg_hint="[session|checkpoint] <query> [fresh]"),
     CommandMeta("decisions", "show active project decisions", cli=True),
-    CommandMeta("context", "alias for /memory dump — show injected context_block"),
+    CommandMeta("context", "show files in this conversation and injected memory"),
     CommandMeta("continue", "resume after max_rounds, an interruption, or a paused until/graph run",
                 accepts_arg=True, arg_hint="[message]"),
     CommandMeta("undo", "drop the last user turn from the in-memory thread"),

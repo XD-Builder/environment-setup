@@ -43,6 +43,11 @@ _REF_BLOCK_HEADER = (
     "Referenced files (use read_file / list_dir with the resolved path "
     "in place; do not copy into the workspace):"
 )
+# Shared with the excerpt heading in repl and with /context parsing.
+_PATH_ARROW = " → "
+_REF_LINE_PREFIX = "- @"
+_ATTACHED_PREFIX = "--- @"
+_ATTACHED_SUFFIX = " ---"
 
 
 @dataclass(frozen=True)
@@ -511,7 +516,7 @@ def collect_at_refs(text: str, cwd: "Path | None" = None) -> AtRefExpansion:
     rewritten = "".join(parts) + text[last:]
     if not refs:
         return AtRefExpansion(text=rewritten, refs=(), missing=tuple(missing))
-    lines = [f"- @{r.token} → {r.resolved.as_posix()}" for r in refs]
+    lines = [ref_line(r.token, r.resolved) for r in refs]
     block = _REF_BLOCK_HEADER + "\n" + "\n".join(lines)
     new_text = rewritten.rstrip() + "\n\n" + block + "\n"
     return AtRefExpansion(text=new_text, refs=tuple(refs), missing=tuple(missing))
@@ -520,3 +525,65 @@ def collect_at_refs(text: str, cwd: "Path | None" = None) -> AtRefExpansion:
 def expand_at_refs(text: str, cwd: "Path | None" = None) -> str:
     """Append a referenced-files block for existing @path tokens."""
     return collect_at_refs(text, cwd).text
+
+
+def ref_line(token: str, resolved: Path) -> str:
+    """One referenced-files bullet, as appended to the user message."""
+    return f"{_REF_LINE_PREFIX}{token}{_PATH_ARROW}{resolved.as_posix()}"
+
+
+def attached_heading(token: str, resolved: Path) -> str:
+    """Heading line for an inlined @ attachment excerpt."""
+    return f"{_ATTACHED_PREFIX}{token}{_PATH_ARROW}{resolved.as_posix()}{_ATTACHED_SUFFIX}"
+
+
+def _mention_path(line: str, prefix: str, suffix: str) -> "str | None":
+    """Path after ``prefix``, or None when the line is not that mention."""
+    if not line.startswith(prefix):
+        return None
+    body = line[len(prefix):]
+    if suffix:
+        if not body.endswith(suffix):
+            return None
+        body = body[:-len(suffix)]
+    if _PATH_ARROW not in body:
+        return None
+    token, path = body.split(_PATH_ARROW, 1)
+    path = path.strip()
+    if not token.strip() or not path:
+        return None
+    return path
+
+
+def prompt_file_mentions(text: str) -> tuple:
+    """``(kind, path)`` rows lmloop wrote into a user message for @paths.
+
+    ``kind`` is ``attached`` (excerpt heading) or ``referenced`` (path bullet).
+    Only the contiguous bullet list under the referenced-files header counts.
+    A line inside an excerpt or the user's own text does not. Attached headings
+    count only for paths already in that list. This does not open the files.
+    """
+    if not text or _REF_BLOCK_MARKER not in text:
+        return ()
+    lines = text.splitlines()
+    start = 0
+    while start < len(lines) and not lines[start].startswith(_REF_BLOCK_MARKER):
+        start += 1
+    if start >= len(lines):
+        return ()
+    found = []
+    allowed = []
+    i = start + 1
+    while i < len(lines):
+        referenced = _mention_path(lines[i], _REF_LINE_PREFIX, "")
+        if not referenced:
+            break
+        found.append(("referenced", referenced))
+        allowed.append(referenced)
+        i += 1
+    allowed_set = set(allowed)
+    for line in lines[i:]:
+        attached = _mention_path(line, _ATTACHED_PREFIX, _ATTACHED_SUFFIX)
+        if attached and attached in allowed_set:
+            found.append(("attached", attached))
+    return tuple(found)
