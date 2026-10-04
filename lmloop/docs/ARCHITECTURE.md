@@ -19,7 +19,11 @@ lmloop/
 │   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (shipped opt-in)
 │   ├── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
 │   ├── DESIGN_LLM_CALLING.md   # completions HTTP + act() budgets (shipped)
-│   └── DESIGN_FILE_READING.md  # @path gift + read_file header (proposal)
+│   ├── DESIGN_FILE_READING.md  # @path gift + read_file header (proposal)
+│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # opt-in --docker exec + acceptance gates (proposed)
+│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # model lock, DAG fan-out/joins, flow mining, TUI canvas (proposed)
+│   ├── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
+│   └── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -66,6 +70,126 @@ lmloop/
 │   └── graphs/                 # packaged workflow graphs
 │       └── company.md          # ceo → build → qa → mine
 ├── tests/                      # stdlib unittest; named test_<area>.py
+```
+
+---
+
+## System Overview
+
+Everything runs in one Python process on the user's machine. Arrows point from caller
+to callee and follow the import graph in [DEVELOPMENT.md](../DEVELOPMENT.md); nothing
+calls back up the stack. Leaf helpers used nearly everywhere — `config.py` (paths,
+slug), `ui.py` (terminal chrome), `status.py` (user-facing copy), and `commands.py`
+(command names) — are omitted so the call structure stays readable.
+
+```mermaid
+flowchart TB
+  user(["User · terminal"])
+  entry["cli.py · repl.py · prompt.py<br/>subcommands, REPL, slash commands, @path"]
+
+  subgraph control["Control flow"]
+    graphpy["graph.py<br/>authored workflow graphs"]
+    loop["loop.py<br/>until: maker → check / eval"]
+  end
+
+  subgraph core["Agent core"]
+    agent["agent.py<br/>act(): gather / answer"]
+    chat["chat.py<br/>POST /v1/chat/completions"]
+    display["display.py<br/>live printers, spinner"]
+    stream["stream.py<br/>SSE ingest, repeat-halt"]
+  end
+
+  subgraph ctx["Context and memory"]
+    skills["skills.py · steer.py<br/>playbooks, system prompt, clock"]
+    memory["memory.py<br/>learnings, decisions, sessions"]
+    kg["knowledge_graph.py<br/>opt-in nodes / edges"]
+  end
+
+  subgraph caps["Tools"]
+    tools["tools.py<br/>ToolDef registry, gates, backups"]
+    helpers["web.py · extract.py · files_index.py<br/>search / fetch, file extraction, @path index"]
+  end
+
+  server["server.py<br/>LMS bring-up, context, vision"]
+
+  lms[("Model server<br/>LM Studio or OpenAI-compatible")]
+  host[("Host shell + filesystem")]
+  net[("Internet")]
+  state[("~/.lmloop/<br/>JSONL + markdown")]
+
+  user --> entry
+  entry --> graphpy
+  entry --> loop
+  entry --> agent
+  graphpy --> loop
+  loop --> agent
+  loop -->|"--check"| tools
+  agent --> skills
+  agent --> chat
+  agent --> display
+  agent --> tools
+  chat --> stream
+  display --> stream
+  chat --> server
+  skills --> memory
+  tools --> helpers
+  tools --> memory
+  tools --> kg
+  kg --> memory
+
+  chat -->|"HTTP"| lms
+  server -->|"native API, lms CLI"| lms
+  tools -->|"run_shell, file tools"| host
+  helpers -->|"HTTPS"| net
+  memory --> state
+  kg --> state
+```
+
+Trust boundaries today:
+
+- **Model server:** the only destination of generated-token traffic. The default is
+  local LM Studio on `127.0.0.1:1234`, so nothing leaves the machine unless `base_url`
+  is changed.
+- **Host shell and filesystem:** `run_shell` executes on the host with the workspace as
+  `cwd`. Protection is the confirm gates, `GatePolicy`, workspace scoping for file tools,
+  and pre-image backups in `trash/` — there is no process isolation.
+- **Internet:** only `web_search` and `fetch_url`, and their content is fenced as
+  untrusted.
+- **State:** human-readable files under `~/.lmloop/`, one writer per project.
+
+One interactive turn, end to end:
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant R as repl.py
+  participant A as agent.act
+  participant C as chat.py
+  participant M as Model server
+  participant T as tools.py
+  participant S as ~/.lmloop
+
+  U->>R: prompt text with optional @paths
+  R->>A: messages, confirm gate, workspace
+  loop gather rounds, up to max_rounds
+    A->>C: messages + tool specs
+    C->>M: POST /v1/chat/completions (SSE)
+    M-->>C: tokens, tool_calls
+    C-->>A: assistant message
+    alt new tool_calls
+      A->>T: run_tool_calls, concurrent reads batched
+      T-->>A: results, truncated to max_tool_output
+    else no tool_calls
+      Note over A: this reply is the answer, gather ends
+    else repeated tool set or max_rounds reached
+      A->>C: one tools-off answer call
+      C->>M: POST without tools
+      M-->>C: final answer
+    end
+  end
+  A->>S: session log rows
+  A-->>R: thread
+  R-->>U: rendered answer + memory HUD
 ```
 
 ---
