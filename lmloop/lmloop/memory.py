@@ -491,16 +491,18 @@ def context_block(cfg: dict, slug: "str | None" = None) -> str:
     """Bounded memory snapshot injected into the system prompt at session start."""
     from .knowledge_graph import _node_id
     kg = _kg(slug)
+    graph_view = None
     if kg.enabled(cfg):
         kg.ensure(cfg)
+        graph_view = kg.load_view()
     parts = []
     decisions = get_decisions(limit=cfg.get("context_decisions", 6), slug=slug)
     if decisions:
         lines = []
         for d in decisions:
             lines.append(format_decision_line(d))
-            if kg.enabled(cfg):
-                lines.extend(kg.neighbor_lines(_node_id("decision", d["id"])))
+            if graph_view is not None:
+                lines.extend(kg.neighbor_lines(_node_id("decision", d["id"]), graph_view))
         parts.append(_fence_memory(
             "Active decisions (treat as settled unless the user reverses them):\n"
             + "\n".join(lines)
@@ -510,8 +512,8 @@ def context_block(cfg: dict, slug: "str | None" = None) -> str:
         lines = []
         for r in learnings:
             lines.append(format_learning_line(r))
-            if kg.enabled(cfg):
-                lines.extend(kg.neighbor_lines(_node_id("learning", r["key"])))
+            if graph_view is not None:
+                lines.extend(kg.neighbor_lines(_node_id("learning", r["key"]), graph_view))
         parts.append(_fence_memory(
             "Prior learnings from this project:\n" + "\n".join(lines)
         ))

@@ -240,6 +240,23 @@ class KnowledgeGraphTests(unittest.TestCase):
                 self.assertIn("setup.sh", text)
                 self.assertNotIn("in_session", text)
 
+    def test_ensure_skips_backfill_when_sources_unchanged(self):
+        from unittest.mock import patch
+        from lmloop import knowledge_graph as kg_mod
+        from lmloop import memory as memory_mod
+
+        kg_mod._BACKFILL_FP.clear()
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                cfg = {"use_graph": True}
+                kg = kg_mod.KnowledgeGraph()
+                with patch.object(kg, "_backfill", wraps=kg._backfill) as backfill:
+                    kg.ensure(cfg)
+                    self.assertEqual(backfill.call_count, 1)
+                    kg.ensure(cfg)
+                    self.assertEqual(backfill.call_count, 1)
+
     def test_backfill_and_hops(self):
         from unittest.mock import patch
         from lmloop import knowledge_graph as kg_mod

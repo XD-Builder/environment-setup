@@ -18,6 +18,8 @@ GRAPH_EDGE_TYPES = frozenset({
 })
 MSG_GRAPH_OFF = "knowledge graph is off — `lmloop config set use_graph true`"
 
+# Per-project fingerprint: skip _backfill when learnings/decisions/sessions unchanged.
+_BACKFILL_FP: dict[str, tuple] = {}
 
 
 def _node_id(typ: str, key: str) -> tuple:
@@ -59,6 +61,15 @@ def _graph_node_live(row: dict) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class GraphView:
+    """One scan of nodes/edges plus adjacency for a single operation."""
+
+    nodes: dict
+    edges: list
+    adjacency: dict
+
+
 @dataclass
 class KnowledgeGraph:
     """Opt-in JSONL knowledge graph for one project slug."""
@@ -78,7 +89,19 @@ class KnowledgeGraph:
     def ensure(self, cfg: dict) -> None:
         if not self.enabled(cfg):
             return
+        root = memory.project_dir(self.slug)
+        fp = self._source_fingerprint(root)
+        cache_key = str(root)
+        if _BACKFILL_FP.get(cache_key) == fp:
+            return
         self._backfill()
+        _BACKFILL_FP[cache_key] = fp
+
+    def load_view(self) -> GraphView:
+        """Latest nodes/edges and adjacency from one read of each JSONL file."""
+        live = self.nodes()
+        edge_rows = self._live_edges(live)
+        return GraphView(live, edge_rows, self._adjacency(edge_rows))
 
     def add_node(self, typ: str, key: str, label: str = "", confidence: int = 7,
                  source: str = "observed", extra: "dict | None" = None) -> dict:
@@ -98,20 +121,25 @@ class KnowledgeGraph:
         return row
 
     def add_edge(self, from_type: str, from_key: str, to_type: str, to_key: str,
-                 edge_type: str, note: str = "") -> dict:
+                 edge_type: str, note: str = "",
+                 live_nodes: "dict | None" = None) -> dict:
         if from_type not in GRAPH_NODE_TYPES or to_type not in GRAPH_NODE_TYPES:
             raise ValueError("unknown node type")
         if edge_type not in GRAPH_EDGE_TYPES:
             raise ValueError(f"unknown edge type {edge_type!r}")
-        nodes = self.nodes()
+        nodes = live_nodes if live_nodes is not None else self.nodes()
         if _node_id(from_type, from_key) not in nodes:
             if from_type == "concept":
                 self.add_node("concept", from_key, label=from_key)
+                nodes = dict(nodes)
+                nodes[_node_id(from_type, from_key)] = {"type": from_type, "key": from_key}
             else:
                 raise ValueError(f"unknown node {from_type}:{from_key}")
         if _node_id(to_type, to_key) not in nodes:
             if to_type == "concept":
                 self.add_node("concept", to_key, label=to_key)
+                nodes = dict(nodes)
+                nodes[_node_id(to_type, to_key)] = {"type": to_type, "key": to_key}
             else:
                 raise ValueError(f"unknown node {to_type}:{to_key}")
         row = {
@@ -137,7 +165,9 @@ class KnowledgeGraph:
 
     def edges(self) -> list:
         """Edges whose endpoints still exist after decay filtering. Latest-wins."""
-        live = self.nodes()
+        return self._live_edges(self.nodes())
+
+    def _live_edges(self, live: dict) -> list:
         last: dict[tuple, dict] = {}
         for row in memory.read_jsonl(self.edges_path()):
             a = _node_id(row.get("from_type") or "", row.get("from_key") or "")
@@ -152,6 +182,7 @@ class KnowledgeGraph:
         if not self.enabled(cfg):
             return
         self.ensure(cfg)
+        live = dict(self.load_view().nodes)
         self.add_node(
             "learning", row["key"], label=row.get("insight") or row["key"],
             confidence=int(row.get("confidence") or 7),
@@ -161,72 +192,94 @@ class KnowledgeGraph:
                 "learning_type": row.get("type"),
             },
         )
+        live[_node_id("learning", row["key"])] = row
         sess = _session_key()
         if sess:
-            if _node_id("session", sess) not in self.nodes():
+            if _node_id("session", sess) not in live:
                 self.add_node("session", sess, label=sess)
+                live[_node_id("session", sess)] = {"type": "session", "key": sess}
             self.add_edge(
                 "learning", row["key"], "session", sess, "in_session", note="auto",
+                live_nodes=live,
             )
         for path in _paths_in_text(row.get("insight") or ""):
-            self.add_node("file", path, label=path)
+            if _node_id("file", path) not in live:
+                self.add_node("file", path, label=path)
+                live[_node_id("file", path)] = {"type": "file", "key": path}
             self.add_edge(
                 "learning", row["key"], "file", path, "references", note="auto",
+                live_nodes=live,
             )
+        _BACKFILL_FP.pop(str(memory.project_dir(self.slug)), None)
 
     def on_decision(self, row: dict, cfg: "dict | None") -> None:
         if not self.enabled(cfg):
             return
         self.ensure(cfg)
+        live = dict(self.load_view().nodes)
         self.add_node(
             "decision", row["id"], label=row.get("decision") or row["id"],
             extra={"ts": row.get("date") or utc_now()},
         )
+        live[_node_id("decision", row["id"])] = row
         sess = _session_key()
         if sess:
-            if _node_id("session", sess) not in self.nodes():
+            if _node_id("session", sess) not in live:
                 self.add_node("session", sess, label=sess)
+                live[_node_id("session", sess)] = {"type": "session", "key": sess}
             self.add_edge(
                 "decision", row["id"], "session", sess, "in_session", note="auto",
+                live_nodes=live,
             )
         hay = (row.get("decision") or "") + " " + (row.get("rationale") or "")
         for path in _paths_in_text(hay):
-            self.add_node("file", path, label=path)
+            if _node_id("file", path) not in live:
+                self.add_node("file", path, label=path)
+                live[_node_id("file", path)] = {"type": "file", "key": path}
             self.add_edge(
                 "decision", row["id"], "file", path, "references", note="auto",
+                live_nodes=live,
             )
         if row.get("supersedes"):
-            if _node_id("decision", row["supersedes"]) in self.nodes():
+            if _node_id("decision", row["supersedes"]) in live:
                 self.add_edge(
                     "decision", row["id"], "decision", row["supersedes"],
                     "supersedes", note="auto",
+                    live_nodes=live,
                 )
+        _BACKFILL_FP.pop(str(memory.project_dir(self.slug)), None)
 
     def record_skill_use(self, skill_name: str, session: "Path | None",
                          cfg: "dict | None") -> None:
         if not self.enabled(cfg):
             return
         self.ensure(cfg)
-        self.add_node("skill", skill_name, label=skill_name)
+        live = dict(self.load_view().nodes)
+        if _node_id("skill", skill_name) not in live:
+            self.add_node("skill", skill_name, label=skill_name)
+            live[_node_id("skill", skill_name)] = {"type": "skill", "key": skill_name}
         path = session or memory._ACTIVE_SESSION
         if path is None:
             return
         sess = path.stem
-        if _node_id("session", sess) not in self.nodes():
+        if _node_id("session", sess) not in live:
             self.add_node("session", sess, label=sess, extra={"path": str(path)})
+            live[_node_id("session", sess)] = {"type": "session", "key": sess}
         self.add_edge(
             "session", sess, "skill", skill_name, "uses_skill", note="auto",
+            live_nodes=live,
         )
+        _BACKFILL_FP.pop(str(memory.project_dir(self.slug)), None)
 
-    def neighbor_lines(self, ident: tuple) -> list:
-        live = self.nodes()
-        adj = self._adjacency(self.edges())
+    def neighbor_lines(self, ident: tuple, view: "GraphView | None" = None) -> list:
+        if view is None:
+            view = self.load_view()
         lines = []
-        for dest, edge, direction in adj.get(ident, []):
-            if dest not in live:
+        for dest, edge, direction in view.adjacency.get(ident, []):
+            if dest not in view.nodes:
                 continue
             lines.append(self._format_edge_line({
-                "node": live[dest],
+                "node": view.nodes[dest],
                 "edge": edge,
                 "direction": direction,
             }))
@@ -234,6 +287,7 @@ class KnowledgeGraph:
 
     def search(self, query: str, learning_limit: int = 10,
                decision_limit: int = 10) -> str:
+        view = self.load_view()
         terms = memory._query_terms(query)
         learnings = memory.get_learnings(query=query, limit=learning_limit, slug=self.slug)
         decisions = memory.get_decisions(limit=50, slug=self.slug)
@@ -248,29 +302,30 @@ class KnowledgeGraph:
             lines = []
             for r in learnings:
                 lines.append(memory.format_learning_line(r))
-                lines.extend(self.neighbor_lines(_node_id("learning", r["key"])))
+                lines.extend(self.neighbor_lines(_node_id("learning", r["key"]), view))
             out.append("Learnings:\n" + "\n".join(lines))
         if decisions:
             lines = []
             for d in decisions:
                 lines.append(memory.format_decision_line(d))
-                lines.extend(self.neighbor_lines(_node_id("decision", d["id"])))
+                lines.extend(self.neighbor_lines(_node_id("decision", d["id"]), view))
             out.append("Decisions:\n" + "\n".join(lines))
         if not out and terms:
             extra = []
-            for ident, row in self.nodes().items():
+            for ident, row in view.nodes.items():
                 hay = (row.get("key", "") + " " + row.get("label", "")).lower()
                 if any(t in hay for t in terms):
                     extra.append(self._format_node_line(row))
-                    extra.extend(self.neighbor_lines(ident))
+                    extra.extend(self.neighbor_lines(ident, view))
             if extra:
                 out.append("Graph:\n" + "\n".join(extra))
         return "\n\n".join(out) or "(no memory matches)"
 
     def stats(self) -> str:
         """Adjacency-list stats: counts, orphans, contradiction clusters."""
-        live = self.nodes()
-        edge_rows = self.edges()
+        view = self.load_view()
+        live = view.nodes
+        edge_rows = view.edges
         by_type: dict[str, int] = {}
         for row in live.values():
             by_type[row["type"]] = by_type.get(row["type"], 0) + 1
@@ -303,7 +358,7 @@ class KnowledgeGraph:
                 )
         adj_lines = []
         for ident, row in sorted(live.items(), key=lambda kv: (kv[0][0], kv[0][1])):
-            nlines = self.neighbor_lines(ident)
+            nlines = self.neighbor_lines(ident, view)
             if not nlines:
                 continue
             adj_lines.append(f"{row['type']}:{row['key']}")
@@ -315,8 +370,9 @@ class KnowledgeGraph:
 
     def contradiction_text(self) -> str:
         """Text dump of contradicts edges for /memory reconcile."""
-        live = self.nodes()
-        pairs = [e for e in self.edges() if e.get("edge_type") == "contradicts"]
+        view = self.load_view()
+        live = view.nodes
+        pairs = [e for e in view.edges if e.get("edge_type") == "contradicts"]
         if not pairs:
             return "(no contradicts edges)"
         lines = []
@@ -329,6 +385,28 @@ class KnowledgeGraph:
                 + (f"\n  note: {e['note']}" if e.get("note") else "")
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _source_fingerprint(root: Path) -> tuple:
+        def _stat(path: Path) -> tuple:
+            try:
+                st = path.stat()
+                return (st.st_size, st.st_mtime_ns)
+            except OSError:
+                return (0, 0)
+
+        learn = root / "learnings.jsonl"
+        dec = root / "decisions.jsonl"
+        sess_dir = root / "sessions"
+        session_count = 0
+        sess_mtime = 0
+        if sess_dir.is_dir():
+            session_count = len(list(sess_dir.glob("*.jsonl")))
+            try:
+                sess_mtime = sess_dir.stat().st_mtime_ns
+            except OSError:
+                sess_mtime = 0
+        return (_stat(learn), _stat(dec), sess_mtime, session_count)
 
     def _backfill(self) -> None:
         existing = self.nodes()

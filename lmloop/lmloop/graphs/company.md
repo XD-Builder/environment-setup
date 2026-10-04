@@ -1,7 +1,7 @@
 # company — specialized roles with gates
 
 node ceo    skill ceo
-node build  until --check 'pytest -q' implement the agreed change
+node build  until implement the agreed change
 node qa     skill qa
 node mine   mine
 

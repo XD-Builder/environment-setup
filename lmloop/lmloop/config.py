@@ -61,6 +61,7 @@ DEFAULTS = {
     "context_length": 0,  # 0 = auto-detect from LM Studio; manual override in tokens
     "context_reserve": 2048,  # tokens reserved for model reply when showing fill bar
     "eval_max_rounds": 8,  # gather rounds for until/graph eval act(); maker keeps max_rounds
+    "until_max_steps": 12,  # maker cycles per until invocation before pause
     "until_mine": True,  # after until pass, mine learnings from the run
     "graph_max_steps": 24,  # node entries per graph invocation before pause
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings

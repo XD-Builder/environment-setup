@@ -9,10 +9,34 @@ from unittest import mock
 
 from lmloop import config as config_mod
 from lmloop import memory
-from lmloop.config import coerce_config_value, normalize_config
+from lmloop.config import DEFAULTS, coerce_config_value, normalize_config
+
+# Keys documented in README.md config table (keep in sync with the table).
+README_CONFIG_KEYS = frozenset({
+    "base_url", "model", "max_rounds", "eval_max_rounds", "max_continue_nudges",
+    "temperature", "timeout_s", "stream", "context_learnings", "context_decisions",
+    "confirm_shell", "confirm_destructive", "confirm_shell_syntax", "autonomous_gates",
+    "shell_timeout_s", "web_timeout_s", "max_tool_output", "auto_start_server", "color",
+    "context_length", "context_reserve", "until_max_steps", "until_mine",
+    "graph_max_steps", "graph_mine", "use_graph", "vision",
+})
 
 
 class ConfigQualityTests(unittest.TestCase):
+    def test_readme_config_keys_round_trip_through_coerce(self):
+        for key in README_CONFIG_KEYS:
+            self.assertIn(key, DEFAULTS, f"{key} missing from DEFAULTS")
+            default = DEFAULTS[key]
+            if isinstance(default, bool):
+                sample = "false" if default else "true"
+            elif isinstance(default, int):
+                sample = str(default + 1)
+            elif isinstance(default, float):
+                sample = str(default)
+            else:
+                sample = default or "http://127.0.0.1:9999/v1"
+            coerced = coerce_config_value(key, sample)
+            self.assertIsNotNone(coerced, f"coerce_config_value({key!r}, ...) returned None")
     def test_corrupt_json_warns_and_uses_defaults(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "config.json"
