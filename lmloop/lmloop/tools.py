@@ -26,6 +26,7 @@ from .web import DEFAULT_WEB_TIMEOUT_S
 # --- Limits (module defaults; some overridable via config in build_tools) ---
 MAX_OUTPUT = 12000  # chars returned to the model per tool call
 MAX_READ_LINES = 400
+TOOL_READ_FILE = "read_file"
 MAX_SEARCH_MATCHES = 50
 MAX_SEARCH_CONTEXT = 5
 MAX_FIND_RESULTS = 200
@@ -431,7 +432,7 @@ def _resolve_path(path: str, root: "Path | None" = None) -> Path:
 _TOOL_PREVIEW_LIMIT = 160
 # tool -> path-valued args shown resolved on the ⚙ line. "path" defaults to ".".
 _FILE_PATH_TOOLS: "dict[str, tuple[str, ...]]" = {
-    "read_file": ("path",),
+    TOOL_READ_FILE: ("path",),
     "write_file": ("path",),
     "update_file": ("path",),
     "list_dir": ("path",),
@@ -440,6 +441,23 @@ _FILE_PATH_TOOLS: "dict[str, tuple[str, ...]]" = {
     "move_file": ("path", "new_path"),
     "delete_file": ("path",),
 }
+
+
+def tool_path_argument(arguments) -> "str | None":
+    """Return the ``path`` field of a tool-call payload, or None."""
+    if isinstance(arguments, dict):
+        parsed = arguments
+    else:
+        try:
+            parsed = json.loads(arguments or "")
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    path = parsed.get("path")
+    if isinstance(path, str) and path.strip():
+        return path
+    return None
 
 
 def format_tool_preview(name: str, args: str,
@@ -570,6 +588,50 @@ def _numbered_chunk(text: str, label: str, start_line: int, max_lines: int) -> s
         # Name the exact next window so the model neither overlaps nor skips.
         header += f"\n[continue with start_line={end + 1}]"
     return _truncate(header + "\n" + "\n".join(numbered))
+
+
+def parse_read_header(text: str):
+    """Return ``(label, start, end, total)`` from a read_file result, or None.
+
+    Matches the first line written by ``_numbered_chunk``.
+    """
+    if not text:
+        return None
+    line = text.split("\n", 1)[0].strip()
+    if len(line) < 2 or not line.startswith("[") or not line.endswith("]"):
+        return None
+    inner = line[1:-1]
+    marker = ": lines "
+    idx = inner.rfind(marker)
+    if idx <= 0:
+        return None
+    label = inner[:idx]
+    rest = inner[idx + len(marker):]
+    of_marker = " of "
+    if of_marker not in rest or "-" not in rest.split(of_marker, 1)[0]:
+        return None
+    range_part, total_s = rest.split(of_marker, 1)
+    start_s, end_s = range_part.split("-", 1)
+    try:
+        start = int(start_s)
+        end = int(end_s)
+        total = int(total_s)
+    except ValueError:
+        return None
+    if not label or start < 1 or end < 0 or total < 0:
+        return None
+    return label, start, end, total
+
+
+def parse_image_read_label(text: str) -> "str | None":
+    """Return the path from an image read_file caption, or None."""
+    if not text or not text.startswith("[image/"):
+        return None
+    close = text.find("] ")
+    if close < 0:
+        return None
+    label = text[close + 2:].split("\n", 1)[0].strip()
+    return label or None
 
 
 def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES,
@@ -1016,7 +1078,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             ),
         ),
         ToolDef(
-            "read_file",
+            TOOL_READ_FILE,
             "Read a file in place. Text, PDF, Office, and zip archives return "
             "numbered lines (zips list members; do not copy them into the "
             "workspace). Images attach natively when the loaded model is a VLM; "

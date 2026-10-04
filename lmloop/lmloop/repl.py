@@ -6,12 +6,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import agent, extract, knowledge_graph, loop as loop_mod, memory, server, skills
+from . import agent, extract, knowledge_graph, loop as loop_mod, memory, server, skills, tools
 from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
 from .commands import slash_command_metas
 from .config import project_slug
-from .files_index import AtRefExpansion, collect_at_refs
+from .files_index import (
+    AtRefExpansion,
+    attached_heading,
+    collect_at_refs,
+    prompt_file_mentions,
+    resolve_user_path,
+)
 from .status import (
     MSG_GRAPH_FOLLOWUP,
     MSG_RESUME,
@@ -26,6 +32,9 @@ _THINKING_HISTORY_MAX = 30
 _REF_CONTENTS_HEADER = (
     "Attached file contents (extracted in place; do not copy into the workspace):"
 )
+ACTIVE_FILES_HEADING = "Active files"
+DURABLE_MEMORY_HEADING = "Durable memory"
+NO_SESSION_FILES = "(no files in this conversation)"
 
 
 @dataclass
@@ -147,9 +156,7 @@ def _with_ref_excerpts(text: str, refs: tuple) -> str:
         excerpt = extract.attachment_excerpt(ref.resolved)
         if not excerpt:
             continue
-        blocks.append(
-            f"--- @{ref.token} → {ref.resolved.as_posix()} ---\n{excerpt}"
-        )
+        blocks.append(attached_heading(ref.token, ref.resolved) + "\n" + excerpt)
     if not blocks:
         return text
     return (
@@ -932,8 +939,208 @@ def _cmd_continue(state: SessionState, arg: str, confirm_gate) -> bool:
     return True
 
 
+# --- context manifest (live thread, not ~/.lmloop) ---
+
+@dataclass(frozen=True)
+class ContextFile:
+    """One path named in the live message list."""
+    path: str
+    loaded: bool
+    attached: bool = False
+    image: bool = False
+    spans: tuple = ()
+
+
+@dataclass
+class _FileBuild:
+    path: str
+    loaded: bool = False
+    attached: bool = False
+    image: bool = False
+    spans: list = field(default_factory=list)
+
+
+def _canon_path(path: str, workspace_root: "Path | None") -> str:
+    try:
+        return resolve_user_path(path, workspace_root).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        return path
+
+
+def _message_has_image(content) -> bool:
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(part, dict) and part.get("type") == "image_url"
+        for part in content
+    )
+
+
+def _note_file(
+    builds: dict, order: list, path: str, workspace_root, *,
+    loaded: bool = False, attached: bool = False, image: bool = False,
+    span: "tuple | None" = None,
+) -> None:
+    if not path:
+        return
+    key = _canon_path(path, workspace_root)
+    row = builds.get(key)
+    if row is None:
+        row = _FileBuild(path=key)
+        builds[key] = row
+        order.append(key)
+    if loaded:
+        row.loaded = True
+    if attached:
+        row.attached = True
+        row.loaded = True
+    if image:
+        row.image = True
+        row.loaded = True
+    if span and span not in row.spans:
+        row.spans.append(span)
+        row.loaded = True
+
+
+def _note_read_result(builds, order, content, arguments, workspace_root) -> None:
+    text = content if isinstance(content, str) else str(content)
+    if text.startswith("ERROR") or text.startswith("DENIED"):
+        return
+    header = tools.parse_read_header(text)
+    if header:
+        label, start, end, total = header
+        _note_file(builds, order, label, workspace_root, span=(start, end, total))
+        return
+    image_label = tools.parse_image_read_label(text)
+    if image_label:
+        _note_file(builds, order, image_label, workspace_root, image=True)
+        return
+    arg_path = tools.tool_path_argument(arguments)
+    if arg_path:
+        _note_file(builds, order, arg_path, workspace_root, loaded=True)
+
+
+def active_context_files(messages: list, workspace_root: "Path | None" = None) -> list:
+    """Files named in the live thread, in first-seen order.
+
+    ``loaded`` is true when the file body is in the window: a successful
+    ``read_file``, an ``@`` attachment excerpt, or an image part. Other ``@``
+    paths are referenced only. ``/undo``, ``/new``, and a compact replace drop
+    files by dropping the messages that held them.
+    """
+    results = {}
+    for message in messages or []:
+        if message.get("role") == "tool" and message.get("tool_call_id"):
+            results[message["tool_call_id"]] = message.get("content")
+    builds: dict = {}
+    order: list = []
+    for message in messages or []:
+        role = message.get("role")
+        if role == "user":
+            content = message.get("content")
+            has_image = _message_has_image(content)
+            for kind, path in prompt_file_mentions(extract.flatten_content(content)):
+                if kind == "attached":
+                    _note_file(builds, order, path, workspace_root, attached=True)
+                    continue
+                suffix = Path(path).suffix.lower()
+                if has_image and suffix in extract.IMAGE_SUFFIXES:
+                    _note_file(builds, order, path, workspace_root, image=True)
+                else:
+                    _note_file(builds, order, path, workspace_root)
+        elif role == "assistant":
+            for call in message.get("tool_calls") or []:
+                fn = call.get("function") or {}
+                if (fn.get("name") or "") != tools.TOOL_READ_FILE:
+                    continue
+                content = results.get(call.get("id"))
+                if content is None:
+                    continue
+                _note_read_result(
+                    builds, order, content, fn.get("arguments"), workspace_root,
+                )
+    return [
+        ContextFile(
+            path=builds[key].path,
+            loaded=builds[key].loaded,
+            attached=builds[key].attached,
+            image=builds[key].image,
+            spans=tuple(builds[key].spans),
+        )
+        for key in order
+    ]
+
+
+def _display_path(path: str, workspace_root: "Path | None") -> str:
+    if workspace_root is None:
+        return path
+    try:
+        rel = Path(path).resolve().relative_to(Path(workspace_root).resolve())
+    except (ValueError, OSError):
+        return path
+    text = rel.as_posix()
+    return text or path
+
+
+def _format_spans(spans: tuple) -> str:
+    groups = []
+    for start, end, total in spans:
+        rendered = f"{start}-{end}"
+        if groups and groups[-1][0] == total:
+            groups[-1][1].append(rendered)
+        else:
+            groups.append((total, [rendered]))
+    parts = []
+    for total, ranges in groups:
+        parts.append("lines " + ", ".join(ranges) + f" of {total}")
+    return "; ".join(parts)
+
+
+def _file_detail(row: ContextFile) -> str:
+    if not row.loaded:
+        try:
+            if Path(row.path).is_dir():
+                return "directory, not loaded"
+        except OSError:
+            pass
+        return "referenced, not loaded"
+    bits = []
+    if row.attached:
+        bits.append("attached excerpt")
+    if row.image:
+        bits.append("image")
+    if row.spans:
+        bits.append("read, " + _format_spans(row.spans))
+    elif not bits:
+        bits.append("read")
+    return "; ".join(bits)
+
+
+def format_session_context(
+    files: list, durable: str, workspace_root: "Path | None" = None,
+) -> str:
+    """Active-file list plus the injected memory block."""
+    lines = [ACTIVE_FILES_HEADING]
+    if not files:
+        lines.append(NO_SESSION_FILES)
+    else:
+        for row in files:
+            shown = _display_path(row.path, workspace_root)
+            lines.append(f"  {shown} — {_file_detail(row)}")
+    lines.append("")
+    lines.append(DURABLE_MEMORY_HEADING)
+    lines.append((durable or "").rstrip())
+    return "\n".join(lines)
+
+
 def _cmd_context(state: SessionState, _arg: str) -> bool:
-    return _cmd_memory_dump(state)
+    """Files in the live thread, then the injected memory block."""
+    files = active_context_files(state.messages, state.workspace_root)
+    durable = memory.dump_context_block(state.cfg)
+    state.console.info(format_session_context(
+        files, durable, state.workspace_root,
+    ))
+    return True
 
 
 def _cmd_transcript(state: SessionState, _arg: str) -> bool:
