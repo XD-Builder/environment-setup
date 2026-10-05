@@ -29,6 +29,7 @@ MEMORY_LIST_LIMIT = 5
 MEMORY_DECISIONS_LIMIT = 3
 MSG_CONTEXT_EMPTY = "(no learnings, decisions, or recent checkpoint in context)"
 MSG_NO_LEARNINGS = "(no learnings yet — run tasks, then /memory mine)"
+MSG_NO_MATCHING_LEARNINGS = "(no matching learnings)"
 MSG_NO_DECISIONS = "(no decisions logged yet)"
 _ACTIVE_SESSION: "Path | None" = None
 _JSONL_WARNED: "set[str]" = set()
@@ -126,8 +127,110 @@ def _query_terms(query: str) -> "list[str]":
     return [t for t in re.split(r"\W+", (query or "").lower()) if len(t) >= MIN_TERM_LEN]
 
 
+@dataclass(frozen=True)
+class ViewLine:
+    """One human-facing row. ``Console.write_lines`` colors ``role``.
+
+    Roles: heading, title, path, ok, muted, warn, text.
+    """
+    text: str
+    role: str = "text"
+
+
+def format_age(hours: float) -> str:
+    """Rough age for a checkpoint, in words."""
+    if hours < 1 / 60:
+        return "just now"
+    if hours < 1:
+        mins = max(1, int(round(hours * 60)))
+        unit = "minute" if mins == 1 else "minutes"
+        return f"{mins} {unit} ago"
+    if hours < 48:
+        whole = max(1, int(round(hours)))
+        unit = "hour" if whole == 1 else "hours"
+        return f"{whole} {unit} ago"
+    days = max(1, int(hours // 24))
+    unit = "day" if days == 1 else "days"
+    return f"{days} {unit} ago"
+
+
+def format_memory_date(ts: str) -> str:
+    """``2026-10-04T...`` → ``4 Oct 2026``. Unknown strings pass through."""
+    raw = (ts or "")[:10]
+    try:
+        dt = datetime.strptime(raw, "%Y-%m-%d")
+    except ValueError:
+        return raw
+    return f"{dt.day} {dt.strftime('%b %Y')}"
+
+
+def _learning_source(row: dict) -> str:
+    source = row.get("source") or "observed"
+    return {
+        "user-stated": "you stated this",
+        "inferred": "inferred",
+        "observed": "observed",
+    }.get(source, source)
+
+
+def learning_view_lines(row: dict) -> "list[ViewLine]":
+    """Readable learning: key, then type / confidence / source, then the insight."""
+    meta = " · ".join((
+        row.get("type") or "pattern",
+        f"{row.get('confidence', '?')}/10",
+        _learning_source(row),
+    ))
+    lines = [
+        ViewLine(f"  {row['key']}", "title"),
+        ViewLine(f"    {meta}", "muted"),
+    ]
+    insight = (row.get("insight") or "").strip()
+    for raw in insight.splitlines() or [""]:
+        lines.append(ViewLine(f"    {raw}", "text"))
+    return lines
+
+
+def decision_view_lines(row: dict) -> "list[ViewLine]":
+    """Readable decision: id, date, the choice, then why."""
+    lines = [ViewLine(f"  {row['id']}", "title")]
+    if row.get("date"):
+        lines.append(ViewLine(f"    {format_memory_date(row['date'])}", "muted"))
+    lines.append(ViewLine(f"    {row['decision']}", "text"))
+    if row.get("rationale"):
+        lines.append(ViewLine(f"    why: {row['rationale']}", "muted"))
+    if row.get("supersedes"):
+        lines.append(ViewLine(f"    replaces {row['supersedes']}", "muted"))
+    return lines
+
+
+def _section_lines(heading: str, blocks: list) -> "list[ViewLine]":
+    lines = [ViewLine(heading, "heading"), ViewLine("")]
+    for i, block in enumerate(blocks):
+        if i:
+            lines.append(ViewLine(""))
+        lines.extend(block)
+    return lines
+
+
+def learning_list_lines(query: str = "", limit: int = MEMORY_LIST_LIMIT,
+                        slug: "str | None" = None) -> "list[ViewLine]":
+    rows = get_learnings(query=query, limit=limit, slug=slug)
+    if not rows:
+        msg = MSG_NO_MATCHING_LEARNINGS if (query or "").strip() else MSG_NO_LEARNINGS
+        return [ViewLine(msg, "muted")]
+    return _section_lines("Learnings", [learning_view_lines(r) for r in rows])
+
+
+def decision_list_lines(limit: int = MEMORY_DECISIONS_LIMIT,
+                        slug: "str | None" = None) -> "list[ViewLine]":
+    rows = get_decisions(limit=limit, slug=slug)
+    if not rows:
+        return [ViewLine(MSG_NO_DECISIONS, "muted")]
+    return _section_lines("Decisions", [decision_view_lines(d) for d in rows])
+
+
 def format_learning_line(row: dict) -> str:
-    """Peek/search line: key, type, confidence, insight."""
+    """Model/search line: key, type, confidence, insight."""
     return f"- [{row['key']}] ({row['type']}, {row['confidence']}/10) {row['insight']}"
 
 
@@ -482,43 +585,130 @@ def memory_hud(cfg: dict, slug: "str | None" = None) -> MemoryHud:
     )
 
 
-def dump_context_block(cfg: dict, slug: "str | None" = None) -> str:
-    """Exact injected ``context_block``, or a note when nothing is injected."""
-    return context_block(cfg, slug=slug) or MSG_CONTEXT_EMPTY
+def _human_neighbor(line: str) -> str:
+    """``→ leads_to learning:key`` → ``leads to · learning key``."""
+    text = line.strip()
+    incoming = text.startswith("← ")
+    if text.startswith("→ ") or text.startswith("← "):
+        text = text[2:]
+    if " " in text:
+        edge, rest = text.split(" ", 1)
+        edge = edge.replace("_", " ")
+        if ":" in rest:
+            kind, _, key = rest.partition(":")
+            rest = f"{kind} {key}"
+        text = f"{edge} · {rest}"
+    if incoming:
+        text = "from " + text
+    return text
 
 
-def context_block(cfg: dict, slug: "str | None" = None) -> str:
-    """Bounded memory snapshot injected into the system prompt at session start."""
+def _injected_snapshot(cfg: dict, slug: "str | None" = None):
+    """Decisions, learnings, and checkpoint that ``context_block`` injects.
+
+    Each decision and learning is ``(row, neighbor_lines)``. Neighbor lines are
+    empty when the graph is off. The checkpoint is a path or None.
+    """
     from .knowledge_graph import _node_id
     kg = _kg(slug)
     graph_view = None
     if kg.enabled(cfg):
         kg.ensure(cfg)
         graph_view = kg.load_view()
+    decisions = []
+    for row in get_decisions(limit=cfg.get("context_decisions", 6), slug=slug):
+        neighbors = (
+            kg.neighbor_lines(_node_id("decision", row["id"]), graph_view)
+            if graph_view is not None else []
+        )
+        decisions.append((row, neighbors))
+    learnings = []
+    for row in get_learnings(limit=cfg.get("context_learnings", 8), slug=slug):
+        neighbors = (
+            kg.neighbor_lines(_node_id("learning", row["key"]), graph_view)
+            if graph_view is not None else []
+        )
+        learnings.append((row, neighbors))
+    return decisions, learnings, recent_checkpoint(slug=slug)
+
+
+def _with_neighbors(lines: list, neighbors: list) -> "list[ViewLine]":
+    out = list(lines)
+    for raw in neighbors:
+        out.append(ViewLine(f"    {_human_neighbor(raw)}", "muted"))
+    return out
+
+
+def _checkpoint_lines(path: Path) -> "list[ViewLine]":
+    age = format_age(checkpoint_age_h(path))
+    lines = [ViewLine(f"Checkpoint · {age}", "heading"), ViewLine("")]
+    body = read_checkpoint_body(path)
+    clipped = body[:2000]
+    for raw in clipped.splitlines() or ["(empty)"]:
+        lines.append(ViewLine(f"    {raw}", "text"))
+    if len(body) > 2000:
+        lines.append(ViewLine("    … checkpoint continues in the file", "muted"))
+    return lines
+
+
+def injected_memory_lines(cfg: dict, slug: "str | None" = None) -> "list[ViewLine]":
+    """Readable view of the memory snapshot injected into the system prompt.
+
+    Same decisions, learnings, and checkpoint as ``context_block``. The
+    untrusted-memory fence stays in the prompt; this is the human listing.
+    """
+    decisions, learnings, cp = _injected_snapshot(cfg, slug)
+    if not decisions and not learnings and cp is None:
+        return [ViewLine(MSG_CONTEXT_EMPTY, "muted")]
+    lines: list = []
+    if decisions:
+        lines.extend(_section_lines(
+            f"Decisions · {len(decisions)}",
+            [_with_neighbors(decision_view_lines(row), neighbors)
+             for row, neighbors in decisions],
+        ))
+    if learnings:
+        if lines:
+            lines.append(ViewLine(""))
+        lines.extend(_section_lines(
+            f"Learnings · {len(learnings)}",
+            [_with_neighbors(learning_view_lines(row), neighbors)
+             for row, neighbors in learnings],
+        ))
+    if cp is not None:
+        if lines:
+            lines.append(ViewLine(""))
+        lines.extend(_checkpoint_lines(cp))
+    return lines
+
+
+def dump_context_block(cfg: dict, slug: "str | None" = None) -> str:
+    """Plain-text view of injected memory (no prompt fence)."""
+    return "\n".join(line.text for line in injected_memory_lines(cfg, slug))
+
+
+def context_block(cfg: dict, slug: "str | None" = None) -> str:
+    """Bounded memory snapshot injected into the system prompt at session start."""
+    decisions, learnings, cp = _injected_snapshot(cfg, slug)
     parts = []
-    decisions = get_decisions(limit=cfg.get("context_decisions", 6), slug=slug)
     if decisions:
         lines = []
-        for d in decisions:
-            lines.append(format_decision_line(d))
-            if graph_view is not None:
-                lines.extend(kg.neighbor_lines(_node_id("decision", d["id"]), graph_view))
+        for row, neighbors in decisions:
+            lines.append(format_decision_line(row))
+            lines.extend(neighbors)
         parts.append(_fence_memory(
             "Active decisions (treat as settled unless the user reverses them):\n"
             + "\n".join(lines)
         ))
-    learnings = get_learnings(limit=cfg.get("context_learnings", 8), slug=slug)
     if learnings:
         lines = []
-        for r in learnings:
-            lines.append(format_learning_line(r))
-            if graph_view is not None:
-                lines.extend(kg.neighbor_lines(_node_id("learning", r["key"]), graph_view))
+        for row, neighbors in learnings:
+            lines.append(format_learning_line(row))
+            lines.extend(neighbors)
         parts.append(_fence_memory(
             "Prior learnings from this project:\n" + "\n".join(lines)
         ))
-    cp = recent_checkpoint(slug=slug)
-    if cp:
+    if cp is not None:
         age_h = checkpoint_age_h(cp)
         parts.append(_fence_memory(
             f"Most recent checkpoint ({age_h:.0f}h ago):\n{cp.read_text()[:2000]}"

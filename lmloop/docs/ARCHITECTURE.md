@@ -458,7 +458,7 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 - Edges are typed (`leads_to`, `contradicts`, `in_session`, `references`, `uses_skill`, `related_to`, `supersedes`). Endpoints that decayed away are dropped at read time.
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
 - `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.
-- `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected `context_block`. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
+- `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected snapshot. `/context` prints files in the live thread, then that same snapshot. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
 
 ---
 
@@ -473,6 +473,13 @@ At session start (and each isolated `/until` or graph `act()`), the system promp
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
 5. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old)
+
+`/context` is the audit view of what the model is holding. It prints two sections, colored when stdout is a TTY (`Console.write_lines`):
+
+1. **Active files** — paths in `SessionState.messages`, in first-seen order, each path on its own line (never ellipsized). A file is loaded when a successful `read_file` result, an `@` attachment excerpt, or a vision image part is still in the thread. Other `@` paths are listed as referenced but not loaded (the model has the path, not the body). `/undo`, `/new`, and a `/compact` replace drop files by dropping the messages that held them.
+2. **Durable memory** — the same readable view as `/memory dump`: decisions, learnings (key, type, confidence, source, insight), graph neighbors, and the latest checkpoint with an age in words. Empty when nothing is injected.
+
+`/memory dump` is that memory view alone. It is not the fenced `context_block` text the model receives. The file list is not written to disk and is not part of the system prompt. File-tool ⚙ lines (`format_tool_preview`) put the resolved path on its own line and do not cut it with `...`.
 
 This keeps the system prompt small for local models with limited context windows. The clock is injected so relative windows ("last 4 weeks") do not resolve to a training-cutoff year. A long REPL session calls `current_time` when that frozen Clock is stale.
 
@@ -490,7 +497,7 @@ The interactive mode uses `prompt_toolkit` for:
 - **Double Ctrl-C to exit** (first dismisses completion menu, second exits).
 - **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted or unquoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Duplicate slashes in the typed token are collapsed. Missing tokens warn; existing ones are readable this turn **in place** even outside the workspace. PDF/Office/zip/audio attachments inline extracted text in the user message. Copy/extract of those files into the workspace, and writes to them, require confirmation.
 
-Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/memory list`, `/memory decisions`, `/memory graph`, and `/memory dump` inspect hidden state without a model turn. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable. After each agent turn the REPL prints a memory HUD (`memory.MemoryHud.line()`), for example `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`: active learning/decision counts, whether `use_graph` is on and populated, and whether a checkpoint newer than 336 hours exists.
+Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/memory list`, `/memory decisions`, `/memory graph`, and `/memory dump` inspect hidden state without a model turn. `/context` adds the live thread's file list in front of the readable memory view. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable. After each agent turn the REPL prints a memory HUD (`memory.MemoryHud.line()`), for example `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`: active learning/decision counts, whether `use_graph` is on and populated, and whether a checkpoint newer than 336 hours exists.
 
 Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input()` without completions.
 
@@ -517,7 +524,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop memory [query]` | Peek curated learnings |
 | `lmloop memory list` | Top 5 active learnings |
 | `lmloop memory decisions` | Top 3 active decisions |
-| `lmloop memory dump` | Injected `context_block` (debug) |
+| `lmloop memory dump` | Readable view of injected memory |
 | `lmloop memory mine [N]` | Mine last N sessions into learnings |
 | `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |
 | `lmloop memory reconcile` | Review `contradicts` clusters (requires `use_graph`) |

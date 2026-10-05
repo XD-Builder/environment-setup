@@ -1145,18 +1145,26 @@ class MemoryInspectTests(unittest.TestCase):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({}, ["list"], self._console()), 0)
-                listed = [ln for ln in buf.getvalue().splitlines() if ln.startswith("- [")]
-                self.assertEqual(len(listed), 5)
-                self.assertIn("tip-0", buf.getvalue())
+                listed = buf.getvalue()
+                self.assertIn("Learnings", listed)
+                self.assertEqual(sum(1 for i in range(6) if f"tip-{i}" in listed), 5)
+                self.assertIn("tip 0", listed)
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({}, ["decisions"], self._console()), 0)
-                self.assertIn("ship stdlib", buf.getvalue())
-                self.assertIn("no extra deps", buf.getvalue())
+                decisions = buf.getvalue()
+                self.assertIn("Decisions", decisions)
+                self.assertIn("ship stdlib", decisions)
+                self.assertIn("why: no extra deps", decisions)
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({}, ["dump"], self._console()), 0)
-                self.assertIn("<<<untrusted-memory>>>", buf.getvalue())
+                dumped = buf.getvalue()
+                self.assertIn("Learnings", dumped)
+                self.assertIn("tip-0", dumped)
+                self.assertIn("Decisions", dumped)
+                self.assertIn("ship stdlib", dumped)
+                self.assertNotIn("<<<untrusted-memory>>>", dumped)
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({"use_graph": False}, ["graph"], self._console()), 0)
@@ -1185,7 +1193,8 @@ class MemoryInspectTests(unittest.TestCase):
                 with redirect_stdout(buf):
                     _cmd_memory(state, "list", lambda _: False)
                 out = buf.getvalue()
-                self.assertIn("[not-a-verb]", out)
+                self.assertIn("not-a-verb", out)
+                self.assertIn("the list command", out)
                 self.assertNotIn("(no learnings", out)
 
     def test_repl_stats_includes_hud(self):
@@ -1218,24 +1227,41 @@ class MemoryInspectTests(unittest.TestCase):
                 self.assertIn("graph", out)
                 self.assertIn("checkpoint", out)
 
-    def test_repl_context_aliases_dump(self):
+    def test_repl_context_lists_files_then_durable_memory(self):
         from lmloop.repl import SessionState, _cmd_context, _cmd_memory_dump
         from lmloop import memory as memory_mod
+        from lmloop.tools import read_file
         from lmloop.ui import fresh_stats
 
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             log = root / "s.jsonl"
             log.write_text("")
+            (root / "notes.md").write_text("hello\n")
+            body = read_file("notes.md", workspace_root=root)
             with patch("lmloop.memory.project_dir", return_value=root):
                 memory_mod.add_learning("keep", key="keep")
                 state = SessionState(
                     cfg={},
                     model="m",
-                    messages=[{"role": "system", "content": "s"}],
+                    messages=[
+                        {"role": "system", "content": "s"},
+                        {
+                            "role": "assistant",
+                            "tool_calls": [{
+                                "id": "c1",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": '{"path": "notes.md"}',
+                                },
+                            }],
+                        },
+                        {"role": "tool", "tool_call_id": "c1", "content": body},
+                    ],
                     session_log=log,
                     stats=fresh_stats(),
                     console=self._console(),
+                    workspace_root=root.resolve(),
                 )
                 buf_dump = io.StringIO()
                 with redirect_stdout(buf_dump):
@@ -1243,8 +1269,17 @@ class MemoryInspectTests(unittest.TestCase):
                 buf_ctx = io.StringIO()
                 with redirect_stdout(buf_ctx):
                     _cmd_context(state, "")
-                self.assertEqual(buf_dump.getvalue(), buf_ctx.getvalue())
-                self.assertIn("<<<untrusted-memory>>>", buf_ctx.getvalue())
+                dumped = buf_dump.getvalue()
+                ctx = buf_ctx.getvalue()
+                self.assertNotIn("Active files", dumped)
+                self.assertIn("keep", dumped)
+                self.assertNotIn("<<<untrusted-memory>>>", dumped)
+                self.assertIn("Active files", ctx)
+                self.assertIn("notes.md", ctx)
+                self.assertIn("read · lines 1-1 of 1", ctx)
+                self.assertIn("Durable memory", ctx)
+                self.assertIn(dumped.strip(), ctx)
+                self.assertNotEqual(dumped, ctx)
 
     def test_run_turn_prints_memory_hud(self):
         from lmloop.repl import SessionState, _run_turn

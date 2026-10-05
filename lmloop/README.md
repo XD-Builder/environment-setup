@@ -83,7 +83,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | `lmloop memory [query]` | Peek **learnings** — curated tips (patterns, pitfalls, prefs) in `learnings.jsonl`. Deduped by key; confidence decays over time. | Peek |
 | `lmloop memory list` | Top 5 active learnings (type, key, confidence, insight). | Peek |
 | `lmloop memory decisions` | Top 3 active decisions (ID, decision, rationale). | Peek |
-| `lmloop memory dump` | Exact `context_block` injected into the system prompt (debug). | Peek |
+| `lmloop memory dump` | Readable view of the decisions, learnings, and checkpoint injected into the prompt. | Peek |
 | `lmloop memory graph` | Peek **knowledge graph** stats (`use_graph` must be true). | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
 | `lmloop decisions` | Peek **decisions** — durable choices with rationale in `decisions.jsonl` (can be superseded). | Peek |
@@ -92,7 +92,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 
 In the REPL:
 
-- **Peek:** `/memory` (or `/memory list`) for top learnings, `/memory decisions`, `/memory dump` (injected context), `/decisions`, `/history`. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
+- **Peek:** `/memory` (or `/memory list`) for top learnings, `/memory decisions`, `/memory dump` (readable injected memory), `/context` (files in this conversation, then that same view), `/decisions`, `/history`. Headings, keys, and loaded paths are colored on a TTY. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
 - **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
@@ -116,12 +116,12 @@ Inside the REPL:
 | `/checkpoints [n]` | list saved checkpoints (global `#` matches `/restore`) |
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/decisions` | show active project decisions |
-| `/context` | alias for `/memory dump` — show memory injected into the system prompt |
+| `/context` | files held in this conversation (full path on its own line), then injected memory (`/memory dump` is that memory view alone) |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
-| `/memory [list \| decisions \| graph \| dump \| query \| mine [n] \| reconcile]` | peek top learnings; compact decisions; dump injected context; mine this session (or last n prior files); when `use_graph`, show graph stats or reconcile contradictions |
+| `/memory [list \| decisions \| graph \| dump \| query \| mine [n] \| reconcile]` | peek top learnings; decisions; readable injected memory; mine this session (or last n prior files); when `use_graph`, show graph stats or reconcile contradictions |
 | `/model <name>` | switch model, or list models with no argument |
 | `/stats` | show token usage, session activity, and the memory HUD (learnings, decisions, graph, checkpoint) |
 | `/new` | reset conversation (memory context re-injected) |
@@ -288,7 +288,7 @@ zsh completion for `config set` is generated from these keys.
 File tools (`read_file`, `write_file`, `update_file`, `move_file`, `delete_file`,
 `list_dir`, `find_files`, `search_files`) are constrained
 to the workspace directory captured at session start. Relative paths are resolved
-against that directory (not `$HOME`); the ⚙ tool line shows the resolved path(s).
+against that directory (not `$HOME`); the ⚙ tool line prints each resolved path in full on the next line (a long name is not cut off with `...`).
 Paths the user `@`-attached this turn are readable even outside the workspace;
 read them in place (zips list members). Writes to those outside paths, and
 copy/extract of outside files into the workspace, require confirmation.

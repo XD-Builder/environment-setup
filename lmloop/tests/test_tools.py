@@ -372,6 +372,33 @@ class ToolSafetyTests(unittest.TestCase):
             self.assertIn(str(root / "cybertruck_59k_top_10_findings.md"), preview)
             self.assertNotIn("ERROR", preview)
 
+    def test_format_tool_preview_keeps_long_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            name = "n" * 180 + ".md"
+            preview = format_tool_preview(
+                "read_file",
+                '{"path": "%s", "start_line": 40, "max_lines": 400}' % name,
+                workspace_root=root,
+                limit=80,
+            )
+            bulky = format_tool_preview(
+                "update_file",
+                '{"path": "%s", "old_string": "%s", "new_string": "y"}' % (name, "x" * 200),
+                workspace_root=root,
+                limit=80,
+            )
+        path_line, _, rest = preview.partition("\n")
+        full = str((root / name).resolve())
+        self.assertEqual(path_line, full)
+        self.assertNotIn("...", path_line)
+        self.assertIn("start_line=40", rest)
+        self.assertIn("max_lines=400", rest)
+        edit_path, _, edit_rest = bulky.partition("\n")
+        self.assertEqual(edit_path, full)
+        self.assertNotIn(full[:20] + "...", edit_path)
+        self.assertIn("...", edit_rest)
+
     def test_remember_cites_learnings_file(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

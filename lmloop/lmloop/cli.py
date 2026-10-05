@@ -13,7 +13,7 @@
     lmloop memory [query]           peek curated learnings (read-only)
     lmloop memory list              top 5 active learnings
     lmloop memory decisions         top 3 active decisions
-    lmloop memory dump              injected context_block (debug)
+    lmloop memory dump              readable view of injected memory
     lmloop memory mine [N]          mine last N sessions into learnings (writes)
     lmloop memory graph             knowledge-graph stats (use_graph)
     lmloop memory reconcile         review contradicts clusters (use_graph)
@@ -50,7 +50,7 @@ project memory commands:
   memory [query]     peek curated learnings (read-only)
   memory list        top 5 active learnings
   memory decisions   top 3 active decisions
-  memory dump        injected context_block (debug)
+  memory dump        readable view of injected memory
   memory mine [N]    mine last N sessions into learnings (writes memory)
   memory graph       knowledge-graph stats (requires use_graph)
   memory reconcile   review contradicts clusters (requires use_graph)
@@ -281,23 +281,15 @@ def cmd_config(cfg: dict, words: list, console: Console) -> int:
 def cmd_memory(cfg: dict, words: list, console: Console) -> int:
     verb = words[0] if words else "list"
     if not words or verb == "list":
-        rows = memory.get_learnings(limit=memory.MEMORY_LIST_LIMIT)
-        if rows:
-            for r in rows:
-                console.info(memory.format_learning_line(r))
-        else:
-            console.info(memory.MSG_NO_LEARNINGS)
+        console.write_lines(memory.learning_list_lines(limit=memory.MEMORY_LIST_LIMIT))
         return 0
     if verb == "decisions":
-        rows = memory.get_decisions(limit=memory.MEMORY_DECISIONS_LIMIT)
-        if rows:
-            for d in rows:
-                console.info(memory.format_decision_line(d))
-        else:
-            console.info(memory.MSG_NO_DECISIONS)
+        console.write_lines(
+            memory.decision_list_lines(limit=memory.MEMORY_DECISIONS_LIMIT),
+        )
         return 0
     if verb == "dump":
-        console.info(memory.dump_context_block(cfg))
+        console.write_lines(memory.injected_memory_lines(cfg))
         return 0
     if verb == "mine":
         rest = words[1:]
@@ -340,22 +332,12 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         )
         return 0 if result is not None else 1
     q = " ".join(words)
-    rows = memory.get_learnings(query=q, limit=30)
-    if rows:
-        for r in rows:
-            console.info(memory.format_learning_line(r))
-    else:
-        console.info(memory.MSG_NO_LEARNINGS)
+    console.write_lines(memory.learning_list_lines(query=q, limit=30))
     return 0
 
 
 def cmd_decisions(cfg: dict, words: list, console: Console) -> int:
-    rows = memory.get_decisions(limit=30)
-    if rows:
-        for d in rows:
-            console.info(memory.format_decision_line(d, date=True))
-    else:
-        console.info(memory.MSG_NO_DECISIONS)
+    console.write_lines(memory.decision_list_lines(limit=30))
     return 0
 
 

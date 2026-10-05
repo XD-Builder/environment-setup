@@ -148,6 +148,17 @@ def visible_len(text: str) -> int:
     return len(strip_ansi(text))
 
 
+# Semantic row roles from memory.ViewLine → Theme attribute names.
+_LINE_ROLE_ATTR = {
+    "heading": "bold",
+    "title": "cyan",
+    "path": "green",
+    "ok": "green",
+    "muted": "dim",
+    "warn": "yellow",
+}
+
+
 def fresh_stats() -> dict:
     return {
         "prompt_tokens": 0,
@@ -470,12 +481,47 @@ class Console:
                 parts.append(f"ctx {format_tokens(used)}/{format_tokens(effective)}")
         print(t.c(" · ".join(parts), t.dim))
 
+    def write_lines(self, lines) -> None:
+        """Print semantic rows. Each row has ``role`` and ``text``.
+
+        Roles: ``heading`` (bold), ``title`` (cyan), ``path`` (green),
+        ``ok`` (green), ``muted`` (dim), ``warn`` (yellow), ``text`` (plain).
+        """
+        for line in lines:
+            role = line.role
+            text = line.text
+            if text == "":
+                print()
+                continue
+            attr = _LINE_ROLE_ATTR.get(role, "")
+            code = getattr(self.t, attr, "") if attr else ""
+            print(self.t.c(text, code) if code else text)
+
     def tool_call(self, name: str, args_preview: str, stats: "dict | None" = None) -> None:
+        """Print a tool call. A newline in the preview is a full path, then args.
+
+        File tools use that shape so a long filename is never ellipsized.
+        """
         t = self.t
-        line = f"  ⚙ {name}({args_preview})"
+        gear = t.c("⚙", t.dim)
+        label = t.c(name, t.cyan)
+        session = ""
         if stats and stats.get("total_tokens"):
-            line += f"  ·  {format_tokens(stats['total_tokens'])} session"
-        print(t.c(line, t.dim_cyan))
+            session = t.c(
+                f"  ·  {format_tokens(stats['total_tokens'])} session", t.dim,
+            )
+        preview = args_preview or ""
+        path, sep, rest = preview.partition("\n")
+        if sep:
+            print(f"  {gear} {label}{session}")
+            if path:
+                print(f"    {t.c(path, t.green)}")
+            if rest:
+                print(f"    {t.c(rest, t.dim)}")
+            return
+        shown = t.c(preview, t.dim) if preview else ""
+        gap = " " if shown else ""
+        print(f"  {gear} {label}{gap}{shown}{session}")
 
     def warn(self, msg: str) -> None:
         print(self.t.c(msg, self.t.bold_yellow))
