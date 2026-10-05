@@ -4,7 +4,8 @@
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: cuts applied to the design docs)
 **Covers:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
-[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md)
+[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
+[DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) (proposed)
 
 ## Verdict
 
@@ -189,7 +190,8 @@ Dotted edges point at deferred work and name what it would build on.
 
 | Deferred | Revisit when |
 |---|---|
-| Parallel agents | `lmloop flow` shows, on a remote endpoint, frequent moments with ≥ 2 runnable frontier nodes and sequential waiting dominating wall-clock |
+| Parallel agents (default local path) | `lmloop flow` shows, on a remote endpoint, frequent moments with ≥ 2 runnable frontier nodes and sequential waiting dominating wall-clock |
+| Multi-agent company (`--docker --company`, manifest, worktrees) | See [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md); build after sandbox S1–S6 + DAG fan-out D1–D3 + OpenRouter allowlist |
 | Per-cycle probe | Runs finish on checker-only `pass` and later regress |
 | Embeddings rerank | FTS5 recall demonstrably misses paraphrases users search for |
 
