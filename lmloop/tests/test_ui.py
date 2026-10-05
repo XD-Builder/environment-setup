@@ -99,6 +99,48 @@ class UiTests(unittest.TestCase):
         ])
         self.assertGreaterEqual(n, 1)
 
+    def test_write_lines_and_tool_path_use_color(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from lmloop.memory import ViewLine
+
+        with patch("lmloop.ui._supports_color", return_value=True):
+            console = Console(color=True)
+        buf = StringIO()
+        long_name = "/tmp/" + ("n" * 180) + ".md"
+        with redirect_stdout(buf):
+            console.write_lines([
+                ViewLine("Active files", "heading"),
+                ViewLine(f"  {long_name}", "path"),
+                ViewLine("    read · lines 1-1 of 1", "muted"),
+            ])
+            console.tool_call("read_file", f"{long_name}\nstart_line=3")
+        text = buf.getvalue()
+        self.assertIn("\033[1m", text)
+        self.assertIn("\033[32m", text)
+        self.assertIn(long_name, text)
+        self.assertIn("start_line=3", text)
+        self.assertIn("read_file", text)
+        self.assertNotIn("...", text)
+
+    def test_tool_call_prints_full_path_on_its_own_line(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+
+        console = Console(color=False)
+        path = "/tmp/" + ("n" * 180) + ".md"
+        buf = StringIO()
+        with redirect_stdout(buf):
+            console.tool_call("read_file", f"{path}\nstart_line=12")
+            console.tool_call("run_shell", "ls")
+        text = buf.getvalue()
+        self.assertIn(path, text)
+        self.assertIn("start_line=12", text)
+        self.assertIn("read_file", text)
+        self.assertIn("run_shell", text)
+        self.assertIn("ls", text)
+        self.assertNotIn("...", text)
+
     def test_referenced_at_colors_path(self):
         from io import StringIO
         from contextlib import redirect_stdout
