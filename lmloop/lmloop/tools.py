@@ -460,27 +460,82 @@ def tool_path_argument(arguments) -> "str | None":
     return None
 
 
+def _clip_preview(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3] + "..."
+
+
+_PREVIEW_VALUE_CLIP = 48
+
+
+def _preview_value(value) -> str:
+    """Short arg for the ⚙ line. Long strings are clipped; paths are not."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        shown = " ".join(value.split())
+        clipped = len(shown) > _PREVIEW_VALUE_CLIP
+        if clipped:
+            shown = shown[: _PREVIEW_VALUE_CLIP - 3] + "..."
+        if clipped or any(ch.isspace() for ch in shown) or shown == "":
+            return json.dumps(shown, ensure_ascii=False)
+        return shown
+    return str(value)
+
+
+def _file_tool_preview(parsed: dict, path_args: tuple, resolved: dict) -> str:
+    """Path on the first line, in full. Other args on the next line.
+
+    Long string args are shortened. The path is never ellipsized, so a
+    ``read_file`` of a deep filename stays recognizable.
+    """
+    if "path" in resolved and "new_path" in resolved:
+        head = f"{resolved['path']} → {resolved['new_path']}"
+    elif len(resolved) == 1:
+        head = next(iter(resolved.values()))
+    else:
+        head = "  ".join(
+            f"{key}={resolved[key]}" for key in path_args if key in resolved
+        )
+    extras = [
+        f"{key}={_preview_value(value)}"
+        for key, value in parsed.items()
+        if key not in path_args
+    ]
+    if extras:
+        return head + "\n" + "  ".join(extras)
+    return head + "\n"
+
+
 def format_tool_preview(name: str, args: str,
                         workspace_root: "Path | None" = None,
                         limit: int = _TOOL_PREVIEW_LIMIT) -> str:
-    """Compact ⚙-line args. File tools show the resolved workspace path(s)."""
+    """Compact ⚙-line args. File tools show the resolved path in full.
+
+    The path is its own line and is never cut with ``...``. Other arguments
+    follow and may be shortened. Non-file tools stay one clipped line.
+    """
     text = args or ""
     path_args = _FILE_PATH_TOOLS.get(name)
-    if path_args:
-        try:
-            parsed = json.loads(text) if text.strip() else {}
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, dict):
-            parsed = dict(parsed)
-            for arg in path_args:
-                raw = parsed.get(arg, "." if arg == "path" else None)
-                if isinstance(raw, str):
-                    parsed[arg] = str(_resolve_path(raw, workspace_root))
-            text = json.dumps(parsed, ensure_ascii=False)
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "..."
+    if not path_args:
+        return _clip_preview(text, limit)
+    try:
+        parsed = json.loads(text) if text.strip() else {}
+    except json.JSONDecodeError:
+        return _clip_preview(text, limit)
+    if not isinstance(parsed, dict):
+        return _clip_preview(text, limit)
+    resolved = {}
+    for arg in path_args:
+        raw = parsed.get(arg, "." if arg == "path" else None)
+        if isinstance(raw, str):
+            resolved[arg] = str(_resolve_path(raw, workspace_root))
+    if not resolved:
+        return _clip_preview(text, limit)
+    return _file_tool_preview(parsed, path_args, resolved)
 
 
 def _workspace_root() -> Path:

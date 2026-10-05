@@ -288,45 +288,26 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
         return _cmd_memory_graph(state)
     if verb == "reconcile":
         return _cmd_memory_reconcile(state, confirm_gate)
-    rows = memory.get_learnings(query=arg, limit=30)
-    _emit_rows(
-        state.console,
-        [memory.format_learning_line(r) for r in rows],
-        memory.MSG_NO_LEARNINGS,
-    )
+    state.console.write_lines(memory.learning_list_lines(query=arg, limit=30))
     return True
 
 
-def _emit_rows(console: Console, lines: list, empty: str) -> None:
-    if lines:
-        for line in lines:
-            console.info(line)
-        return
-    console.info(empty)
-
-
 def _cmd_memory_list(state: SessionState) -> bool:
-    rows = memory.get_learnings(limit=memory.MEMORY_LIST_LIMIT)
-    _emit_rows(
-        state.console,
-        [memory.format_learning_line(r) for r in rows],
-        memory.MSG_NO_LEARNINGS,
+    state.console.write_lines(
+        memory.learning_list_lines(limit=memory.MEMORY_LIST_LIMIT),
     )
     return True
 
 
 def _cmd_memory_decisions(state: SessionState) -> bool:
-    rows = memory.get_decisions(limit=memory.MEMORY_DECISIONS_LIMIT)
-    _emit_rows(
-        state.console,
-        [memory.format_decision_line(d) for d in rows],
-        memory.MSG_NO_DECISIONS,
+    state.console.write_lines(
+        memory.decision_list_lines(limit=memory.MEMORY_DECISIONS_LIMIT),
     )
     return True
 
 
 def _cmd_memory_dump(state: SessionState) -> bool:
-    state.console.info(memory.dump_context_block(state.cfg))
+    state.console.write_lines(memory.injected_memory_lines(state.cfg))
     return True
 
 
@@ -653,12 +634,7 @@ def _cmd_checkpoints(state: SessionState, arg: str) -> bool:
 
 
 def _cmd_decisions(state: SessionState, _arg: str) -> bool:
-    rows = memory.get_decisions(limit=30)
-    _emit_rows(
-        state.console,
-        [memory.format_decision_line(d, date=True) for d in rows],
-        memory.MSG_NO_DECISIONS,
-    )
+    state.console.write_lines(memory.decision_list_lines(limit=30))
     return True
 
 
@@ -1100,45 +1076,72 @@ def _file_detail(row: ContextFile) -> str:
     if not row.loaded:
         try:
             if Path(row.path).is_dir():
-                return "directory, not loaded"
+                return "directory · not opened"
         except OSError:
             pass
-        return "referenced, not loaded"
+        return "referenced · not loaded"
     bits = []
     if row.attached:
         bits.append("attached excerpt")
     if row.image:
         bits.append("image")
     if row.spans:
-        bits.append("read, " + _format_spans(row.spans))
+        span = _format_spans(row.spans)
+        bits.append(span if bits else f"read · {span}")
     elif not bits:
         bits.append("read")
-    return "; ".join(bits)
+    return " · ".join(bits)
+
+
+def _file_context_lines(files: list, workspace_root: "Path | None") -> list:
+    """Each path on its own line so a long name is never clipped."""
+    lines = [memory.ViewLine(ACTIVE_FILES_HEADING, "heading"), memory.ViewLine("")]
+    if not files:
+        lines.append(memory.ViewLine(f"  {NO_SESSION_FILES}", "muted"))
+        return lines
+    for row in files:
+        shown = _display_path(row.path, workspace_root)
+        lines.append(memory.ViewLine(
+            f"  {shown}", "path" if row.loaded else "muted",
+        ))
+        lines.append(memory.ViewLine(
+            f"    {_file_detail(row)}", "ok" if row.loaded else "muted",
+        ))
+    return lines
+
+
+def context_view_lines(
+    files: list, cfg: dict, workspace_root: "Path | None" = None,
+) -> list:
+    """Active files, then the readable injected-memory view."""
+    lines = _file_context_lines(files, workspace_root)
+    lines.append(memory.ViewLine(""))
+    lines.append(memory.ViewLine(DURABLE_MEMORY_HEADING, "heading"))
+    lines.append(memory.ViewLine(""))
+    lines.extend(memory.injected_memory_lines(cfg))
+    return lines
 
 
 def format_session_context(
     files: list, durable: str, workspace_root: "Path | None" = None,
 ) -> str:
-    """Active-file list plus the injected memory block."""
-    lines = [ACTIVE_FILES_HEADING]
-    if not files:
-        lines.append(NO_SESSION_FILES)
-    else:
-        for row in files:
-            shown = _display_path(row.path, workspace_root)
-            lines.append(f"  {shown} — {_file_detail(row)}")
-    lines.append("")
-    lines.append(DURABLE_MEMORY_HEADING)
-    lines.append((durable or "").rstrip())
-    return "\n".join(lines)
+    """Plain active-file list plus a caller-supplied memory block."""
+    lines = _file_context_lines(files, workspace_root)
+    lines.append(memory.ViewLine(""))
+    lines.append(memory.ViewLine(DURABLE_MEMORY_HEADING, "heading"))
+    body = (durable or "").rstrip("\n")
+    if body:
+        lines.append(memory.ViewLine(""))
+        for raw in body.splitlines():
+            lines.append(memory.ViewLine(raw))
+    return "\n".join(line.text for line in lines)
 
 
 def _cmd_context(state: SessionState, _arg: str) -> bool:
-    """Files in the live thread, then the injected memory block."""
+    """Files in the live thread, then the injected memory, in a readable view."""
     files = active_context_files(state.messages, state.workspace_root)
-    durable = memory.dump_context_block(state.cfg)
-    state.console.info(format_session_context(
-        files, durable, state.workspace_root,
+    state.console.write_lines(context_view_lines(
+        files, state.cfg, state.workspace_root,
     ))
     return True
 

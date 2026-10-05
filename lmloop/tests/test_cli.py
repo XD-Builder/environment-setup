@@ -1145,18 +1145,26 @@ class MemoryInspectTests(unittest.TestCase):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({}, ["list"], self._console()), 0)
-                listed = [ln for ln in buf.getvalue().splitlines() if ln.startswith("- [")]
-                self.assertEqual(len(listed), 5)
-                self.assertIn("tip-0", buf.getvalue())
+                listed = buf.getvalue()
+                self.assertIn("Learnings", listed)
+                self.assertEqual(sum(1 for i in range(6) if f"tip-{i}" in listed), 5)
+                self.assertIn("tip 0", listed)
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({}, ["decisions"], self._console()), 0)
-                self.assertIn("ship stdlib", buf.getvalue())
-                self.assertIn("no extra deps", buf.getvalue())
+                decisions = buf.getvalue()
+                self.assertIn("Decisions", decisions)
+                self.assertIn("ship stdlib", decisions)
+                self.assertIn("why: no extra deps", decisions)
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({}, ["dump"], self._console()), 0)
-                self.assertIn("<<<untrusted-memory>>>", buf.getvalue())
+                dumped = buf.getvalue()
+                self.assertIn("Learnings", dumped)
+                self.assertIn("tip-0", dumped)
+                self.assertIn("Decisions", dumped)
+                self.assertIn("ship stdlib", dumped)
+                self.assertNotIn("<<<untrusted-memory>>>", dumped)
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({"use_graph": False}, ["graph"], self._console()), 0)
@@ -1185,7 +1193,8 @@ class MemoryInspectTests(unittest.TestCase):
                 with redirect_stdout(buf):
                     _cmd_memory(state, "list", lambda _: False)
                 out = buf.getvalue()
-                self.assertIn("[not-a-verb]", out)
+                self.assertIn("not-a-verb", out)
+                self.assertIn("the list command", out)
                 self.assertNotIn("(no learnings", out)
 
     def test_repl_stats_includes_hud(self):
@@ -1263,9 +1272,11 @@ class MemoryInspectTests(unittest.TestCase):
                 dumped = buf_dump.getvalue()
                 ctx = buf_ctx.getvalue()
                 self.assertNotIn("Active files", dumped)
-                self.assertIn("<<<untrusted-memory>>>", dumped)
+                self.assertIn("keep", dumped)
+                self.assertNotIn("<<<untrusted-memory>>>", dumped)
                 self.assertIn("Active files", ctx)
-                self.assertIn("notes.md — read, lines 1-1 of 1", ctx)
+                self.assertIn("notes.md", ctx)
+                self.assertIn("read · lines 1-1 of 1", ctx)
                 self.assertIn("Durable memory", ctx)
                 self.assertIn(dumped.strip(), ctx)
                 self.assertNotEqual(dumped, ctx)

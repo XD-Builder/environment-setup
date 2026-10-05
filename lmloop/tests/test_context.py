@@ -100,7 +100,9 @@ class ActiveContextFileTests(unittest.TestCase):
             self.assertTrue(files[0].loaded)
             self.assertEqual(files[0].spans, ((1, 2, 5), (3, 4, 5)))
             shown = format_session_context(files, "durable", root)
-            self.assertIn("notes.md — read, lines 1-2, 3-4 of 5", shown)
+            self.assertIn("notes.md", shown)
+            self.assertIn("read · lines 1-2, 3-4 of 5", shown)
+            self.assertNotIn("...", shown)
             self.assertIn("durable", shown)
 
     def test_error_read_is_omitted(self):
@@ -121,8 +123,9 @@ class ActiveContextFileTests(unittest.TestCase):
             self.assertEqual(len(files), 1)
             self.assertTrue(files[0].loaded)
             shown = format_session_context(files, "", root)
-            self.assertIn("notes.md — read, lines 1-1 of 1", shown)
-            self.assertNotIn("referenced, not loaded", shown)
+            self.assertIn("notes.md", shown)
+            self.assertIn("read · lines 1-1 of 1", shown)
+            self.assertNotIn("referenced · not loaded", shown)
 
     def test_path_only_reference_and_directory(self):
         with tempfile.TemporaryDirectory() as d:
@@ -134,8 +137,10 @@ class ActiveContextFileTests(unittest.TestCase):
                 [{"role": "user", "content": expansion.text}], root,
             )
             shown = format_session_context(files, "", root)
-            self.assertIn("notes.md — referenced, not loaded", shown)
-            self.assertIn("src — directory, not loaded", shown)
+            self.assertIn("notes.md", shown)
+            self.assertIn("referenced · not loaded", shown)
+            self.assertIn("src", shown)
+            self.assertIn("directory · not opened", shown)
 
     def test_attachment_excerpt(self):
         from tests.test_extract import _docx_bytes
@@ -155,7 +160,8 @@ class ActiveContextFileTests(unittest.TestCase):
             self.assertEqual(len(files), 1)
             self.assertTrue(files[0].attached)
             shown = format_session_context(files, "", root)
-            self.assertIn("Capstone.docx — attached excerpt", shown)
+            self.assertIn("Capstone.docx", shown)
+            self.assertIn("attached excerpt", shown)
 
     def test_image_read(self):
         from tests.test_extract import PNG_1X1
@@ -168,7 +174,8 @@ class ActiveContextFileTests(unittest.TestCase):
             self.assertEqual(len(files), 1)
             self.assertTrue(files[0].image)
             shown = format_session_context(files, "", root)
-            self.assertIn("shot.png — image", shown)
+            self.assertIn("shot.png", shown)
+            self.assertIn("image", shown)
 
     def test_vision_attachment_loads_image_only(self):
         from tests.test_extract import PNG_1X1
@@ -212,7 +219,8 @@ class ActiveContextFileTests(unittest.TestCase):
                 )
                 shown = format_session_context(files, "", root)
                 self.assertIn(outside.resolve().as_posix(), shown)
-                self.assertNotIn("referenced, not loaded", shown)
+                self.assertNotIn("...", shown)
+                self.assertNotIn("referenced · not loaded", shown)
             finally:
                 outside.unlink(missing_ok=True)
 

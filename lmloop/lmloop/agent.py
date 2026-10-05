@@ -574,7 +574,17 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     if echo_status is None:
         echo_status = echo
     if echo_tool is None:
-        echo_tool = lambda name, preview, stats=None: echo(f"  ⚙ {name}({preview})")
+        def echo_tool(name, preview, stats=None):
+            preview = preview or ""
+            path, sep, rest = preview.partition("\n")
+            if sep:
+                echo(f"  ⚙ {name}")
+                if path:
+                    echo(f"    {path}")
+                if rest:
+                    echo(f"    {rest}")
+                return
+            echo(f"  ⚙ {name}({preview})")
     color = bool(cfg.get("color", True))
     if no_tools:
         tool_specs, impls = None, {}
