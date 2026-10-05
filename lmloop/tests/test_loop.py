@@ -87,8 +87,18 @@ class CheckStatusTests(unittest.TestCase):
             "blocked",
         )
 
-    def test_error_is_fail(self):
-        self.assertEqual(check_status_from_output("ERROR: boom"), "fail")
+    def test_spawn_error_is_blocked(self):
+        self.assertEqual(check_status_from_output("ERROR: boom"), "blocked")
+        self.assertEqual(
+            check_status_from_output(
+                "ERROR: [Errno 2] No such file or directory: 'pytest'"
+            ),
+            "blocked",
+        )
+
+    def test_exit_126_127_are_blocked(self):
+        self.assertEqual(check_status_from_output("[exit code: 126]"), "blocked")
+        self.assertEqual(check_status_from_output("[exit code: 127]"), "blocked")
 
     def test_clip_marks_truncation(self):
         body = "x" * 2500 + "\n[exit code: 1]"

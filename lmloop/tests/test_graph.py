@@ -33,7 +33,7 @@ COMPANY = """
 # company — specialized roles with gates
 
 node ceo    skill ceo
-node build  until --check 'pytest -q' implement the agreed change
+node build  until implement the agreed change
 node qa     skill qa
 node mine   mine
 
@@ -53,7 +53,7 @@ class ParseGraphTests(unittest.TestCase):
         self.assertEqual(defn.node("ceo").kind, "skill")
         self.assertEqual(defn.node("ceo").skill, "ceo")
         self.assertEqual(defn.node("build").kind, "until")
-        self.assertEqual(defn.node("build").check_cmd, "pytest -q")
+        self.assertIsNone(defn.node("build").check_cmd)
         self.assertEqual(defn.node("build").goal, "implement the agreed change")
         self.assertEqual(defn.node("mine").kind, "mine")
         self.assertEqual(defn.edge_for("qa", "pass").dst, "mine")

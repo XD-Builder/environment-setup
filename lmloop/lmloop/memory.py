@@ -611,19 +611,22 @@ def _injected_snapshot(cfg: dict, slug: "str | None" = None):
     """
     from .knowledge_graph import _node_id
     kg = _kg(slug)
+    graph_view = None
     if kg.enabled(cfg):
         kg.ensure(cfg)
-    graph_on = kg.enabled(cfg)
+        graph_view = kg.load_view()
     decisions = []
     for row in get_decisions(limit=cfg.get("context_decisions", 6), slug=slug):
         neighbors = (
-            kg.neighbor_lines(_node_id("decision", row["id"])) if graph_on else []
+            kg.neighbor_lines(_node_id("decision", row["id"]), graph_view)
+            if graph_view is not None else []
         )
         decisions.append((row, neighbors))
     learnings = []
     for row in get_learnings(limit=cfg.get("context_learnings", 8), slug=slug):
         neighbors = (
-            kg.neighbor_lines(_node_id("learning", row["key"])) if graph_on else []
+            kg.neighbor_lines(_node_id("learning", row["key"]), graph_view)
+            if graph_view is not None else []
         )
         learnings.append((row, neighbors))
     return decisions, learnings, recent_checkpoint(slug=slug)

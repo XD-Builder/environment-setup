@@ -98,6 +98,8 @@ def check_status_from_output(output: str) -> str:
     body = (output or "").strip()
     if body.startswith("DENIED:"):
         return "blocked"
+    if body.startswith("ERROR:"):
+        return "blocked"
     last = body.splitlines()[-1] if body else ""
     if last.startswith(EXIT_CODE_PREFIX):
         rest = last[len(EXIT_CODE_PREFIX):].strip().rstrip("]")
@@ -105,6 +107,8 @@ def check_status_from_output(output: str) -> str:
             code = int(rest)
         except ValueError:
             return "fail"
+        if code in (126, 127):
+            return "blocked"
         return "pass" if code == 0 else "fail"
     return "fail"
 
