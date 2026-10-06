@@ -23,7 +23,8 @@ lmloop/
 │   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # opt-in --docker exec + acceptance gates (proposed)
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # model lock, DAG fan-out/joins, flow mining, TUI canvas (proposed)
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
-│   └── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
+│   ├── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
+│   └── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
