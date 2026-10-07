@@ -453,18 +453,15 @@ def _pyproject_has_pytest(path: Path) -> bool:
     if not path.is_file():
         return False
     text = _read_capped(path)
+    import tomllib
+
     try:
-        import tomllib
-    except ModuleNotFoundError:
-        tomllib = None
-    if tomllib is not None:
-        try:
-            data = tomllib.loads(text)
-        except tomllib.TOMLDecodeError:
-            data = None
-        tool = data.get("tool") if isinstance(data, dict) else None
-        if isinstance(tool, dict) and "pytest" in tool:
-            return True
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        data = None
+    tool = data.get("tool") if isinstance(data, dict) else None
+    if isinstance(tool, dict) and "pytest" in tool:
+        return True
     for line in text.splitlines():
         if line.strip().startswith("[tool.pytest"):
             return True

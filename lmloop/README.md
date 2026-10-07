@@ -6,7 +6,7 @@ code search, web search, web fetch), and wraps it in persistent per-project memo
 gets smarter about your projects over time. Everything — model, loop, memory —
 stays on your machine.
 
-The agent loop is Python 3.10+ **stdlib** for HTTP and tools. The interactive REPL
+The agent loop is Python 3.14+ **stdlib** for HTTP and tools. The interactive REPL
 requires [`prompt_toolkit`](https://github.com/prompt-toolkit/python-prompt-toolkit)
 and [`rich`](https://github.com/Textualize/rich). Web search uses
 [`ddgs`](https://github.com/deedy5/ddgs) (no API key), then urllib fallbacks.
@@ -21,7 +21,8 @@ under `~/.lmloop/`.
 bash lmloop/setup-lmloop.sh
 ```
 
-Setup creates `lmloop/.venv`, installs `requirements.txt` (prompt_toolkit, rich, ddgs), and
+Setup requires **Python 3.14+** (see `lmloop/.python-version`). It creates
+`lmloop/.venv`, installs `requirements.txt` (prompt_toolkit, rich, ddgs), and
 symlinks `lmloop` into `~/.local/bin`.
 
 Run tests:

@@ -41,6 +41,8 @@ from lmloop.tools import (
 )
 from lmloop.web import _search_ddgs, fetch_url, web_search
 
+from support import parametrize
+
 
 DDG_HTML_FIXTURE = """
 <html><body>
@@ -1367,14 +1369,22 @@ class FindSearchToolTests(unittest.TestCase):
         self.assertNotIn("-F", seen["cmd"])
         self.assertEqual(seen["cmd"][seen["cmd"].index("-C") + 1], "1")
 
-    def test_coerce_bool(self):
-        self.assertIs(coerce_bool(True), True)
-        self.assertIs(coerce_bool("False"), False)
-        self.assertIs(coerce_bool(" TRUE "), True)
-        self.assertIs(coerce_bool(1), True)
-        self.assertIs(coerce_bool(0), False)
-        self.assertIsNone(coerce_bool("maybe"))
-        self.assertIsNone(coerce_bool(2))
+    @parametrize(
+        (True, True),
+        ("False", False),
+        (" TRUE ", True),
+        (1, True),
+        (0, False),
+        ("maybe", None),
+        (2, None),
+        names=("raw", "want"),
+    )
+    def test_coerce_bool(self, raw, want):
+        got = coerce_bool(raw)
+        if want is None:
+            self.assertIsNone(got)
+        else:
+            self.assertIs(got, want)
 
 
 class MemoryDisclosureTests(unittest.TestCase):

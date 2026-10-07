@@ -2,6 +2,8 @@
 
 import unittest
 
+from support import requires_rich
+
 from lmloop.markdown_view import (
     make_console,
     messages_to_markdown,
@@ -44,10 +46,8 @@ class MarkdownViewTests(unittest.TestCase):
         self.assertTrue(out.strip())
         self.assertIn("Hello", out)
 
+    @requires_rich
     def test_render_markdown_wraps_instead_of_cropping(self):
-        from lmloop.markdown_view import _rich_available
-        if not _rich_available():
-            self.skipTest("rich not installed")
         text = (
             "First sentence is here. Second sentence continues the thought "
             "and should remain visible on screen even though it is long. "
@@ -58,10 +58,8 @@ class MarkdownViewTests(unittest.TestCase):
         self.assertIn("continues the thought", out)
         self.assertGreater(out.count("\n"), 1)
 
+    @requires_rich
     def test_numbered_list_wraps_instead_of_cropping(self):
-        from lmloop.markdown_view import _rich_available
-        if not _rich_available():
-            self.skipTest("rich not installed")
         text = (
             "Saved:\n\n"
             "1. pitfall_ambiguous_numeric_abbreviation — \"59K\" is ambiguous "
@@ -75,10 +73,8 @@ class MarkdownViewTests(unittest.TestCase):
         self.assertIn("wasted searches", out)
         self.assertIn("East Coast Florida", out)
 
+    @requires_rich
     def test_bullet_list_wraps_instead_of_cropping(self):
-        from lmloop.markdown_view import _rich_available
-        if not _rich_available():
-            self.skipTest("rich not installed")
         text = (
             "Verification:\n\n"
             "- West Coast coverage: Findings 2–3 cover Southern California "
@@ -88,10 +84,8 @@ class MarkdownViewTests(unittest.TestCase):
         out = " ".join(render_markdown_ansi(text, width=40, color=False).split())
         self.assertIn("reservation held", out)
 
+    @requires_rich
     def test_blockquote_has_no_gutter_bar(self):
-        from lmloop.markdown_view import _rich_available
-        if not _rich_available():
-            self.skipTest("rich not installed")
         text = (
             "Intro sentence.\n\n"
             "> By integrating Burt's Bees into Greenworks, Clorox "
@@ -105,11 +99,10 @@ class MarkdownViewTests(unittest.TestCase):
         self.assertNotIn("▌", out)
         self.assertNotRegex(out, r"(?m)^[|┃│]")
 
+    @requires_rich
     def test_make_console_soft_wrap_default_off_for_live(self):
         from io import StringIO
-        from lmloop.markdown_view import _rich_available
-        if not _rich_available():
-            self.skipTest("rich not installed")
+
         console = make_console(color=False, file=StringIO(), force_terminal=True)
         self.assertFalse(console.soft_wrap)
         reflow = make_console(

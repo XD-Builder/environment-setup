@@ -1,13 +1,13 @@
 #!/bin/bash
-# One-time setup for lmloop. Requires Python 3.10+ (Homebrew python preferred
-# over Apple's 3.9). Creates lmloop/.venv, installs requirements (prompt_toolkit,
-# rich, ddgs), symlinks the launcher into ~/.local/bin, and checks LM Studio.
+# One-time setup for lmloop. Requires Python 3.14+. Creates lmloop/.venv,
+# installs requirements (prompt_toolkit, rich, ddgs), symlinks the launcher
+# into ~/.local/bin, and checks LM Studio.
 set -e
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 VENV="$HERE/.venv"
 MIN_PY_MAJOR=3
-MIN_PY_MINOR=10
+MIN_PY_MINOR=14
 
 echo "== lmloop setup =="
 
@@ -18,9 +18,11 @@ py_at_least() {
 find_python() {
   local c
   for c in \
+    python3.14 \
+    /opt/homebrew/bin/python3.14 \
+    /usr/local/bin/python3.14 \
     /opt/homebrew/bin/python3 \
     /usr/local/bin/python3 \
-    python3.14 python3.13 python3.12 python3.11 python3.10 \
     python3
   do
     if [ -x "$c" ] || command -v "$c" >/dev/null 2>&1; then
@@ -37,8 +39,8 @@ PYTHON="$(find_python || true)"
 if [ -z "$PYTHON" ]; then
   echo "error: Python ${MIN_PY_MAJOR}.${MIN_PY_MINOR}+ is required." >&2
   echo "  Found: $(command -v python3 >/dev/null && python3 --version || echo 'no python3')" >&2
-  echo "  macOS:  brew install python" >&2
-  echo "  Linux:  install python3.12+ from your package manager" >&2
+  echo "  macOS:  brew install python@3.14  (or python3 when it ships 3.14+)" >&2
+  echo "  Ubuntu: sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt install python3.14 python3.14-venv" >&2
   exit 1
 fi
 echo "using $PYTHON ($("$PYTHON" --version 2>&1))"

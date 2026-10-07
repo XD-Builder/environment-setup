@@ -37,7 +37,7 @@ Follow [lmloop/DEVELOPMENT.md](lmloop/DEVELOPMENT.md). Architecture:
   `ARCHITECTURE.md`; ownership/conventions → `DEVELOPMENT.md`. Keep command and
   tool tables aligned with `commands.py` / `build_tools()`.
 
-Python 3.10+, PEP 8: `CapWords` types, `snake_case` functions, `UPPER_SNAKE`
+Python 3.14+, PEP 8: `CapWords` types, `snake_case` functions, `UPPER_SNAKE`
 constants, `_` private. Type-hint public functions. Catch specific exceptions
 at boundaries only. `act()` rolls back and re-raises — never wrap bugs as
 `ServerError`.

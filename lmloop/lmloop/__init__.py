@@ -1,6 +1,6 @@
 """lmloop — a local agent loop for LM Studio.
 
-Agent loop is stdlib (Python 3.10+). The interactive REPL requires
+Agent loop is stdlib (Python 3.14+). The interactive REPL requires
 prompt_toolkit. Talks to any OpenAI-compatible server; uses the `lms` CLI
 to auto-start LM Studio when needed.
 """
