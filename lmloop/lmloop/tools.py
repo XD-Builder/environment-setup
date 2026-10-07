@@ -600,6 +600,13 @@ def run_shell(
         argv = command if shell_syntax else shlex.split(command)
     except ValueError as e:
         return f"ERROR: {e}"
+    from .exec import build_backend
+
+    backend = build_backend({}, docker=False)
+    try:
+        argv = command if shell_syntax else shlex.split(command)
+    except ValueError as e:
+        return f"ERROR: {e}"
     try:
         proc = subprocess.Popen(
             argv,

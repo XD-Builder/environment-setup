@@ -436,6 +436,19 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
     return 0
 
 
+def cmd_flow_cli(cfg: dict, words: list, console: Console) -> int:
+    from . import workflow
+
+    as_json = words == ["--json"] or (words and words[0] == "--json")
+    stats = workflow.collect_flow_stats()
+    if as_json:
+        import json
+        console.write_lines([json.dumps(stats.to_dict(), indent=2)])
+        return 0
+    console.write_lines(workflow.format_flow_report(stats, cfg).splitlines())
+    return 0
+
+
 def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
     if not words:
         run = graph_mod.latest_open_graph_run()
@@ -552,6 +565,7 @@ def cli_handlers() -> dict:
         "memory": cmd_memory,
         "until": cmd_until_cli,
         "graph": cmd_graph_cli,
+        "flow": cmd_flow_cli,
         "decisions": cmd_decisions,
         "history": cmd_history,
         "models": cmd_models,

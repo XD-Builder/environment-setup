@@ -68,6 +68,11 @@ DEFAULTS = {
     "until_mine": True,  # after until pass, mine learnings from the run
     "check_inference": "auto",  # auto: derive a check plan when no --check/--keep; off: eval only
     "until_baseline": "auto",  # auto: baseline and reclassify a non-empty plan; off: checks gate directly
+    "model_concurrency": "auto",  # auto: 1 local / 4 remote; or int 1..8
+    "run_token_budget": 0,  # pause run after this many tokens; 0 = off
+    "eval_model": "",  # checker / proposals / mining; empty = main model
+    "memory_index": "auto",  # auto | on | off — FTS5 index when available
+    "recall_sessions": "auto",  # auto: on for local base_url, off for remote
     "graph_max_steps": 24,  # node entries per graph invocation before pause
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings
     "use_graph": False,  # opt-in knowledge-graph memory (JSONL nodes/edges)
@@ -90,6 +95,34 @@ def coerce_config_value(key: str, value):
     if key in ("check_inference", "until_baseline"):
         if isinstance(value, str) and value.strip().lower() in ("auto", "off"):
             return value.strip().lower()
+        return None
+    if key in ("memory_index", "recall_sessions"):
+        if isinstance(value, str) and value.strip().lower() in ("auto", "off", "on"):
+            return value.strip().lower()
+        return None
+    if key == "model_concurrency":
+        if isinstance(value, str) and value.strip().lower() == "auto":
+            return "auto"
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return max(1, min(8, value))
+        if isinstance(value, str):
+            try:
+                return max(1, min(8, int(value.strip())))
+            except ValueError:
+                return None
+        return None
+    if key == "run_token_budget":
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, str):
+            try:
+                return max(0, int(value.strip()))
+            except ValueError:
+                return None
         return None
     if key == "autonomous_snapshot":
         if isinstance(value, str):

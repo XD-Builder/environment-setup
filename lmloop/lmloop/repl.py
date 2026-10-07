@@ -877,6 +877,22 @@ def _advance_graph(state: SessionState, run: graph_mod.GraphRun,
     attach_graph_result(state, run)
 
 
+def _cmd_flow(state: SessionState, arg: str) -> bool:
+    from . import workflow
+
+    words = (arg or "").strip().split()
+    as_json = words == ["--json"] or (words and words[0] == "--json")
+    stats = workflow.collect_flow_stats()
+    if as_json:
+        import json
+        state.console.write_lines([json.dumps(stats.to_dict(), indent=2)])
+        return True
+    state.console.write_lines(
+        workflow.format_flow_report(stats, state.cfg).splitlines(),
+    )
+    return True
+
+
 def _cmd_graph(state: SessionState, arg: str, confirm_gate) -> bool:
     name = (arg or "").strip().split()[0] if (arg or "").strip() else ""
     if not name:
@@ -990,6 +1006,7 @@ def _build_slash_commands(confirm_gate) -> list:
         "memory": lambda s, a: _cmd_memory(s, a, confirm_gate),
         "until": lambda s, a: _cmd_until(s, a, confirm_gate),
         "graph": lambda s, a: _cmd_graph(s, a, confirm_gate),
+        "flow": _cmd_flow,
         "save": lambda s, a: _cmd_save(s, a, confirm_gate),
         "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
         "quit": lambda s, a: False,

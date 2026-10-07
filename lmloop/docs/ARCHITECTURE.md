@@ -360,7 +360,9 @@ node <name> skill <skill> [--check cmd] [--keep cmd] [task…]
 node <name> until [--check cmd] [--keep cmd] <goal>
     existing run_until, including derived checks when no flag is set
 node <name> mine                      memory mine over this graph run's session logs
+node <name> … needs <pred> …          join: run only after every named predecessor passed
 edge <from> -> <to> [on pass|fail|blocked]
+edge <from> -> <a> <b> …              fan-out on pass only (one row per `(from, on)`)
 ```
 
 - Packaged graphs live in `lmloop/graphs/*.md`; `~/.lmloop/graphs/<name>.md` overrides the same name.

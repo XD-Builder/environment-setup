@@ -54,9 +54,15 @@ def _raise_http_error(e: urllib.error.HTTPError, cfg: dict, body: "str | None" =
 def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
     """Non-streaming chat completion."""
     req = _chat_request(cfg, model, messages, tool_specs, stream=False)
+    slots = server.model_slots(cfg)
+
+    def _wait(limit: int) -> None:
+        print(f"[waiting for model slot · {limit}/{limit} busy]")
+
     try:
-        with urllib.request.urlopen(req, timeout=cfg_int(cfg, "timeout_s")) as resp:
-            data = json.loads(resp.read().decode())
+        with slots.acquire(on_wait=_wait):
+            with urllib.request.urlopen(req, timeout=cfg_int(cfg, "timeout_s")) as resp:
+                data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         _raise_http_error(e, cfg)
     except OSError as e:
@@ -73,13 +79,18 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
                  on_tools=None) -> "tuple[dict, dict]":
     """Streaming chat completion (SSE). Assembles message; optionally echoes content deltas."""
     req = _chat_request(cfg, model, messages, tool_specs, stream=True)
+    slots = server.model_slots(cfg)
+
+    def _wait(limit: int) -> None:
+        print(f"[waiting for model slot · {limit}/{limit} busy]")
 
     def _open_and_read(request):
-        with urllib.request.urlopen(request, timeout=cfg_int(cfg, "timeout_s")) as resp:
-            return _read_sse(
-                resp, on_delta=on_delta, on_activity=on_activity,
-                on_reasoning=on_reasoning, on_tools=on_tools,
-            )
+        with slots.acquire(on_wait=_wait):
+            with urllib.request.urlopen(request, timeout=cfg_int(cfg, "timeout_s")) as resp:
+                return _read_sse(
+                    resp, on_delta=on_delta, on_activity=on_activity,
+                    on_reasoning=on_reasoning, on_tools=on_tools,
+                )
 
     try:
         return _open_and_read(req)

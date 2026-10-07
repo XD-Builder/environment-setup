@@ -280,6 +280,11 @@ zsh completion for `config set` is generated from these keys.
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
 | `check_inference` | `auto` | `auto`: when `until` has no `--check` or `--keep`, derive a check plan from the goal, project files, repo docs, memory, and earlier runs. `off`: plain-language goals go straight to the evaluator |
 | `until_baseline` | `auto` | `auto`: run the plan once before any work, drop commands that cannot start, and turn already-passing checks into invariants. `off`: a passing check finishes the run immediately |
+| `model_concurrency` | `auto` | Host-wide lock slots per `base_url`. `auto`: 1 for local/LM Studio, 4 for remote endpoints; or set an integer 1–8 |
+| `run_token_budget` | `0` | Pause an until/graph run after this many tokens (`0` = off). `/continue` resumes |
+| `eval_model` | `` | Model for checker/eval/proposal calls; empty = same as `model` |
+| `memory_index` | `auto` | `auto`: FTS5 index when available, else scan; `on` requires FTS5; `off` disables |
+| `recall_sessions` | `auto` | Include past session snippets in recall (`auto`: on for local `base_url`, off for remote) |
 | `graph_max_steps` | `24` | Skill/until node entries per `graph` invocation before pause (`/continue` or `lmloop graph` with no name resumes). Mine and HITL gate do not count. |
 | `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
 | `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |

@@ -66,6 +66,10 @@ def msg_until_max_steps() -> str:
     return status(f"until hit until_max_steps — stopping. {MSG_RESUME}")
 
 
+def msg_until_token_budget() -> str:
+    return status(f"until hit run_token_budget — stopping. {MSG_RESUME}")
+
+
 def msg_until_blocked() -> str:
     return status("until checker is blocked — need a yes/no")
 
