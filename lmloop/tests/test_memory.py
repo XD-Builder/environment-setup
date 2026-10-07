@@ -11,6 +11,7 @@ from lmloop.memory import (
     format_sessions_for_retro,
     list_checkpoints,
     list_sessions,
+    memory_peek_lines,
     new_session_log,
     read_session,
     resolve_checkpoint,
@@ -593,6 +594,24 @@ class MemoryHudTests(unittest.TestCase):
                 block = memory_mod.context_block({})
                 self.assertIn("<<<untrusted-memory>>>", block)
                 self.assertIn("[visible-key]", block)
+
+    def test_memory_peek_lines_includes_hud_and_sections(self):
+        from unittest.mock import patch
+
+        from lmloop import memory as memory_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch.object(memory_mod, "project_dir", return_value=root):
+                memory_mod.add_learning("tip", key="tip-a")
+                memory_mod.add_decision("use stdlib", rationale="no deps")
+                lines = memory_mod.memory_peek_lines({})
+                text = "\n".join(line.text for line in lines)
+                self.assertIn("[Mem:", text)
+                self.assertIn("Learnings", text)
+                self.assertIn("Decisions", text)
+                self.assertIn("tip-a", text)
+                self.assertIn("use stdlib", text)
 
 
 if __name__ == "__main__":

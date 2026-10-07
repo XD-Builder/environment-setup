@@ -146,6 +146,7 @@ class AutoSlashTests(unittest.TestCase):
         retro = next(c for c in cmds if c.name == "/retro")
         self.assertTrue(retro.hidden)
         help_text = Console(color=False).help_text(cmds)
+        help_all = Console(color=False).help_text(cmds, show_all=True)
         self.assertIn("/until", help_text)
         self.assertIn("/graph", help_text)
         self.assertNotIn("/graphs", help_text)
@@ -153,10 +154,16 @@ class AutoSlashTests(unittest.TestCase):
         self.assertIn("mine", help_text)
         self.assertIn("dump", help_text)
         self.assertIn("list", help_text)
+        self.assertNotIn("/restore", help_text)
+        self.assertIn("/restore", help_all)
+        self.assertIn("/help all", help_text)
         mem = next(c for c in cmds if c.name == "/memory")
         self.assertIn("list", mem.arg_choices)
         self.assertIn("dump", mem.arg_choices)
+        self.assertIn("kg", mem.arg_choices)
         self.assertNotIn("/retro", help_text)
+        learn = next(c for c in cmds if c.name == "/learn")
+        self.assertTrue(learn.advanced)
         self.assertIn("/copy", names)
         self.assertIn("/copy", help_text)
         self.assertIn("transcript", help_text)
@@ -1146,7 +1153,9 @@ class MemoryInspectTests(unittest.TestCase):
                 with redirect_stdout(buf):
                     self.assertEqual(cmd_memory({}, ["list"], self._console()), 0)
                 listed = buf.getvalue()
+                self.assertIn("[Mem:", listed)
                 self.assertIn("Learnings", listed)
+                self.assertIn("Decisions", listed)
                 self.assertEqual(sum(1 for i in range(6) if f"tip-{i}" in listed), 5)
                 self.assertIn("tip 0", listed)
                 buf = io.StringIO()
@@ -1167,8 +1176,12 @@ class MemoryInspectTests(unittest.TestCase):
                 self.assertNotIn("<<<untrusted-memory>>>", dumped)
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    self.assertEqual(cmd_memory({"use_graph": False}, ["graph"], self._console()), 0)
+                    self.assertEqual(cmd_memory({"use_graph": False}, ["kg"], self._console()), 0)
                 self.assertIn("use_graph true", buf.getvalue())
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    self.assertEqual(cmd_memory({"use_graph": False}, ["graph"], self._console()), 0)
+                self.assertIn("deprecated", buf.getvalue().lower())
 
     def test_repl_memory_list_is_not_a_query(self):
         from lmloop.repl import SessionState, _cmd_memory
@@ -1193,6 +1206,7 @@ class MemoryInspectTests(unittest.TestCase):
                 with redirect_stdout(buf):
                     _cmd_memory(state, "list", lambda _: False)
                 out = buf.getvalue()
+                self.assertIn("[Mem:", out)
                 self.assertIn("not-a-verb", out)
                 self.assertIn("the list command", out)
                 self.assertNotIn("(no learnings", out)

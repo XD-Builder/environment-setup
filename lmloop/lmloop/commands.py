@@ -17,17 +17,35 @@ class CommandMeta:
     exits: bool = False
     slash: bool = True
     cli: bool = False
+    # ``advanced`` rows appear in ``/help all`` only; omitted from ``/`` completion.
+    help_tier: str = "core"
     # Block creating a user skill with this name.
     reserve_skill: bool = True
 
 
 # First-token verbs for ``/memory`` and ``lmloop memory`` (not search queries).
-MEMORY_ARG_CHOICES = ("list", "decisions", "graph", "dump", "mine", "reconcile")
+MEMORY_ARG_CHOICES = (
+    "list", "decisions", "dump", "mine", "kg", "graph", "reconcile",
+)
+# Subverbs offered in ``/`` completion (``graph`` kept as runtime alias only).
+MEMORY_ARG_COMPLETION = (
+    "list", "decisions", "dump", "mine", "kg", "reconcile",
+)
+
+# Skill names that get ``/name`` but not default ``/`` completion.
+ADVANCED_SKILL_SLASH = frozenset({"learn", "retro"})
+
+MSG_DEPRECATE_DECISIONS = "[deprecated: use memory decisions]"
+MSG_DEPRECATE_MEMORY_GRAPH = (
+    "[deprecated: use /memory kg — workflow graphs are /graph <name>]"
+)
+MSG_DEPRECATE_RETRO = "[deprecated: use /memory mine]"
 
 
 # Core commands. Skill shortcuts (/investigate, …) are added dynamically in repl.
 COMMANDS: tuple = (
-    CommandMeta("help", "show available commands"),
+    CommandMeta("help", "show core commands (/help all for restore, compact, …)",
+                accepts_arg=True, arg_hint="[all]"),
     CommandMeta("stats", "show token usage, session activity, and memory HUD"),
     CommandMeta("transcript", "view rendered session in less (q to quit)"),
     CommandMeta("copy", "copy last answer to the clipboard (plain text, no live bar)",
@@ -39,23 +57,27 @@ COMMANDS: tuple = (
     CommandMeta("history", "list recent session logs",
                 accepts_arg=True, arg_hint="[n]", cli=True),
     CommandMeta("checkpoints", "list saved checkpoints",
-                accepts_arg=True, arg_hint="[n]"),
+                accepts_arg=True, arg_hint="[n]", help_tier="advanced"),
     CommandMeta("restore", "reload a prior session (shows last result) or checkpoint",
-                accepts_arg=True, arg_hint="[session|checkpoint] <query> [fresh]"),
-    CommandMeta("decisions", "show active project decisions", cli=True),
+                accepts_arg=True, arg_hint="[session|checkpoint] <query> [fresh]",
+                help_tier="advanced"),
+    CommandMeta("decisions", "deprecated — use /memory decisions",
+                cli=True, help_tier="advanced"),
     CommandMeta("context", "show this conversation's files and memory"),
     CommandMeta("continue", "resume after max_rounds, an interruption, or a paused until/graph run",
                 accepts_arg=True, arg_hint="[message]"),
-    CommandMeta("undo", "drop the last user turn from the in-memory thread"),
+    CommandMeta("undo", "drop the last user turn from the in-memory thread",
+                help_tier="advanced"),
     CommandMeta("compact", "summarize thread in a side session; optional replace",
-                accepts_arg=True, arg_hint="[focus]", reserve_skill=False),
+                accepts_arg=True, arg_hint="[focus]", reserve_skill=False,
+                help_tier="advanced"),
     CommandMeta("new", "reset conversation (memory context re-injected)"),
     CommandMeta("model", "switch model, or list models with no argument",
                 accepts_arg=True, arg_hint="<name>"),
     CommandMeta("models", "list models on the server", slash=False, cli=True),
-    CommandMeta("memory", "inspect learnings, or: list | decisions | graph | dump | mine [n] | reconcile",
+    CommandMeta("memory", "project memory dashboard; subverbs: dump | mine | kg | …",
                 accepts_arg=True,
-                arg_hint="[list | decisions | graph | dump | query | mine [n] | reconcile]",
+                arg_hint="[list | decisions | dump | query | mine [n] | kg | reconcile]",
                 arg_choices=MEMORY_ARG_CHOICES, cli=True),
     CommandMeta("until", "work toward a goal until a check or evaluator passes",
                 accepts_arg=True, arg_hint="[--check cmd] <goal>", cli=True),
