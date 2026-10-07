@@ -75,6 +75,7 @@ list.
 | Post-tool user echo | `tools.user_notice(name, result)` | `agent._dispatch_tools` makes one call; no tool-name branching in `agent.py`. |
 | Slash / CLI stems, reserved skill names, first-arg completions | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names, `arg_choices`, and `help_tier` live here only. Memory subverb completion uses `MEMORY_ARG_COMPLETION`. |
 | Status / resume / nudge copy | `status.py` | Do not hard-code user-facing loop copy in `agent.py`. |
+| Remote API auth | `config.resolve_api_key` / `chat_request_headers` | Bearer token for OpenAI-compatible hosts (OpenRouter). Never log keys. |
 | Session mutable state | `SessionState` | Pass the object; do not thread the same fields as loose args. |
 | TTY chrome | `ui.Console` / `Theme` | Display printers write; they do not own theming. |
 | Token command view | `tools.ShellCommand` | Argv + flags, not a regex on the raw line. |

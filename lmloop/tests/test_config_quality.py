@@ -13,7 +13,7 @@ from lmloop.config import DEFAULTS, coerce_config_value, normalize_config
 
 # Keys documented in README.md config table (keep in sync with the table).
 README_CONFIG_KEYS = frozenset({
-    "base_url", "model", "max_rounds", "eval_max_rounds", "max_continue_nudges",
+    "base_url", "api_key", "model", "max_rounds", "eval_max_rounds", "max_continue_nudges",
     "temperature", "timeout_s", "stream", "context_learnings", "context_decisions",
     "confirm_shell", "confirm_destructive", "confirm_shell_syntax", "autonomous_gates",
     "shell_timeout_s", "web_timeout_s", "max_tool_output", "auto_start_server", "color",

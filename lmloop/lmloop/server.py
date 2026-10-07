@@ -10,7 +10,7 @@ import subprocess
 import time
 import urllib.request
 
-from . import status as status_mod
+from . import config as config_mod, status as status_mod
 
 API_MODELS_PATH = "/models"
 NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")
@@ -20,13 +20,18 @@ class ServerError(RuntimeError):
     pass
 
 
-def _get_json(url: str, timeout: int = 5) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
+def _get_json(url: str, timeout: int = 5, headers: "dict | None" = None) -> dict:
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
 
 
-def _get(base_url: str, path: str, timeout: int = 5):
-    return _get_json(base_url.rstrip("/") + path, timeout)
+def _get(base_url: str, path: str, timeout: int = 5, cfg: "dict | None" = None):
+    headers = None
+    if cfg is not None:
+        headers = config_mod.api_auth_headers(cfg)
+        headers.update(config_mod.openrouter_extra_headers())
+    return _get_json(base_url.rstrip("/") + path, timeout, headers=headers)
 
 
 def _native_base(base_url: str) -> str:
@@ -116,7 +121,7 @@ class LmsClient:
         self.cfg = cfg
 
     def list_models(self) -> "list[str]":
-        return list_models(self.cfg.get("base_url") or "")
+        return list_models(self.cfg.get("base_url") or "", cfg=self.cfg)
 
     def native_entries(self) -> list:
         return _native_model_entries(self.cfg)
@@ -159,13 +164,13 @@ class LmsClient:
     def ensure(self, echo=print) -> str:
         """Make sure the server is reachable and a model is loaded. Returns model id."""
         base = self.cfg["base_url"]
-        models = list_models(base)
+        models = list_models(base, cfg=self.cfg)
         if not models and self.cfg.get("auto_start_server") and shutil.which("lms"):
             echo(status_mod.msg_starting_server())
             _run_lms(["lms", "server", "start"], echo=echo, timeout=60)
             for _ in range(20):
                 time.sleep(1)
-                models = list_models(base)
+                models = list_models(base, cfg=self.cfg)
                 if models:
                     break
         if not models:
@@ -175,7 +180,7 @@ class LmsClient:
                 echo(status_mod.msg_loading_model(want))
                 args = ["lms", "load", "--yes"] + ([want] if want else [])
                 _run_lms(args, echo=echo, timeout=300)
-                models = list_models(base)
+                models = list_models(base, cfg=self.cfg)
         if not models:
             raise ServerError(status_mod.msg_no_models(base))
         want = self.cfg.get("model")
@@ -186,9 +191,9 @@ class LmsClient:
         return models[0]
 
 
-def list_models(base_url: str) -> "list[str]":
+def list_models(base_url: str, cfg: "dict | None" = None) -> "list[str]":
     try:
-        data = _get(base_url, API_MODELS_PATH)
+        data = _get(base_url, API_MODELS_PATH, cfg=cfg)
         return [m["id"] for m in data.get("data", [])]
     except (OSError, json.JSONDecodeError, KeyError):
         return []

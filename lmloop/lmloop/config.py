@@ -39,6 +39,7 @@ def utc_now() -> str:
 
 DEFAULTS = {
     "base_url": "http://127.0.0.1:1234/v1",
+    "api_key": "",  # empty = no Authorization header; see resolve_api_key()
     "model": "",  # empty = first model the server reports
     "max_rounds": 60,
     "max_continue_nudges": 2,  # auto-resume when model narrates next step without tools
@@ -144,6 +145,45 @@ def normalize_config(raw: dict) -> dict:
             continue
         out[key] = coerced
     return out
+
+
+def resolve_api_key(cfg: dict) -> str:
+    """Bearer token for OpenAI-compatible APIs (OpenRouter, etc.)."""
+    key = (cfg.get("api_key") or "").strip()
+    if key:
+        return key
+    for env_name in ("OPENROUTER_API_KEY", "LMLOOP_API_KEY"):
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def api_auth_headers(cfg: dict) -> dict:
+    key = resolve_api_key(cfg)
+    if not key:
+        return {}
+    return {"Authorization": f"Bearer {key}"}
+
+
+def openrouter_extra_headers() -> dict:
+    """Optional OpenRouter ranking headers from the environment."""
+    out = {}
+    referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+    title = os.environ.get("OPENROUTER_X_TITLE", "").strip()
+    if referer:
+        out["HTTP-Referer"] = referer
+    if title:
+        out["X-Title"] = title
+    return out
+
+
+def chat_request_headers(cfg: dict, *, stream: bool) -> dict:
+    headers = {"Content-Type": "application/json"}
+    headers.update(api_auth_headers(cfg))
+    headers.update(openrouter_extra_headers())
+    headers["Accept"] = "text/event-stream" if stream else "application/json"
+    return headers
 
 
 def load_config() -> dict:

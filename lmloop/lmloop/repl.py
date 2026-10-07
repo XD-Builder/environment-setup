@@ -276,7 +276,7 @@ def _cmd_model(state: SessionState, arg: str) -> bool:
             msg += f" · context {state.context_limit // 1000}k"
         state.console.info(msg)
     else:
-        models = server.list_models(state.cfg["base_url"])
+        models = server.list_models(state.cfg["base_url"], cfg=state.cfg)
         state.console.info("\n".join(models) or "(none)")
     return True
 

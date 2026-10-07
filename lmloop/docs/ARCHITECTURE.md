@@ -24,7 +24,12 @@ lmloop/
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # model lock, DAG fan-out/joins, flow mining, TUI canvas (proposed)
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
 │   ├── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
-│   └── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
+│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
+│   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
+├── sandbox/
+│   └── Dockerfile              # reference image for future lmloop sandbox build
+├── company/
+│   └── openrouter_autonomous.yaml  # illustrative allowlist tiers (company mode proposed)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -245,7 +250,7 @@ flowchart TD
 
 Key properties:
 
-- **No SDK dependency.** Plain `urllib` in `chat.py` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible. When tools are present the payload includes `tool_choice: "auto"`; the answer round and `no_tools` omit both `tools` and `tool_choice`.
+- **No SDK dependency.** Plain `urllib` in `chat.py` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, OpenRouter, or anything OpenAI-compatible. Optional bearer auth via `api_key` / `OPENROUTER_API_KEY` (`config.resolve_api_key`). When tools are present the payload includes `tool_choice: "auto"`; the answer round and `no_tools` omit both `tools` and `tool_choice`. User-facing remote + Docker notes: [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md).
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
 - **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). Live refreshes on new tokens only (`auto_refresh` off) and closes when `tool_calls` start, so a long `write_file` argument stream cannot redraw the same preamble into scrollback. A spinner shows until the first token, and again while tool arguments stream. Set `stream: false` for a non-SSE full reply. Within one SSE body, `stream.py` halt-loops repeating thinking (including paraphrases) and exact-repeat content. `_halted` means the round did not finish on its own: a looping answer, or looping thinking that either forced the body closed or never reached an answer — thinking that looped and then produced content before a natural `[DONE]` is a normal round. A halted stream closes before the server's `usage` chunk, so that round's `last_*` stats are zeroed (the round line omits them; context fill falls back to the estimate). A halt with no tools is unfinished: gather nudges when the model has not produced a draft (empty CoT hang, punctuation-only noise such as a run of `.` lines, or a last-line "let me…"); a halted long answer is kept. Across rounds, `act()` is gather/answer: tools stay on for up to `max_rounds` gather steps; a repeated tool set (exact name+args already run this turn) or that budget forces one tools-off answer. Eval threads use `eval_max_rounds` (default 8) instead of `max_rounds`.
