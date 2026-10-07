@@ -252,7 +252,7 @@ def _cmd_stats(state: SessionState, _arg: str) -> bool:
     hud = memory.memory_hud(state.cfg)
     print(state.console.stats_detail(
         state.stats, state.model, state.messages, state.session_log,
-        hud, state.context_limit, state.context_reserve,
+        hud, state.context_limit, state.context_reserve, cfg=state.cfg,
     ))
     return True
 
@@ -295,6 +295,20 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
         if verb == "graph":
             state.console.hint(MSG_DEPRECATE_MEMORY_GRAPH)
         return _cmd_memory_graph(state)
+    if verb == "index":
+        from . import memory_index
+        state.console.info(memory_index.format_index_report(state.cfg))
+        return True
+    if verb == "reindex":
+        from . import memory_index
+        memory_index.MemoryIndex().reindex(state.cfg)
+        state.console.info(memory_index.format_index_report(state.cfg))
+        return True
+    if verb == "canvas":
+        from . import knowledge_graph
+        q = parts[1] if len(parts) > 1 else ""
+        state.console.info(knowledge_graph.format_canvas_text(state.cfg, query=q))
+        return True
     if verb == "reconcile":
         return _cmd_memory_reconcile(state, confirm_gate)
     state.console.write_lines(memory.learning_list_lines(query=arg, limit=30))

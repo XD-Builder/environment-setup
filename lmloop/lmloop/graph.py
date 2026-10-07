@@ -5,8 +5,10 @@ Each node runs isolated. This module must not be imported by loop, agent,
 stream, or display.
 """
 
+import difflib
 import re
 import shlex
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +37,8 @@ from .loop import (
 NODE_KINDS = frozenset({"skill", "until", "mine"})
 EDGE_ON = frozenset({"pass", "fail", "blocked"})
 JOIN_HANDOFF_CLIP = 1500
+PROPOSE_MIN_TERMINAL_RUNS = 5
+RESERVED_GRAPH_NAMES = frozenset({"propose"})
 GRAPH_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 GRAPHS_DIR = Path(__file__).parent / "graphs"
 USER_GRAPHS_DIR = STATE_ROOT / "graphs"
@@ -341,6 +345,10 @@ def graph_path(name: str) -> "Path | None":
 
 def load_graph(name: str) -> GraphDef:
     """Load and validate a packaged or user graph."""
+    if name in RESERVED_GRAPH_NAMES:
+        raise GraphError(
+            f"{name!r} is reserved — use `lmloop graph propose [name]` to draft a graph",
+        )
     if not GRAPH_NAME_RE.match(name or ""):
         raise GraphError(f"invalid graph name {name!r}")
     path = graph_path(name)
@@ -640,7 +648,7 @@ def _run_skill_node(
     result = isolated_act(cfg, model, prompt, **act_kwargs)
     if result is None:
         return "pause", "", ""
-    approved = boundary_approval(
+    approved, _denied = boundary_approval(
         confirm_gate, ask_gate, echo_status, label=f"graph {node.name}",
     )
     if approved:
@@ -877,3 +885,146 @@ def run_graph(
         return _pause_interrupted(
             run, echo_status, node=current_node, until_run=current_until,
         )
+
+
+def is_packaged_graph(name: str) -> bool:
+    """True when only the packaged copy exists (never overwrite on propose)."""
+    user = USER_GRAPHS_DIR / f"{name}.md"
+    if user.is_file():
+        return False
+    return (GRAPHS_DIR / f"{name}.md").is_file()
+
+
+def _command_argv0(cmd: str) -> str:
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return ""
+    return parts[0] if parts else ""
+
+
+def _probe_argv0(argv0: str, *, docker: bool) -> bool:
+    if not argv0:
+        return False
+    if argv0.startswith(("./", "/")):
+        return True
+    if shutil.which(argv0):
+        return True
+    if docker:
+        import subprocess
+        try:
+            proc = subprocess.run(
+                ["sh", "-c", 'command -v "$1"', "_", argv0],
+                capture_output=True, text=True, check=False,
+            )
+            return proc.returncode == 0 and bool(proc.stdout.strip())
+        except OSError:
+            return False
+    return False
+
+
+def annotate_unverified_commands(text: str, *, docker: bool) -> str:
+    """Append ``# unverified:`` for lines whose argv0 is missing on the host."""
+    out: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("node ") and " until " in stripped:
+            m = re.search(r" until .*?(--check\s+\S+\s+)?(.+)$", stripped)
+            if m and "--check" in stripped:
+                chk = re.search(r"--check\s+(\S+(?:\s+\S+)*)", stripped)
+                if chk:
+                    cmd = chk.group(1).strip("`'\"")
+                    if not _probe_argv0(_command_argv0(cmd), docker=docker):
+                        line = line.rstrip() + f"  # unverified: {cmd}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def propose_graph_draft(
+    cfg: dict, model: str, name: str, *,
+    echo_status,
+    docker: bool = False,
+    slug: "str | None" = None,
+) -> "str | None":
+    """Model draft of a graph; returns markdown or None when refused / unparseable."""
+    from . import workflow
+    from .loop import eval_model_name
+
+    if name in RESERVED_GRAPH_NAMES:
+        raise GraphError(f"invalid target name {name!r}")
+    if not GRAPH_NAME_RE.match(name or ""):
+        raise GraphError(f"invalid graph name {name!r}")
+    if is_packaged_graph(name):
+        raise GraphError(f"refusing to overwrite packaged graph {name!r}")
+    terminal = workflow.count_terminal_runs(slug)
+    if terminal < PROPOSE_MIN_TERMINAL_RUNS:
+        raise GraphError(
+            f"need at least {PROPOSE_MIN_TERMINAL_RUNS} finished runs "
+            f"(have {terminal}) — run more until/graph workflows first",
+        )
+    stats = workflow.collect_flow_stats(slug)
+    summary = workflow.compact_flow_summary(stats, cfg)
+    existing = ""
+    path = graph_path(name)
+    if path is not None:
+        existing = path.read_text()
+    try:
+        skill = skills.load_skill("_graph_author")
+    except FileNotFoundError as e:
+        raise GraphError(str(e)) from e
+    prompt = (
+        f"{skill}\n\n"
+        f"Target graph name: {name}\n\n"
+        f"Run statistics:\n{summary}\n\n"
+    )
+    if existing.strip():
+        prompt += f"Existing graph:\n{existing}\n\n"
+    prompt += "Output the full revised graph markdown now."
+    result = isolated_act(
+        cfg, model, prompt,
+        confirm_gate=None,
+        echo=echo_status,
+        echo_status=echo_status,
+        workspace_root=Path.cwd().resolve(),
+        log_label="/graph propose",
+        no_tools=True,
+        max_rounds=1,
+        model_override=eval_model_name(cfg, model),
+    )
+    if result is None:
+        return None
+    messages, _session = result
+    draft = last_assistant(messages).strip()
+    if not draft:
+        return None
+    try:
+        parse_graph(draft, name)
+    except GraphError:
+        echo_status("draft did not parse — nothing saved")
+        return None
+    return annotate_unverified_commands(draft, docker=docker)
+
+
+def save_proposed_graph(name: str, text: str) -> Path:
+    if is_packaged_graph(name):
+        raise GraphError(f"refusing to overwrite packaged graph {name!r}")
+    USER_GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
+    path = USER_GRAPHS_DIR / f"{name}.md"
+    path.write_text(text if text.endswith("\n") else text + "\n")
+    return path
+
+
+def diff_proposed_graph(name: str, draft: str) -> str:
+    existing = ""
+    path = graph_path(name)
+    if path is not None:
+        existing = path.read_text()
+    if existing == draft:
+        return "(no changes)"
+    lines = difflib.unified_diff(
+        existing.splitlines(keepends=True),
+        draft.splitlines(keepends=True),
+        fromfile=f"{name}.md (current)",
+        tofile=f"{name}.md (proposed)",
+    )
+    return "".join(lines) or "(no changes)"

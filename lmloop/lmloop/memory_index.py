@@ -130,7 +130,72 @@ class MemoryIndex:
             out.append("Decisions:\n" + "\n".join(decisions))
         return "\n\n".join(out) or "(no memory matches)"
 
+    def reindex(self, cfg: dict) -> None:
+        """Delete and rebuild the FTS5 index from JSONL sources."""
+        self.open(cfg)
+        if self.backend != "fts5":
+            return
+        if self.path.is_file():
+            self.path.unlink()
+        self._ensure_schema()
+        self.sync(cfg)
+
+    def doc_counts(self) -> dict:
+        if not self.path.is_file() or self.backend != "fts5":
+            learn = len(memory.get_learnings(limit=None, slug=self.slug))
+            dec = len(memory.get_decisions(limit=None, slug=self.slug))
+            return {"learning": learn, "decision": dec}
+        conn = sqlite3.connect(self.path)
+        try:
+            rows = conn.execute(
+                "SELECT kind, COUNT(*) FROM docs GROUP BY kind",
+            ).fetchall()
+            return {k: int(c) for k, c in rows}
+        finally:
+            conn.close()
+
     def status(self, cfg: dict) -> dict:
         self.open(cfg)
         size = self.path.stat().st_size if self.path.is_file() else 0
-        return {"backend": self.backend, "path": str(self.path), "size": size}
+        reason = ""
+        if _mode(cfg) == "off":
+            reason = "memory_index off"
+        elif self.backend == "scan":
+            reason = "FTS5 unavailable or memory_index auto without FTS5"
+        counts = self.doc_counts()
+        total = sum(counts.values())
+        return {
+            "backend": self.backend,
+            "path": str(self.path),
+            "size": size,
+            "reason": reason,
+            "counts": counts,
+            "docs": total,
+        }
+
+
+def index_status_line(cfg: dict, slug: "str | None" = None) -> str:
+    """One-line index summary for ``/stats`` and ``memory index``."""
+    st = MemoryIndex(slug).status(cfg)
+    backend = st["backend"]
+    if backend == "off":
+        return "memory index: off"
+    if backend == "scan":
+        tail = st["reason"] or "scan"
+        return f"memory index: scan ({tail}) · {st['docs']} docs"
+    size_mb = st["size"] / (1024 * 1024)
+    return (
+        f"memory index: fts5 · {size_mb:.1f} MB · {st['docs']} docs"
+    )
+
+
+def format_index_report(cfg: dict, slug: "str | None" = None) -> str:
+    st = MemoryIndex(slug).status(cfg)
+    lines = [index_status_line(cfg, slug), f"path: {st['path']}"]
+    if st.get("reason"):
+        lines.append(f"note: {st['reason']}")
+    counts = st.get("counts") or {}
+    if counts:
+        parts = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        lines.append(f"docs by kind: {parts}")
+    return "\n".join(lines)

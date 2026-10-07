@@ -40,6 +40,43 @@ def _load_rows(path: Path) -> list:
     return memory.read_jsonl(path)
 
 
+def count_terminal_runs(slug: "str | None" = None) -> int:
+    """Finished until or graph runs (last row ``done``). Used by ``graph propose``."""
+    root = project_dir(slug)
+    total = 0
+    until_dir = root / "until"
+    if until_dir.is_dir():
+        for path in sorted(until_dir.glob("*.jsonl")):
+            rows = _load_rows(path)
+            if rows and rows[-1].get("role") == "done":
+                total += 1
+    graphs_dir = root / "graphs"
+    if graphs_dir.is_dir():
+        for path in sorted(graphs_dir.glob("*/*.jsonl")):
+            rows = _load_rows(path)
+            if rows and rows[-1].get("role") == "done":
+                total += 1
+    return total
+
+
+def compact_flow_summary(stats: FlowStats, cfg: dict) -> str:
+    """Short factual summary for graph authoring prompts."""
+    data = stats.to_dict()
+    lines = [
+        f"until runs: {stats.until_runs} pass {stats.until_pass} paused {stats.until_paused}",
+        f"maker cycles median {data.get('maker_cycles_median')} p90 {data.get('maker_cycles_p90')}",
+    ]
+    if stats.check_total:
+        lines.append(
+            f"check pass rate {stats.check_pass}/{stats.check_total}",
+        )
+    rules = flow_rules(stats, cfg)
+    if rules:
+        lines.append("flow signals:")
+        lines.extend(f"- {r}" for r in rules[:8])
+    return "\n".join(lines)
+
+
 def collect_flow_stats(slug: "str | None" = None) -> FlowStats:
     stats = FlowStats()
     root = project_dir(slug)
