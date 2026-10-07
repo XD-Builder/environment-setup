@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import agent, memory, server, skills, status as status_mod, tools
-from .config import project_dir, utc_now
+from . import agent, memory, server, skills, snapshot, status as status_mod, tools
+from .config import DEFAULTS, cfg_bool, cfg_int, project_dir, utc_now
 from .tools import run_shell, shell_confirm_flags
 
 STATUS_LINE_PREFIX = "STATUS:"
@@ -145,14 +145,14 @@ def parse_until_arg_line(arg: str) -> "tuple[str, str | None, str | None]":
 
 def eval_max_rounds(cfg: dict) -> int:
     """Gather-round budget for an eval ``act()``. Maker keeps ``max_rounds``."""
-    return max(1, int(cfg.get("eval_max_rounds") or 8))
+    return max(1, cfg_int(cfg, "eval_max_rounds"))
 
 
 def isolated_act(
     cfg: dict, model: str, user_text: str, *,
     confirm_gate=None, echo=print, echo_status=None, echo_error=None,
     echo_tool=None, echo_round=None, context_limit: int = 0,
-    context_reserve: int = 2048, workspace_root: "Path | None" = None,
+    context_reserve: int = DEFAULTS["context_reserve"], workspace_root: "Path | None" = None,
     log_label: str = "",
     readonly: bool = False,
     no_tools: bool = False,
@@ -261,16 +261,19 @@ class UntilRun:
         self.events.append(row)
 
     def append(self, role: str, status: str, handoff: str = "",
-               session: str = "") -> None:
+               session: str = "", snapshot_ref: str = "") -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
-        self._write({
+        row = {
             "ts": utc_now(),
             "step": step,
             "role": role,
             "status": status,
             "handoff": handoff,
             "session": session,
-        })
+        }
+        if snapshot_ref:
+            row["snapshot_ref"] = snapshot_ref
+        self._write(row)
 
     def last_work(self) -> "dict | None":
         for ev in reversed(self.events):
@@ -381,7 +384,7 @@ def run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> st
     return run_shell(
         command,
         confirm_gate=confirm_gate,
-        timeout_s=int(cfg.get("shell_timeout_s") or 120),
+        timeout_s=cfg_int(cfg, "shell_timeout_s"),
         confirm_destructive=destructive,
         confirm_shell_syntax=syntax,
         workspace_root=workspace_root,
@@ -441,7 +444,7 @@ def run_until(
     echo_error=None,
     echo_round=None,
     context_limit: int = 0,
-    context_reserve: int = 2048,
+    context_reserve: int = DEFAULTS["context_reserve"],
     workspace_root: "Path | None" = None,
     ask_gate=None,
     mine=None,
@@ -460,8 +463,8 @@ def run_until(
     if echo_status is None:
         echo_status = echo
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
-    do_mine = bool(cfg.get("until_mine", True)) and mine is not None
-    max_steps = max(1, int(cfg.get("until_max_steps") or 12))
+    do_mine = cfg_bool(cfg, "until_mine") and mine is not None
+    max_steps = max(1, cfg_int(cfg, "until_max_steps"))
     makers_this_call = 0
     check_output = ""
     last = run.last_work()
@@ -488,6 +491,11 @@ def run_until(
                     echo_status(status_mod.msg_until_max_steps())
                     return run
                 makers_this_call += 1
+                snap = snapshot.take_snapshot(
+                    cfg, root,
+                    run_label=run.path.stem,
+                    step=makers_this_call,
+                )
                 echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
                 prompt = MAKER_PROMPT.format(
                     goal=run.goal,
@@ -509,6 +517,7 @@ def run_until(
                     "maker", "next",
                     handoff=last_assistant(messages),
                     session=str(session_log),
+                    snapshot_ref=snap.ref,
                 )
                 approved = boundary_approval(gate, ask_gate, echo_status)
                 if approved:

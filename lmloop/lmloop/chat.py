@@ -9,7 +9,8 @@ import json
 import urllib.error
 import urllib.request
 
-from . import config as config_mod, server, status as status_mod
+from . import server, status as status_mod
+from .config import cfg_bool, cfg_float, cfg_int, chat_request_headers
 from .stream import StreamError, _read_sse
 
 API_CHAT_PATH = "/chat/completions"
@@ -20,7 +21,7 @@ def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | Non
     payload = {
         "model": model,
         "messages": status_mod.api_messages(messages),
-        "temperature": cfg.get("temperature", 0.7),
+        "temperature": cfg_float(cfg, "temperature"),
         "stream": stream,
     }
     if stream:
@@ -32,7 +33,7 @@ def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | Non
     return urllib.request.Request(
         cfg["base_url"].rstrip("/") + API_CHAT_PATH,
         data=json.dumps(payload).encode(),
-        headers=config_mod.chat_request_headers(cfg, stream=stream),
+        headers=chat_request_headers(cfg, stream=stream),
     )
 
 
@@ -54,7 +55,7 @@ def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None")
     """Non-streaming chat completion."""
     req = _chat_request(cfg, model, messages, tool_specs, stream=False)
     try:
-        with urllib.request.urlopen(req, timeout=cfg.get("timeout_s", 600)) as resp:
+        with urllib.request.urlopen(req, timeout=cfg_int(cfg, "timeout_s")) as resp:
             data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         _raise_http_error(e, cfg)
@@ -74,7 +75,7 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
     req = _chat_request(cfg, model, messages, tool_specs, stream=True)
 
     def _open_and_read(request):
-        with urllib.request.urlopen(request, timeout=cfg.get("timeout_s", 600)) as resp:
+        with urllib.request.urlopen(request, timeout=cfg_int(cfg, "timeout_s")) as resp:
             return _read_sse(
                 resp, on_delta=on_delta, on_activity=on_activity,
                 on_reasoning=on_reasoning, on_tools=on_tools,
@@ -96,7 +97,7 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
             retry = urllib.request.Request(
                 req.full_url,
                 data=json.dumps(payload).encode(),
-                headers=config_mod.chat_request_headers(cfg, stream=True),
+                headers=chat_request_headers(cfg, stream=True),
             )
             try:
                 return _open_and_read(retry)
@@ -115,7 +116,7 @@ def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None",
           on_delta=None, on_activity=None, on_reasoning=None,
           on_tools=None) -> "tuple[dict, dict]":
     """Chat completion. Streams when cfg['stream'] is true (default)."""
-    if cfg.get("stream", True):
+    if cfg_bool(cfg, "stream"):
         return _chat_stream(
             cfg, model, messages, tool_specs,
             on_delta=on_delta, on_activity=on_activity,

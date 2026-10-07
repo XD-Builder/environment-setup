@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import knowledge_graph, memory, skills, status as status_mod, tools
-from .config import STATE_ROOT, project_dir, utc_now
+from . import knowledge_graph, memory, skills, snapshot, status as status_mod, tools
+from .config import DEFAULTS, STATE_ROOT, cfg_bool, cfg_int, project_dir, utc_now
 from .loop import (
     DONE_ROLES,
     EVAL_PROMPT,
@@ -284,9 +284,9 @@ class GraphRun:
 
     def append(self, role: str, status: str, node: str = "",
                handoff: str = "", session: str = "",
-               until_run: str = "") -> None:
+               until_run: str = "", snapshot_ref: str = "") -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
-        self._write({
+        row = {
             "ts": utc_now(),
             "step": step,
             "role": role,
@@ -295,7 +295,10 @@ class GraphRun:
             "handoff": handoff,
             "session": session,
             "until_run": until_run,
-        })
+        }
+        if snapshot_ref:
+            row["snapshot_ref"] = snapshot_ref
+        self._write(row)
 
     def last_work(self) -> "dict | None":
         for ev in reversed(self.events):
@@ -531,7 +534,7 @@ def run_graph(
     echo_error=None,
     echo_round=None,
     context_limit: int = 0,
-    context_reserve: int = 2048,
+    context_reserve: int = DEFAULTS["context_reserve"],
     workspace_root: "Path | None" = None,
     ask_gate=None,
     mine=None,
@@ -543,8 +546,8 @@ def run_graph(
     if echo_status is None:
         echo_status = echo
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
-    do_mine = bool(cfg.get("graph_mine", True)) and mine is not None
-    max_steps = max(1, int(cfg.get("graph_max_steps") or 24))
+    do_mine = cfg_bool(cfg, "graph_mine") and mine is not None
+    max_steps = max(1, cfg_int(cfg, "graph_max_steps"))
     steps_this_call = 0
     current_node = ""
     current_until = ""
@@ -590,10 +593,16 @@ def run_graph(
                 echo_status(status_mod.msg_graph_max_steps())
                 return run
             steps_this_call += 1
+            snap = snapshot.take_snapshot(
+                cfg, root,
+                run_label=f"{run.name}-{run.path.stem}",
+                step=steps_this_call,
+            )
             echo_status(status_mod.msg_graph_step(
                 node.name, steps_this_call, max_steps,
             ))
             handoff = run.last_handoff()
+            snap_ref = snap.ref
             if node.kind == "skill":
                 status, summary, session = _run_skill_node(
                     cfg, model, node, handoff,
@@ -610,6 +619,7 @@ def run_graph(
                 run.append(
                     "node", status, node=node.name,
                     handoff=summary, session=session,
+                    snapshot_ref=snap_ref,
                 )
                 continue
             if node.kind == "until":
@@ -636,6 +646,7 @@ def run_graph(
                 run.append(
                     "node", status, node=node.name,
                     handoff=summary, session=session, until_run=until_path,
+                    snapshot_ref=snap_ref,
                 )
                 continue
             raise RuntimeError(f"unknown graph node kind {node.kind!r}")

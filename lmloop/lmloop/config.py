@@ -55,6 +55,7 @@ DEFAULTS = {
     # (backed up to trash/), ask once per cycle for the rest; none = ask for
     # everything; all = never ask (unattended runs only)
     "autonomous_gates": "files",
+    "autonomous_snapshot": "git",  # git | off — temp-index refs under refs/lmloop/*
     "shell_timeout_s": 120,
     "web_timeout_s": 30,
     "max_tool_output": 12000,
@@ -83,6 +84,12 @@ def coerce_config_value(key: str, value):
     back to DEFAULTS). Unknown keys return None.
     """
     if key not in DEFAULTS:
+        return None
+    if key == "autonomous_snapshot":
+        if isinstance(value, str):
+            low = value.strip().lower()
+            if low in ("git", "off"):
+                return low
         return None
     if key == "vision":
         if isinstance(value, bool):
@@ -147,9 +154,36 @@ def normalize_config(raw: dict) -> dict:
     return out
 
 
+def cfg_get(cfg: "dict | None", key: str):
+    """Return ``cfg[key]`` when the key is present, else ``DEFAULTS[key]``.
+
+    Prefer this over ``cfg.get(key) or default`` so legitimate zero values are
+    not replaced by the default.
+    """
+    if not cfg or key not in cfg:
+        return DEFAULTS[key]
+    return cfg[key]
+
+
+def cfg_int(cfg: "dict | None", key: str) -> int:
+    return int(cfg_get(cfg, key))
+
+
+def cfg_bool(cfg: "dict | None", key: str) -> bool:
+    return bool(cfg_get(cfg, key))
+
+
+def cfg_float(cfg: "dict | None", key: str) -> float:
+    return float(cfg_get(cfg, key))
+
+
+def cfg_str(cfg: "dict | None", key: str) -> str:
+    return str(cfg_get(cfg, key))
+
+
 def resolve_api_key(cfg: dict) -> str:
     """Bearer token for OpenAI-compatible APIs (OpenRouter, etc.)."""
-    key = (cfg.get("api_key") or "").strip()
+    key = cfg_str(cfg, "api_key").strip()
     if key:
         return key
     for env_name in ("OPENROUTER_API_KEY", "LMLOOP_API_KEY"):

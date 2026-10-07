@@ -9,13 +9,14 @@ from unittest import mock
 
 from lmloop import config as config_mod
 from lmloop import memory
-from lmloop.config import DEFAULTS, coerce_config_value, normalize_config
+from lmloop.config import DEFAULTS, cfg_get, cfg_int, coerce_config_value, normalize_config
 
 # Keys documented in README.md config table (keep in sync with the table).
 README_CONFIG_KEYS = frozenset({
     "base_url", "api_key", "model", "max_rounds", "eval_max_rounds", "max_continue_nudges",
     "temperature", "timeout_s", "stream", "context_learnings", "context_decisions",
     "confirm_shell", "confirm_destructive", "confirm_shell_syntax", "autonomous_gates",
+    "autonomous_snapshot",
     "shell_timeout_s", "web_timeout_s", "max_tool_output", "auto_start_server", "color",
     "context_length", "context_reserve", "until_max_steps", "until_mine",
     "graph_max_steps", "graph_mine", "use_graph", "vision",
@@ -82,6 +83,20 @@ class ConfigQualityTests(unittest.TestCase):
         self.assertEqual(coerce_config_value("vision", True), "true")
         self.assertEqual(coerce_config_value("vision", "false"), "false")
         self.assertIsNone(coerce_config_value("vision", "maybe"))
+
+    def test_cfg_get_keeps_zero_values(self):
+        cfg = {"context_length": 0, "context_reserve": 512}
+        self.assertEqual(cfg_int(cfg, "context_length"), 0)
+        self.assertEqual(cfg_int(cfg, "context_reserve"), 512)
+        self.assertEqual(cfg_get(cfg, "max_rounds"), DEFAULTS["max_rounds"])
+
+    def test_tool_limits_match_defaults(self):
+        from lmloop import tools
+        from lmloop.web import DEFAULT_WEB_TIMEOUT_S
+
+        self.assertEqual(tools.MAX_OUTPUT, DEFAULTS["max_tool_output"])
+        self.assertEqual(tools.DEFAULT_SHELL_TIMEOUT_S, DEFAULTS["shell_timeout_s"])
+        self.assertEqual(DEFAULT_WEB_TIMEOUT_S, DEFAULTS["web_timeout_s"])
 
 
 class MemoryResolveTests(unittest.TestCase):
