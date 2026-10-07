@@ -11,6 +11,7 @@ from lmloop import display
 from lmloop import stream as stream_mod
 from lmloop.server import ServerError
 from lmloop.status import ANSWER_TEXT, NUDGE_CONTINUE_TEXT, answer_message
+from support import requires_rich
 
 
 def _sse(*chunks) -> bytes:
@@ -173,10 +174,9 @@ class StreamPrinterTests(unittest.TestCase):
             echoed, ["Let me dive deeper into the source code."],
         )
 
+    @requires_rich
     def test_markdown_live_crops_tail_not_ellipsis(self):
         """ellipsis keeps the start of a tall answer — new tokens vanish."""
-        if not display._load_rich():
-            self.skipTest("rich not installed")
         p = display._MarkdownLivePrinter()
         fake_live = mock.MagicMock()
         fake_live.auto_refresh = False
@@ -202,10 +202,9 @@ class StreamPrinterTests(unittest.TestCase):
             self.assertIsInstance(updated, display._TailMarkdown)
             self.assertGreaterEqual(updated.min_rows, 0)
 
+    @requires_rich
     def test_tail_markdown_keeps_newest_lines(self):
         """Live preview must show the end of a long answer, not the opening."""
-        if not display._load_rich():
-            self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
 
@@ -220,10 +219,9 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertIn("Last heading", out)
         self.assertNotIn("First heading", out)
 
+    @requires_rich
     def test_tail_markdown_keeps_opening_when_it_fits(self):
         """Short answers must grow in Live, not sit in a 16-line tail window."""
-        if not display._load_rich():
-            self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
 
@@ -251,10 +249,9 @@ class StreamPrinterTests(unittest.TestCase):
         with mock.patch("lmloop.display.terminal_size", return_value=(1, 24)):
             self.assertEqual(_live_preview_width(), 1)
 
+    @requires_rich
     def test_tail_markdown_never_shrinks_below_min_rows(self):
         """A reflow that renders fewer lines must still occupy the high-water rows."""
-        if not display._load_rich():
-            self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
 
@@ -271,10 +268,9 @@ class StreamPrinterTests(unittest.TestCase):
         console.print(short)
         self.assertIn("Short", buf.getvalue())
 
+    @requires_rich
     def test_markdown_live_high_water_does_not_shrink(self):
         """Printer keeps Live's occupied rows when markdown reflow gets shorter."""
-        if not display._load_rich():
-            self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
 
@@ -292,10 +288,9 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertGreaterEqual(p._live_rows, high)
         p.finish()
 
+    @requires_rich
     def test_markdown_live_keeps_wrapped_sentences(self):
         """Live + word-wrap must not crop the next sentence at terminal width."""
-        if not display._load_rich():
-            self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
 
@@ -316,10 +311,9 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertIn("Third sentence", out)
         self.assertIn("continues the thought", out)
 
+    @requires_rich
     def test_tail_markdown_keeps_list_tails(self):
         """Live list items must fold, not crop at terminal width."""
-        if not display._load_rich():
-            self.skipTest("rich not installed")
         from io import StringIO
         from rich.console import Console
 

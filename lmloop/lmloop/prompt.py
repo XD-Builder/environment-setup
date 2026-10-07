@@ -1,7 +1,7 @@
 """Interactive prompt built on prompt_toolkit (REPL input only)."""
 
 from pathlib import Path
-from typing import Callable, Iterator, List, Tuple
+from collections.abc import Callable, Iterator
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -68,7 +68,7 @@ def _short_blurb(name: str, desc: str) -> str:
     return desc[:72]
 
 
-def _rank_match(candidate: str, prefix: str) -> Tuple[int, int, str]:
+def _rank_match(candidate: str, prefix: str) -> tuple[int, int, str]:
     """Sort key: prefix matches first, then subsequence, then by length/name."""
     c, p = candidate.lower(), prefix.lower()
     if c.startswith(p):
@@ -83,7 +83,7 @@ def _rank_match(candidate: str, prefix: str) -> Tuple[int, int, str]:
     return (2, len(candidate), c)
 
 
-def _filter_names(names: List[str], prefix: str) -> List[str]:
+def _filter_names(names: list[str], prefix: str) -> list[str]:
     """Filter+sort names by prefix, then light fuzzy match."""
     if not prefix:
         return sorted(names)

@@ -10,6 +10,7 @@ from unittest import mock
 from lmloop import config as config_mod
 from lmloop import memory
 from lmloop.config import DEFAULTS, cfg_get, cfg_int, coerce_config_value, normalize_config
+from support import parametrize
 
 # Keys documented in README.md config table (keep in sync with the table).
 README_CONFIG_KEYS = frozenset({
@@ -50,11 +51,15 @@ class ConfigQualityTests(unittest.TestCase):
             self.assertEqual(cfg["max_rounds"], config_mod.DEFAULTS["max_rounds"])
             self.assertIn("confirm_shell_syntax", cfg)
 
-    def test_string_int_and_bool_are_coerced(self):
-        self.assertEqual(coerce_config_value("max_rounds", "60"), 60)
-        self.assertIs(coerce_config_value("stream", "false"), False)
-        self.assertIs(coerce_config_value("stream", True), True)
-        self.assertEqual(coerce_config_value("temperature", "0.2"), 0.2)
+    @parametrize(
+        ("max_rounds", "60", 60),
+        ("stream", "false", False),
+        ("stream", True, True),
+        ("temperature", "0.2", 0.2),
+        names=("key", "raw", "want"),
+    )
+    def test_string_int_and_bool_are_coerced(self, key, raw, want):
+        self.assertEqual(coerce_config_value(key, raw), want)
 
     def test_garbage_int_falls_back_on_load(self):
         with tempfile.TemporaryDirectory() as d:

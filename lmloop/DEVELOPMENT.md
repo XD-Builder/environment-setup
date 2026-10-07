@@ -38,7 +38,7 @@ ones** — not more layers.
 
 ## Setup and tests
 
-Python 3.10+. Use the package venv, not Apple's system Python:
+Python 3.14+. Use the package venv, not Apple's system Python:
 
 ```bash
 bash lmloop/setup-lmloop.sh
@@ -46,7 +46,7 @@ cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 ```
 
 Setup reuses an existing venv when its Python is new enough; it only deletes the
-tree if the interpreter is missing or older than 3.10.
+tree if the interpreter is missing or older than 3.14.
 
 **Dependencies.** Do not add a package unless the stdlib (or an existing extra:
 `prompt_toolkit`, `rich`, `ddgs`) cannot do the job. The agent loop stays on
@@ -300,12 +300,13 @@ Follow [PEP 8](https://peps.python.org/pep-0008/) and [PEP 257](https://peps.pyt
 | CLI handlers | `cmd_<stem>` | `cmd_memory_mine`, `cmd_skills_new` |
 | REPL handlers | `_cmd_<stem>` | `_cmd_restore` |
 | Tests | `test_<behavior>` on `*Tests(unittest.TestCase)` | `test_list_skills_excludes_system` |
+| Table-driven cases | `tests.support.parametrize` + `subTest` labels | `@parametrize((a, b), names=("raw", "want"))` |
+| Rich-only tests | `tests.support.requires_rich` | not inline `_rich_available()` skips |
 
 Further rules:
 
-- **Python 3.10+.** Use `X | Y` unions (or quoted `"list[dict] | None"` when
-  needed). Do not add `from __future__ import annotations` unless a cycle
-  forces it.
+- **Python 3.14+.** Use `X | Y` unions and builtin generics (`list[str]`).
+  Do not add `from __future__ import annotations` unless a cycle forces it.
 - **Type hints on public functions and class methods.** Skip them on trivial
   one-line locals. Prefer concrete types over `Any`. `cfg: dict` is the
   established config bag — do not invent a Pydantic model for it.
@@ -406,6 +407,11 @@ Run the full suite before you call a change done.
 
 **How to write them**
 
+- **Table-driven:** use `tests.support.parametrize` so each row is a `subTest`
+  with named fields. Keep one assertion contract per method; add rows instead of
+  copy-pasting `test_foo_bar` variants.
+- **Optional rich:** decorate with `@requires_rich` (or call `rich_available()`)
+  instead of repeating `skipTest("rich not installed")`.
 - Patch the module where the name is looked up. `_open_live_display` reads
   `_rich_live_available` from `lmloop.display`, so patch
   `lmloop.display._rich_live_available`, not
