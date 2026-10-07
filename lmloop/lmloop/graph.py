@@ -5,8 +5,10 @@ Each node runs isolated. This module must not be imported by loop, agent,
 stream, or display.
 """
 
+import difflib
 import re
 import shlex
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +36,9 @@ from .loop import (
 
 NODE_KINDS = frozenset({"skill", "until", "mine"})
 EDGE_ON = frozenset({"pass", "fail", "blocked"})
+JOIN_HANDOFF_CLIP = 1500
+PROPOSE_MIN_TERMINAL_RUNS = 5
+RESERVED_GRAPH_NAMES = frozenset({"propose"})
 GRAPH_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 GRAPHS_DIR = Path(__file__).parent / "graphs"
 USER_GRAPHS_DIR = STATE_ROOT / "graphs"
@@ -55,6 +60,7 @@ class NodeDef:
     check_cmd: "str | None" = None
     checks: tuple = ()
     keeps: tuple = ()
+    needs: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -62,7 +68,7 @@ class EdgeDef:
     """Authored edge. ``on`` defaults to pass."""
 
     src: str
-    dst: str
+    dsts: tuple
     on: str = "pass"
 
 
@@ -133,9 +139,22 @@ def parse_graph(text: str, name: str) -> GraphDef:
     for e in edges:
         if e.src not in names:
             raise GraphError(f"edge source {e.src!r} is not a node")
-        if e.dst not in names:
-            raise GraphError(f"edge target {e.dst!r} is not a node")
-    return GraphDef(name=name, nodes=tuple(nodes), edges=tuple(edges))
+        for dst in e.dsts:
+            if dst not in names:
+                raise GraphError(f"edge target {dst!r} is not a node")
+    defn = GraphDef(name=name, nodes=tuple(nodes), edges=tuple(edges))
+    _validate_graph(defn)
+    return defn
+
+
+def _split_needs(words: list) -> "tuple[tuple, list]":
+    if "needs" not in words:
+        return (), words
+    idx = words.index("needs")
+    needs = tuple(words[idx + 1:])
+    if not needs:
+        raise GraphError("node needs at least one predecessor name")
+    return needs, words[:idx]
 
 
 def _parse_node(tokens: list) -> NodeDef:
@@ -143,9 +162,12 @@ def _parse_node(tokens: list) -> NodeDef:
         raise GraphError("node needs a name and a kind")
     name, kind = tokens[0], tokens[1]
     rest = tokens[2:]
+    needs, rest = _split_needs(rest)
     if kind not in NODE_KINDS:
         raise GraphError(f"unknown node kind {kind!r}")
     if kind == "mine":
+        if needs:
+            raise GraphError(f"mine node {name!r} cannot have needs")
         return NodeDef(name=name, kind=kind)
     if kind == "until":
         parsed = parse_until_args(rest)
@@ -154,11 +176,13 @@ def _parse_node(tokens: list) -> NodeDef:
         return NodeDef(
             name=name, kind=kind, goal=parsed.goal,
             check_cmd=parsed.check_cmd, checks=parsed.checks, keeps=parsed.keeps,
+            needs=needs,
         )
     skill, task, checks, keeps = _parse_skill_rest(rest)
     return NodeDef(
         name=name, kind=kind, skill=skill, task=task,
         check_cmd=checks[0] if checks else None, checks=checks, keeps=keeps,
+        needs=needs,
     )
 
 
@@ -174,18 +198,119 @@ def _parse_skill_rest(words: list) -> "tuple[str, str, tuple, tuple]":
 def _parse_edge(tokens: list) -> EdgeDef:
     if len(tokens) < 3 or tokens[1] != "->":
         raise GraphError("edge needs: <from> -> <to> [on pass|fail|blocked]")
-    src, dst = tokens[0], tokens[2]
+    src = tokens[0]
+    rest = tokens[2:]
     on = "pass"
-    extra = tokens[3:]
-    if extra:
-        if extra[0] != "on" or len(extra) < 2:
-            raise GraphError("edge extra tokens must be: on pass|fail|blocked")
-        on = extra[1]
-        if len(extra) > 2:
-            raise GraphError("edge has extra tokens after on")
-    if on not in EDGE_ON:
-        raise GraphError(f"unknown edge on {on!r}")
-    return EdgeDef(src=src, dst=dst, on=on)
+    if len(rest) >= 2 and rest[-2] == "on":
+        on = rest[-1]
+        if on not in EDGE_ON:
+            raise GraphError(f"unknown edge on {on!r}")
+        dst_tokens = rest[:-2]
+    else:
+        dst_tokens = rest
+    if not dst_tokens:
+        raise GraphError("edge needs at least one target")
+    if on != "pass" and len(dst_tokens) > 1:
+        raise GraphError(
+            f"multi-target edge from {src!r} on {on!r} is not allowed"
+        )
+    return EdgeDef(src=src, dsts=tuple(dst_tokens), on=on)
+
+
+def _validate_graph(defn: GraphDef) -> None:
+    """Fail closed on needs/edge rules before any model call."""
+    nmap = defn.node_map()
+    names = set(nmap)
+    order = [n.name for n in defn.nodes]
+
+    for node in defn.nodes:
+        for need in node.needs:
+            if need not in names:
+                raise GraphError(
+                    f"unknown need {need!r} on node {node.name!r}"
+                )
+            if need == node.name:
+                raise GraphError(
+                    f"node {node.name!r} cannot need itself"
+                )
+        if node.kind == "mine" and node.needs:
+            raise GraphError(f"mine node {node.name!r} cannot have needs")
+
+    for edge in defn.edges:
+        if edge.on != "pass" and len(edge.dsts) > 1:
+            raise GraphError(
+                f"multi-target edge from {edge.src!r} on {edge.on!r} "
+                "is not allowed"
+            )
+        if len(edge.dsts) > 1:
+            for dst in edge.dsts:
+                if nmap[dst].kind == "mine":
+                    raise GraphError(
+                        f"mine node {dst!r} cannot be a multi-target edge "
+                        f"destination from {edge.src!r}"
+                    )
+
+    # Needs-only cycle (retry cycles via edges stay legal).
+    indeg = {n: 0 for n in order}
+    adj: dict[str, list[str]] = {n: [] for n in order}
+    for node in defn.nodes:
+        for need in node.needs:
+            adj[need].append(node.name)
+            indeg[node.name] += 1
+    queue = [n for n in order if indeg[n] == 0]
+    seen = 0
+    while queue:
+        n = queue.pop(0)
+        seen += 1
+        for dst in adj.get(n, []):
+            indeg[dst] -= 1
+            if indeg[dst] == 0:
+                queue.append(dst)
+    if seen != len(order):
+        raise GraphError("needs form a cycle")
+
+    # Every need predecessor must be reachable from the start via edges.
+    reachable = _edge_reachable_from(defn, defn.start)
+    for node in defn.nodes:
+        for need in node.needs:
+            if need not in reachable:
+                raise GraphError(
+                    f"need {need!r} on node {node.name!r} is unreachable "
+                    "from the start"
+                )
+
+
+def _edge_reachable_from(defn: GraphDef, start: str) -> set[str]:
+    seen = {start}
+    queue = [start]
+    while queue:
+        n = queue.pop(0)
+        for on in EDGE_ON:
+            edge = defn.edge_for(n, on)
+            if not edge:
+                continue
+            for dst in edge.dsts:
+                if dst not in seen:
+                    seen.add(dst)
+                    queue.append(dst)
+    return seen
+
+
+def _reachable_from_frontier(defn: GraphDef, frontier: set[str]) -> set[str]:
+    """Nodes that may still be scheduled from the current frontier."""
+    seen = set(frontier)
+    queue = list(frontier)
+    while queue:
+        n = queue.pop(0)
+        for on in EDGE_ON:
+            edge = defn.edge_for(n, on)
+            if not edge:
+                continue
+            for dst in edge.dsts:
+                if dst not in seen:
+                    seen.add(dst)
+                    queue.append(dst)
+    return seen
 
 
 def graph_dirs() -> "list[Path]":
@@ -220,6 +345,10 @@ def graph_path(name: str) -> "Path | None":
 
 def load_graph(name: str) -> GraphDef:
     """Load and validate a packaged or user graph."""
+    if name in RESERVED_GRAPH_NAMES:
+        raise GraphError(
+            f"{name!r} is reserved — use `lmloop graph propose [name]` to draft a graph",
+        )
     if not GRAPH_NAME_RE.match(name or ""):
         raise GraphError(f"invalid graph name {name!r}")
     path = graph_path(name)
@@ -328,6 +457,70 @@ class GraphRun:
                 return ev.get("handoff") or ""
         return ""
 
+    def handoff_for_node(self, node_name: str) -> str:
+        for ev in reversed(self.events):
+            if ev.get("role") == "node" and ev.get("node") == node_name:
+                return ev.get("handoff") or ""
+        return ""
+
+    def join_handoff(self, node: NodeDef) -> str:
+        """Labeled predecessor summaries in ``needs`` order, clipped."""
+        if not node.needs:
+            return self.last_handoff()
+        parts: list[str] = []
+        for need in node.needs:
+            summary = self.handoff_for_node(need)
+            if len(summary) > JOIN_HANDOFF_CLIP:
+                summary = summary[:JOIN_HANDOFF_CLIP] + "…"
+            parts.append(f"[{need}]\n{summary}")
+        return "\n\n".join(parts)
+
+    def _replay_frontier(
+        self, defn: GraphDef,
+    ) -> "tuple[set[str], list[tuple[str, str]], dict[str, str]]":
+        """Return (frontier, unrouted failures, latest node status)."""
+        frontier: set[str] = {defn.start}
+        unrouted: list[tuple[str, str]] = []
+        latest: dict[str, str] = {}
+        for ev in self.events:
+            if ev.get("role") != "node":
+                continue
+            name = ev.get("node") or ""
+            status = ev.get("status") or "pass"
+            if not name:
+                continue
+            latest[name] = status
+            frontier.discard(name)
+            if status == "pass":
+                edge = defn.edge_for(name, "pass")
+                if edge:
+                    frontier.update(edge.dsts)
+            elif status in ("fail", "blocked"):
+                edge = defn.edge_for(name, status)
+                if edge:
+                    frontier.add(edge.dsts[0])
+                else:
+                    unrouted.append((name, status))
+        return frontier, unrouted, latest
+
+    def _needs_satisfied(self, node: NodeDef, latest: dict[str, str]) -> bool:
+        return all(latest.get(need) == "pass" for need in node.needs)
+
+    def _unsatisfiable_waits(
+        self, defn: GraphDef, frontier: set[str], latest: dict[str, str],
+    ) -> list[tuple[str, str]]:
+        reachable = _reachable_from_frontier(defn, frontier)
+        bad: list[tuple[str, str]] = []
+        for name in frontier:
+            node = defn.node(name)
+            for need in node.needs:
+                if latest.get(need) == "pass":
+                    continue
+                if need in frontier or need in reachable:
+                    continue
+                bad.append((name, need))
+        return bad
+
     def session_paths(self) -> "list[Path]":
         seen: list[Path] = []
         have: set[str] = set()
@@ -363,19 +556,31 @@ class GraphRun:
         role, status = last.get("role"), last.get("status")
         if role == "gate":
             if status == "yes":
-                return "run", last.get("node")
-            return None, None
-        if role in DONE_ROLES:
-            return None, None
-        if role == "node":
-            node_name = last.get("node") or ""
-            edge = defn.edge_for(node_name, status or "pass")
-            if edge:
-                return "run", edge.dst
-            if status == "pass":
+                node = last.get("node") or ""
+                if node:
+                    return "run", node
+            else:
                 return None, None
-            return "gate", node_name
-        return "run", defn.start
+        elif role in DONE_ROLES:
+            return None, None
+
+        frontier, unrouted, latest = self._replay_frontier(defn)
+        if not frontier and not unrouted:
+            return None, None
+
+        declaration = [n.name for n in defn.nodes]
+        runnable = [
+            n for n in declaration
+            if n in frontier and self._needs_satisfied(defn.node(n), latest)
+        ]
+        if runnable:
+            return "run", runnable[0]
+
+        unsat = self._unsatisfiable_waits(defn, frontier, latest)
+        if unrouted or unsat:
+            gate_node = unrouted[0][0] if unrouted else ""
+            return "gate", gate_node
+        return "gate", ""
 
 
 def latest_open_graph_run(slug: "str | None" = None) -> "GraphRun | None":
@@ -443,7 +648,7 @@ def _run_skill_node(
     result = isolated_act(cfg, model, prompt, **act_kwargs)
     if result is None:
         return "pause", "", ""
-    approved = boundary_approval(
+    approved, _denied = boundary_approval(
         confirm_gate, ask_gate, echo_status, label=f"graph {node.name}",
     )
     if approved:
@@ -466,6 +671,7 @@ def _run_skill_node(
         goal=node.task or f"complete the {node.skill} playbook",
         handoff=summary or "(none)",
         check_output="(none)",
+        shell_evidence="(none)",
     )
     ev = isolated_act(
         cfg, model, eval_prompt,
@@ -625,7 +831,7 @@ def run_graph(
             echo_status(status_mod.msg_graph_step(
                 node.name, steps_this_call, max_steps,
             ))
-            handoff = run.last_handoff()
+            handoff = run.join_handoff(node)
             snap_ref = snap.ref
             if node.kind == "skill":
                 status, summary, session = _run_skill_node(
@@ -679,3 +885,146 @@ def run_graph(
         return _pause_interrupted(
             run, echo_status, node=current_node, until_run=current_until,
         )
+
+
+def is_packaged_graph(name: str) -> bool:
+    """True when only the packaged copy exists (never overwrite on propose)."""
+    user = USER_GRAPHS_DIR / f"{name}.md"
+    if user.is_file():
+        return False
+    return (GRAPHS_DIR / f"{name}.md").is_file()
+
+
+def _command_argv0(cmd: str) -> str:
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return ""
+    return parts[0] if parts else ""
+
+
+def _probe_argv0(argv0: str, *, docker: bool) -> bool:
+    if not argv0:
+        return False
+    if argv0.startswith(("./", "/")):
+        return True
+    if shutil.which(argv0):
+        return True
+    if docker:
+        import subprocess
+        try:
+            proc = subprocess.run(
+                ["sh", "-c", 'command -v "$1"', "_", argv0],
+                capture_output=True, text=True, check=False,
+            )
+            return proc.returncode == 0 and bool(proc.stdout.strip())
+        except OSError:
+            return False
+    return False
+
+
+def annotate_unverified_commands(text: str, *, docker: bool) -> str:
+    """Append ``# unverified:`` for lines whose argv0 is missing on the host."""
+    out: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("node ") and " until " in stripped:
+            m = re.search(r" until .*?(--check\s+\S+\s+)?(.+)$", stripped)
+            if m and "--check" in stripped:
+                chk = re.search(r"--check\s+(\S+(?:\s+\S+)*)", stripped)
+                if chk:
+                    cmd = chk.group(1).strip("`'\"")
+                    if not _probe_argv0(_command_argv0(cmd), docker=docker):
+                        line = line.rstrip() + f"  # unverified: {cmd}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def propose_graph_draft(
+    cfg: dict, model: str, name: str, *,
+    echo_status,
+    docker: bool = False,
+    slug: "str | None" = None,
+) -> "str | None":
+    """Model draft of a graph; returns markdown or None when refused / unparseable."""
+    from . import workflow
+    from .loop import eval_model_name
+
+    if name in RESERVED_GRAPH_NAMES:
+        raise GraphError(f"invalid target name {name!r}")
+    if not GRAPH_NAME_RE.match(name or ""):
+        raise GraphError(f"invalid graph name {name!r}")
+    if is_packaged_graph(name):
+        raise GraphError(f"refusing to overwrite packaged graph {name!r}")
+    terminal = workflow.count_terminal_runs(slug)
+    if terminal < PROPOSE_MIN_TERMINAL_RUNS:
+        raise GraphError(
+            f"need at least {PROPOSE_MIN_TERMINAL_RUNS} finished runs "
+            f"(have {terminal}) — run more until/graph workflows first",
+        )
+    stats = workflow.collect_flow_stats(slug)
+    summary = workflow.compact_flow_summary(stats, cfg)
+    existing = ""
+    path = graph_path(name)
+    if path is not None:
+        existing = path.read_text()
+    try:
+        skill = skills.load_skill("_graph_author")
+    except FileNotFoundError as e:
+        raise GraphError(str(e)) from e
+    prompt = (
+        f"{skill}\n\n"
+        f"Target graph name: {name}\n\n"
+        f"Run statistics:\n{summary}\n\n"
+    )
+    if existing.strip():
+        prompt += f"Existing graph:\n{existing}\n\n"
+    prompt += "Output the full revised graph markdown now."
+    result = isolated_act(
+        cfg, model, prompt,
+        confirm_gate=None,
+        echo=echo_status,
+        echo_status=echo_status,
+        workspace_root=Path.cwd().resolve(),
+        log_label="/graph propose",
+        no_tools=True,
+        max_rounds=1,
+        model_override=eval_model_name(cfg, model),
+    )
+    if result is None:
+        return None
+    messages, _session = result
+    draft = last_assistant(messages).strip()
+    if not draft:
+        return None
+    try:
+        parse_graph(draft, name)
+    except GraphError:
+        echo_status("draft did not parse — nothing saved")
+        return None
+    return annotate_unverified_commands(draft, docker=docker)
+
+
+def save_proposed_graph(name: str, text: str) -> Path:
+    if is_packaged_graph(name):
+        raise GraphError(f"refusing to overwrite packaged graph {name!r}")
+    USER_GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
+    path = USER_GRAPHS_DIR / f"{name}.md"
+    path.write_text(text if text.endswith("\n") else text + "\n")
+    return path
+
+
+def diff_proposed_graph(name: str, draft: str) -> str:
+    existing = ""
+    path = graph_path(name)
+    if path is not None:
+        existing = path.read_text()
+    if existing == draft:
+        return "(no changes)"
+    lines = difflib.unified_diff(
+        existing.splitlines(keepends=True),
+        draft.splitlines(keepends=True),
+        fromfile=f"{name}.md (current)",
+        tofile=f"{name}.md (proposed)",
+    )
+    return "".join(lines) or "(no changes)"

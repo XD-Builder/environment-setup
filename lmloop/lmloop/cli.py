@@ -316,6 +316,20 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
             console.hint(MSG_DEPRECATE_MEMORY_GRAPH)
         console.info(knowledge_graph.inspect_report(cfg))
         return 0
+    if verb == "index":
+        from . import memory_index
+        console.info(memory_index.format_index_report(cfg))
+        return 0
+    if verb == "reindex":
+        from . import memory_index
+        idx = memory_index.MemoryIndex()
+        idx.reindex(cfg)
+        console.info(memory_index.format_index_report(cfg))
+        return 0
+    if verb == "canvas":
+        q = " ".join(words[1:]) if len(words) > 1 else ""
+        console.info(knowledge_graph.format_canvas_text(cfg, query=q))
+        return 0
     if verb == "reconcile":
         if not cfg_bool(cfg, "use_graph"):
             console.info(knowledge_graph.MSG_GRAPH_OFF)
@@ -436,7 +450,63 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
     return 0
 
 
+def cmd_flow_cli(cfg: dict, words: list, console: Console) -> int:
+    from . import workflow
+
+    as_json = words == ["--json"] or (words and words[0] == "--json")
+    stats = workflow.collect_flow_stats()
+    if as_json:
+        import json
+        console.write_lines([json.dumps(stats.to_dict(), indent=2)])
+        return 0
+    console.write_lines(workflow.format_flow_report(stats, cfg).splitlines())
+    return 0
+
+
 def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
+    if words and words[0] == "propose":
+        rest = words[1:]
+        if not rest:
+            console.error("usage: lmloop graph propose <name>")
+            return 1
+        name = rest[0]
+        try:
+            model = server.ensure_server(cfg, echo=console.info)
+        except server.ServerError as e:
+            console.error(f"error: {e}")
+            return 1
+        try:
+            draft = graph_mod.propose_graph_draft(
+                cfg, model, name, echo_status=console.hint,
+            )
+        except graph_mod.GraphError as e:
+            console.error(str(e))
+            return 1
+        if not draft:
+            return 1
+        diff = graph_mod.diff_proposed_graph(name, draft)
+        console.info(diff)
+        console.info("")
+        console.info("--- proposed graph ---")
+        console.write_lines(draft.splitlines())
+        if not sys.stdin.isatty():
+            console.hint("non-interactive — not saved")
+            return 0
+        try:
+            answer = input("Save to ~/.lmloop/graphs/? [y/N] ").strip().lower()
+        except EOFError:
+            console.info("")
+            return 0
+        if answer not in ("y", "yes"):
+            console.hint("not saved")
+            return 0
+        try:
+            path = graph_mod.save_proposed_graph(name, draft)
+        except graph_mod.GraphError as e:
+            console.error(str(e))
+            return 1
+        console.info(f"saved {path}")
+        return 0
     if not words:
         run = graph_mod.latest_open_graph_run()
         if run is None:
@@ -552,6 +622,7 @@ def cli_handlers() -> dict:
         "memory": cmd_memory,
         "until": cmd_until_cli,
         "graph": cmd_graph_cli,
+        "flow": cmd_flow_cli,
         "decisions": cmd_decisions,
         "history": cmd_history,
         "models": cmd_models,

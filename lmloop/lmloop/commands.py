@@ -26,10 +26,12 @@ class CommandMeta:
 # First-token verbs for ``/memory`` and ``lmloop memory`` (not search queries).
 MEMORY_ARG_CHOICES = (
     "list", "decisions", "dump", "mine", "kg", "graph", "reconcile",
+    "index", "reindex", "canvas",
 )
 # Subverbs offered in ``/`` completion (``graph`` kept as runtime alias only).
 MEMORY_ARG_COMPLETION = (
-    "list", "decisions", "dump", "mine", "kg", "reconcile",
+    "list", "decisions", "dump", "mine", "kg", "reconcile", "index", "reindex",
+    "canvas",
 )
 
 # Skill names that get ``/name`` but not default ``/`` completion.
@@ -82,7 +84,9 @@ COMMANDS: tuple = (
     CommandMeta("until", "work toward a goal until a check or evaluator passes",
                 accepts_arg=True, arg_hint="[--check cmd] [--keep cmd] <goal>", cli=True),
     CommandMeta("graph", "run an authored workflow graph",
-                accepts_arg=True, arg_hint="<name>", cli=True),
+                accepts_arg=True, arg_hint="<name> | propose <name>", cli=True),
+    CommandMeta("flow", "workflow stats and rule-based suggestions from run logs",
+                accepts_arg=True, arg_hint="[--json]", cli=True),
     CommandMeta("save", "checkpoint session for later restore",
                 accepts_arg=True, arg_hint="[title]"),
     # CLI-only alias so `lmloop retro` stays in the registry (not a /help peer).

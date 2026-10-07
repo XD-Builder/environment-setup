@@ -912,3 +912,141 @@ def command_parses(cmd: str) -> bool:
     if _argv(cmd) is None:
         return False
     return bool(ShellCommand(cmd).argv)
+
+
+PROPOSE_PROMPT = """You propose verification commands for an autonomous coding agent.
+Goal:
+{goal}
+
+Reply with at most TWO lines. Each line is one shell command that could verify the goal.
+No markdown, no numbering, no explanations."""
+
+
+def plan_needs_proposal(checks: tuple) -> bool:
+    """True when no authoritative check can prove the goal (V8)."""
+    if not checks:
+        return True
+    for item in checks:
+        if (
+            item.role == ROLE_CHECK
+            and item.tier == TIER_AUTHORITATIVE
+            and item.proves
+        ):
+            return False
+    return True
+
+
+def parse_proposed_commands(text: str) -> tuple:
+    """Up to two advisory checks from a no-tools model reply."""
+    rows: list[PlannedCheck] = []
+    for line in (text or "").splitlines():
+        cmd = line.strip().strip("`-")
+        if not cmd or cmd.startswith("#"):
+            continue
+        if not command_parses(cmd):
+            continue
+        argv = _argv(cmd)
+        if argv and not argv[0].startswith(("./", "/")) and not shutil.which(argv[0]):
+            continue
+        rows.append(PlannedCheck(
+            cmd=cmd,
+            role=ROLE_CHECK,
+            source="proposed",
+            tier=TIER_ADVISORY,
+            reason="proposed for this goal",
+            proves=False,
+        ))
+        if len(rows) >= 2:
+            break
+    return tuple(rows)
+
+
+def _test_paths_for_change(rel: str, root: Path) -> list[Path]:
+    p = Path(rel)
+    out: list[Path] = []
+    if p.suffix == ".py":
+        for cand in (
+            Path("tests") / f"test_{p.name}",
+            Path("tests") / f"test_{p.stem}.py",
+            p.parent / f"test_{p.name}",
+        ):
+            if (root / cand).is_file():
+                out.append(cand)
+    stem = p.stem
+    for cand in (
+        Path("tests") / f"{stem}.test.ts",
+        Path("tests") / f"{stem}.test.js",
+        Path("tests") / f"{stem}_test.go",
+    ):
+        if (root / cand).is_file():
+            out.append(cand)
+    return out
+
+
+def targeted_commands(changed: list[str], root: Path) -> list[str]:
+    """Convention-based test commands for changed paths (V7 inner loop)."""
+    cmds: list[str] = []
+    seen: set[str] = set()
+    for rel in changed:
+        for test_path in _test_paths_for_change(rel, root):
+            rel_test = test_path.as_posix()
+            if rel_test.endswith(".py"):
+                mod = rel_test.replace("/", ".").replace(".py", "")
+                cmd = f"PYTHONPATH=. .venv/bin/python -m unittest -q {mod}"
+            else:
+                continue
+            if cmd not in seen:
+                seen.add(cmd)
+                cmds.append(cmd)
+    return cmds
+
+
+def order_cycle_checks(
+    planned: "tuple[PlannedCheck, ...]",
+    changed: list[str],
+    root: Path,
+) -> "tuple[PlannedCheck, ...]":
+    """Run targeted tests first; full plan still required for done."""
+    if not changed or not planned:
+        return planned
+    prefer = targeted_commands(changed, root)
+    if not prefer:
+        return planned
+    prefer_set = set(prefer)
+    front = [c for c in planned if c.cmd in prefer_set]
+    rest = [c for c in planned if c.cmd not in prefer_set]
+    extra_cmds = [cmd for cmd in prefer if cmd not in {c.cmd for c in planned}]
+    extras = tuple(
+        PlannedCheck(cmd, ROLE_CHECK, "targeted", TIER_AUTHORITATIVE, "changed files")
+        for cmd in extra_cmds
+    )
+    return extras + tuple(front) + tuple(rest)
+
+
+def shell_evidence_table(session_path: Path, limit: int = 3) -> str:
+    """Last N shell commands with exit codes (neutral table for eval, V9)."""
+    if not session_path or not session_path.is_file():
+        return "(none)"
+    rows = memory.read_jsonl(session_path)
+    hits: list[tuple[str, str]] = []
+    for row in reversed(rows):
+        if row.get("role") != "tool":
+            continue
+        body = str(row.get("content") or "")
+        if "[exit code:" not in body:
+            continue
+        line = body.splitlines()[0][:120]
+        code = "?"
+        for part in body.splitlines():
+            if part.startswith("[exit code:"):
+                code = part.split(":", 1)[1].strip().rstrip("]")
+                break
+        hits.append((line, code))
+        if len(hits) >= limit:
+            break
+    if not hits:
+        return "(none)"
+    lines = ["Shell evidence (last commands):", "  cmd | exit", "  --- | ---"]
+    for cmd, code in reversed(hits):
+        lines.append(f"  {cmd} | {code}")
+    return "\n".join(lines)

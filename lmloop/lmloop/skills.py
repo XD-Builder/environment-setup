@@ -107,7 +107,7 @@ class SkillLibrary:
         return path
 
     def system_prompt(self, cfg: dict, workspace_root: "Path | None" = None,
-                      clock_now=None) -> str:
+                      clock_now=None, memory_block: "str | None" = None) -> str:
         base = self.load("system")
         names = tools.tool_names(cfg=cfg)
         tools_block = (
@@ -124,7 +124,7 @@ class SkillLibrary:
         steering = steer.steering_block(workspace_root)
         if steering:
             base += "\n\n" + steering
-        ctx = memory.context_block(cfg)
+        ctx = memory_block if memory_block is not None else memory.context_block(cfg)
         if ctx:
             base += "\n\n" + CONTEXT_HEADING + "\n\n" + ctx
         return base
@@ -185,5 +185,7 @@ def save_user_skill(name: str, content: str) -> Path:
 
 
 def system_prompt(cfg: dict, workspace_root: "Path | None" = None,
-                  clock_now=None) -> str:
-    return _library().system_prompt(cfg, workspace_root, clock_now=clock_now)
+                  clock_now=None, memory_block: "str | None" = None) -> str:
+    return _library().system_prompt(
+        cfg, workspace_root, clock_now=clock_now, memory_block=memory_block,
+    )

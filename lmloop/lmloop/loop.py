@@ -21,8 +21,14 @@ from .checks import (
     format_plan,
     infer_plan,
     judge_cycle,
+    order_cycle_checks,
+    parse_proposed_commands,
+    plan_needs_proposal,
+    PROPOSE_PROMPT,
+    shell_evidence_table,
 )
 from .config import DEFAULTS, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
+from .server import eval_model_name
 from .tools import run_shell, shell_confirm_flags
 
 STATUS_LINE_PREFIX = "STATUS:"
@@ -62,6 +68,9 @@ Maker handoff:
 
 Check command output (empty if none):
 {check_output}
+
+Shell evidence (recent tool exits, not a verdict):
+{shell_evidence}
 
 End your reply with exactly one last line, one of:
 STATUS: pass
@@ -199,6 +208,9 @@ def isolated_act(
     max_rounds: "int | None" = None,
     clock_now=None,
     extra_readable: "list | None" = None,
+    memory_block: "str | None" = None,
+    usage_stats: "dict | None" = None,
+    model_override: "str | None" = None,
 ) -> "tuple[list, Path] | None":
     """Run act() on a fresh thread. Returns (messages, session_log), or None.
 
@@ -209,8 +221,10 @@ def isolated_act(
         echo_status = echo
     if echo_error is None:
         echo_error = echo_status
+    use_model = model_override or model
+    stats = usage_stats if usage_stats is not None else {}
     messages = [{"role": "system", "content": skills.system_prompt(
-        cfg, workspace_root, clock_now=clock_now,
+        cfg, workspace_root, clock_now=clock_now, memory_block=memory_block,
     )}]
     session_log = memory.new_session_log()
     if log_label:
@@ -218,7 +232,7 @@ def isolated_act(
     messages.append({"role": "user", "content": user_text})
     try:
         agent.act(
-            cfg, model, messages, session_log=session_log,
+            cfg, use_model, messages, session_log=session_log,
             confirm_gate=confirm_gate,
             echo=echo,
             echo_status=echo_status,
@@ -231,6 +245,7 @@ def isolated_act(
             no_tools=no_tools,
             max_rounds=max_rounds,
             extra_readable=extra_readable,
+            stats=stats,
         )
     except server.ServerError as e:
         memory.log_event(session_log, "system", f"error: {e}")
@@ -310,7 +325,7 @@ class UntilRun:
 
     def append(self, role: str, status: str, handoff: str = "",
                session: str = "", checks=None, results=None,
-               snapshot_ref: str = "") -> None:
+               snapshot_ref: str = "", **extra: object) -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
         row = {
             "ts": utc_now(),
@@ -326,6 +341,9 @@ class UntilRun:
             row["results"] = results
         if snapshot_ref:
             row["snapshot_ref"] = snapshot_ref
+        for key, val in extra.items():
+            if val is not None and val != "" and val != ():
+                row[key] = val
         self._write(row)
 
     def current_checks(self) -> list:
@@ -508,8 +526,58 @@ def _read_plan_line(prompt: str = "") -> str:
         return ""
 
 
+def _model_propose_checks(
+    cfg: dict, model: str, goal: str, root: Path, echo_status,
+    *, memory_block: "str | None", clock_now,
+) -> tuple:
+    """One no-tools call; returns up to two advisory PlannedChecks (V8)."""
+    prompt = PROPOSE_PROMPT.format(goal=goal)
+    stats: dict = {}
+    result = isolated_act(
+        cfg, model, prompt,
+        confirm_gate=None,
+        echo=echo_status,
+        echo_status=echo_status,
+        workspace_root=root,
+        log_label="/until propose-checks",
+        no_tools=True,
+        max_rounds=1,
+        clock_now=clock_now,
+        memory_block=memory_block,
+        usage_stats=stats,
+        model_override=eval_model_name(cfg, model),
+    )
+    if result is None:
+        return ()
+    messages, _session = result
+    return parse_proposed_commands(last_assistant(messages))
+
+
+def _maybe_propose_checks(
+    planned: list, cfg: dict, model: str, goal: str, root: Path,
+    echo_status, *, memory_block, clock_now,
+) -> list:
+    if not _choice_on(cfg, "check_inference"):
+        return planned
+    if not plan_needs_proposal(tuple(planned)):
+        return planned
+    proposed = _model_propose_checks(
+        cfg, model, goal, root, echo_status,
+        memory_block=memory_block, clock_now=clock_now,
+    )
+    if not proposed:
+        return planned
+    for item in proposed:
+        echo_status(
+            f"  advisory  {item.cmd}\n            {item.reason}",
+        )
+    return planned + list(proposed)
+
+
 def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
-                  interactive: bool, confirm_gate) -> None:
+                  interactive: bool, confirm_gate, *, model: str,
+                  memory_block: "str | None" = None,
+                  clock_now=None) -> None:
     """Infer or reuse a plan, then baseline it once. Resume does not repeat."""
     if any(ev.get("role") in ("plan", "baseline") for ev in run.events):
         return
@@ -529,7 +597,11 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
             echo_status(format_plan(run.goal, tuple(planned)))
     payload = [item.as_dict() for item in planned]
     if not planned or not _choice_on(cfg, "until_baseline"):
-        run.append("plan", "ready", checks=payload)
+        planned = _maybe_propose_checks(
+            planned, cfg, model, run.goal, root, echo_status,
+            memory_block=memory_block, clock_now=clock_now,
+        )
+        run.append("plan", "ready", checks=[item.as_dict() for item in planned])
         return
     echo_status(status_mod.msg_until_baseline())
     results = run_plan_commands(
@@ -541,6 +613,20 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
     for note in outcome.notes:
         echo_status(status_mod.msg_until_note(note))
     stored = outcome.checks if outcome.status == "ready" else tuple(planned)
+    stored_list = list(stored)
+    stored_list = _maybe_propose_checks(
+        stored_list, cfg, model, run.goal, root, echo_status,
+        memory_block=memory_block, clock_now=clock_now,
+    )
+    if len(stored_list) > len(stored):
+        extra = stored_list[len(stored):]
+        extra_results = run_plan_commands(
+            cfg, [item.cmd for item in extra], confirm_gate, root,
+        )
+        for row in extra_results:
+            echo_status(row["output"])
+        results = list(results) + extra_results
+    stored = tuple(stored_list)
     run.append(
         "baseline", outcome.status,
         handoff="\n".join(outcome.notes),
@@ -549,7 +635,7 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
     )
 
 
-def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "list[str]":
+def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "tuple[list[str], list[str]]":
     """Ask once for the irreversible actions a GatePolicy denied this cycle.
 
     Returns the approved commands (now pre-approved on ``policy``), or [] when
@@ -557,18 +643,18 @@ def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "l
     said no. Never raises except KeyboardInterrupt (caller pauses the run).
     """
     if not isinstance(policy, tools.GatePolicy):
-        return []
+        return [], []
     policy.expire_approvals()  # the step they were approved for has ended
     denied = policy.take_denied()
     if not denied:
-        return []
+        return [], []
     echo_status(status_mod.msg_gates_denied(len(denied), label))
     for command in denied:
         echo_status("    " + command)
     if ask_gate is None or not ask_gate(status_mod.gates_denied_prompt(len(denied))):
-        return []
+        return [], list(denied)
     policy.approve(denied)
-    return denied
+    return list(denied), []
 
 
 def drop_denied(policy) -> None:
@@ -636,9 +722,20 @@ def run_until(
         gate.approve(run.approved_commands())  # resumed right after a yes
     if interactive is None:
         interactive = sys.stdin.isatty()
+    memory_block = memory.context_block(cfg)
+    eval_model = eval_model_name(cfg, model)
+    token_budget = cfg_int(cfg, "run_token_budget")
+    run_tokens = sum(
+        int((ev.get("usage") or {}).get("total_tokens") or 0)
+        for ev in run.events
+    )
+    changed_files: list[str] = []
 
     try:
-        _prepare_plan(run, cfg, root, echo_status, interactive, gate)
+        _prepare_plan(
+            run, cfg, root, echo_status, interactive, gate,
+            model=model, memory_block=memory_block, clock_now=clock_now,
+        )
         while True:
             if run.is_done():
                 return run
@@ -646,6 +743,10 @@ def run_until(
             if role is None:
                 run.append("done", "pass")
                 echo_status(status_mod.msg_until_done())
+                return run
+            if token_budget > 0 and run_tokens >= token_budget:
+                run.append(PAUSE_ROLE, "paused")
+                echo_status(status_mod.msg_until_token_budget())
                 return run
             if role == "maker":
                 if makers_this_call >= max_steps:
@@ -664,30 +765,52 @@ def run_until(
                     handoff=approved_note(run.approved_commands())
                     + (run.last_handoff() or seed_handoff or "(none)"),
                 )
+                step_stats: dict = {}
                 result = isolated_act(
                     cfg, model, prompt,
                     confirm_gate=gate, echo=echo, echo_status=echo_status,
                     echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
                     context_limit=context_limit, context_reserve=context_reserve,
                     workspace_root=root, log_label="/until maker",
-                    clock_now=clock_now,
+                    clock_now=clock_now, memory_block=memory_block,
+                    usage_stats=step_stats,
                 )
                 if result is None:
                     return _pause_interrupted(run, echo_status)
                 messages, session_log = result
+                run_tokens += int(step_stats.get("total_tokens") or 0)
+                try:
+                    import subprocess
+                    proc = subprocess.run(
+                        ["git", "-C", str(root), "diff", "--name-only"],
+                        capture_output=True, text=True, check=False,
+                    )
+                    if proc.returncode == 0:
+                        changed_files = [
+                            ln.strip() for ln in proc.stdout.splitlines() if ln.strip()
+                        ]
+                except OSError:
+                    pass
+                denied_log = list(gate.denied) if isinstance(gate, tools.GatePolicy) else []
                 run.append(
                     "maker", "next",
                     handoff=last_assistant(messages),
                     session=str(session_log),
                     snapshot_ref=snap.ref,
+                    usage=dict(step_stats),
+                    denied=denied_log or None,
                 )
-                approved = boundary_approval(gate, ask_gate, echo_status)
+                approved, _unused = boundary_approval(gate, ask_gate, echo_status)
                 if approved:
                     run.append(APPROVE_ROLE, "yes", handoff=json.dumps(approved))
                 continue
             if role == "check":
                 echo_status(status_mod.msg_until_step("check", makers_this_call, max_steps))
                 planned = run.current_checks()
+                if changed_files and makers_this_call > 0:
+                    planned = list(order_cycle_checks(
+                        tuple(planned), changed_files, root,
+                    ))
                 results = run_plan_commands(
                     cfg, [item.cmd for item in planned], gate, root,
                 )
@@ -711,11 +834,17 @@ def run_until(
                 continue
             if role == "eval":
                 echo_status(status_mod.msg_until_step("eval", makers_this_call, max_steps))
+                last_session = run.session_paths()
+                shell_ev = shell_evidence_table(
+                    last_session[-1] if last_session else Path(),
+                )
                 prompt = EVAL_PROMPT.format(
                     goal=run.goal,
                     handoff=run.last_maker_handoff() or "(none)",
                     check_output=check_output or "(none)",
+                    shell_evidence=shell_ev,
                 )
+                step_stats = {}
                 result = isolated_act(
                     cfg, model, prompt,
                     confirm_gate=gate, echo=echo, echo_status=echo_status,
@@ -725,6 +854,9 @@ def run_until(
                     readonly=True,
                     max_rounds=eval_max_rounds(cfg),
                     clock_now=clock_now,
+                    memory_block=memory_block,
+                    usage_stats=step_stats,
+                    model_override=eval_model,
                 )
                 drop_denied(gate)
                 if result is None:
@@ -732,10 +864,12 @@ def run_until(
                 messages, session_log = result
                 text = last_assistant(messages)
                 status = parse_eval_status(text)
+                run_tokens += int(step_stats.get("total_tokens") or 0)
                 run.append(
                     "eval", status,
                     handoff=text,
                     session=str(session_log),
+                    usage=dict(step_stats),
                 )
                 continue
             if role == "gate":

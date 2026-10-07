@@ -252,7 +252,7 @@ def _cmd_stats(state: SessionState, _arg: str) -> bool:
     hud = memory.memory_hud(state.cfg)
     print(state.console.stats_detail(
         state.stats, state.model, state.messages, state.session_log,
-        hud, state.context_limit, state.context_reserve,
+        hud, state.context_limit, state.context_reserve, cfg=state.cfg,
     ))
     return True
 
@@ -295,6 +295,20 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
         if verb == "graph":
             state.console.hint(MSG_DEPRECATE_MEMORY_GRAPH)
         return _cmd_memory_graph(state)
+    if verb == "index":
+        from . import memory_index
+        state.console.info(memory_index.format_index_report(state.cfg))
+        return True
+    if verb == "reindex":
+        from . import memory_index
+        memory_index.MemoryIndex().reindex(state.cfg)
+        state.console.info(memory_index.format_index_report(state.cfg))
+        return True
+    if verb == "canvas":
+        from . import knowledge_graph
+        q = parts[1] if len(parts) > 1 else ""
+        state.console.info(knowledge_graph.format_canvas_text(state.cfg, query=q))
+        return True
     if verb == "reconcile":
         return _cmd_memory_reconcile(state, confirm_gate)
     state.console.write_lines(memory.learning_list_lines(query=arg, limit=30))
@@ -877,6 +891,22 @@ def _advance_graph(state: SessionState, run: graph_mod.GraphRun,
     attach_graph_result(state, run)
 
 
+def _cmd_flow(state: SessionState, arg: str) -> bool:
+    from . import workflow
+
+    words = (arg or "").strip().split()
+    as_json = words == ["--json"] or (words and words[0] == "--json")
+    stats = workflow.collect_flow_stats()
+    if as_json:
+        import json
+        state.console.write_lines([json.dumps(stats.to_dict(), indent=2)])
+        return True
+    state.console.write_lines(
+        workflow.format_flow_report(stats, state.cfg).splitlines(),
+    )
+    return True
+
+
 def _cmd_graph(state: SessionState, arg: str, confirm_gate) -> bool:
     name = (arg or "").strip().split()[0] if (arg or "").strip() else ""
     if not name:
@@ -990,6 +1020,7 @@ def _build_slash_commands(confirm_gate) -> list:
         "memory": lambda s, a: _cmd_memory(s, a, confirm_gate),
         "until": lambda s, a: _cmd_until(s, a, confirm_gate),
         "graph": lambda s, a: _cmd_graph(s, a, confirm_gate),
+        "flow": _cmd_flow,
         "save": lambda s, a: _cmd_save(s, a, confirm_gate),
         "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
         "quit": lambda s, a: False,

@@ -25,6 +25,7 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
 │   ├── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
+│   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
 │   └── Dockerfile              # reference image for future lmloop sandbox build
@@ -359,7 +360,9 @@ node <name> skill <skill> [--check cmd] [--keep cmd] [task…]
 node <name> until [--check cmd] [--keep cmd] <goal>
     existing run_until, including derived checks when no flag is set
 node <name> mine                      memory mine over this graph run's session logs
+node <name> … needs <pred> …          join: run only after every named predecessor passed
 edge <from> -> <to> [on pass|fail|blocked]
+edge <from> -> <a> <b> …              fan-out on pass only (one row per `(from, on)`)
 ```
 
 - Packaged graphs live in `lmloop/graphs/*.md`; `~/.lmloop/graphs/<name>.md` overrides the same name.

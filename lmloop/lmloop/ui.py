@@ -372,7 +372,8 @@ class Console:
 
     def stats_detail(self, stats: dict, model: str, messages: list,
                      session_log: Path, hud,
-                     context_limit: int = 0, reserve: int = 2048) -> str:
+                     context_limit: int = 0, reserve: int = 2048,
+                     cfg: "dict | None" = None) -> str:
         t = self.t
         counts = count_messages_by_role(messages)
         ctx_parts = [f"{counts[r]} {r}" for r in ("system", "user", "assistant", "tool") if counts[r]]
@@ -431,6 +432,9 @@ class Console:
         else:
             lines.append(row("tokens", "(server did not report usage)", t.dim))
         lines.append(row("memory", f"{hud.learnings} learnings, {hud.decisions} active decisions"))
+        if cfg is not None:
+            from .memory_index import index_status_line
+            lines.append(row("memory index", index_status_line(cfg)))
         lines.append(row("graph", "on" if hud.graph_on else "off"))
         lines.append(row("checkpoint", "yes" if hud.checkpoint else "no"))
         lines.append(row("hud", hud.line()))

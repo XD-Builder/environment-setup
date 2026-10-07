@@ -4,16 +4,22 @@ Owns ``lms`` auto-start, model listing, context-window discovery, and VLM
 detection. Chat HTTP stays in ``agent.py``.
 """
 
+import hashlib
 import json
 import shutil
 import subprocess
 import time
 import urllib.request
+from contextlib import contextmanager
+from pathlib import Path
+from urllib.parse import urlparse
 
 from . import config as config_mod, status as status_mod
 
 API_MODELS_PATH = "/models"
 NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")
+REMOTE_AUTO_CONCURRENCY = 4
+CONCURRENCY_CAP = 8
 
 
 class ServerError(RuntimeError):
@@ -209,3 +215,107 @@ def model_has_vision(model: str, cfg: dict) -> bool:
 
 def ensure_server(cfg: dict, echo=print) -> str:
     return LmsClient(cfg).ensure(echo=echo)
+
+
+def _is_local_host(host: str) -> bool:
+    if not host:
+        return True
+    low = host.lower()
+    if low in ("localhost", "127.0.0.1", "::1") or low.endswith(".local"):
+        return True
+    if low.startswith("10.") or low.startswith("192.168."):
+        return True
+    if low.startswith("172."):
+        parts = low.split(".")
+        if len(parts) > 1:
+            try:
+                if 16 <= int(parts[1]) <= 31:
+                    return True
+            except ValueError:
+                pass
+    return False
+
+
+def resolve_model_concurrency(cfg: dict) -> int:
+    raw = config_mod.cfg_str(cfg, "model_concurrency").strip().lower()
+    if raw == "auto":
+        host = urlparse(config_mod.cfg_str(cfg, "base_url")).hostname or ""
+        return 1 if _is_local_host(host) else REMOTE_AUTO_CONCURRENCY
+    try:
+        return max(1, min(CONCURRENCY_CAP, int(raw)))
+    except ValueError:
+        return 1
+
+
+def slots_dir_for(cfg: dict) -> Path:
+    sha = hashlib.sha256(config_mod.cfg_str(cfg, "base_url").encode()).hexdigest()[:8]
+    return config_mod.STATE_ROOT / "slots" / sha
+
+
+def model_slots_status_line(cfg: dict) -> str:
+    limit = resolve_model_concurrency(cfg)
+    host = urlparse(config_mod.cfg_str(cfg, "base_url")).hostname or ""
+    profile = "local" if _is_local_host(host) else "remote"
+    return f"model concurrency: {limit} · {profile} · lock {slots_dir_for(cfg)}"
+
+
+def eval_model_name(cfg: dict, main_model: str) -> str:
+    name = config_mod.cfg_str(cfg, "eval_model").strip()
+    return name or main_model
+
+
+class ModelSlots:
+    """Host-wide flock slots per base_url (no-op when flock is unavailable)."""
+
+    def __init__(self, cfg: dict):
+        self.limit = resolve_model_concurrency(cfg)
+        self.dir = slots_dir_for(cfg)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        for i in range(self.limit):
+            (self.dir / f"slot-{i}.lock").touch(exist_ok=True)
+
+    @contextmanager
+    def acquire(self, on_wait=None):
+        try:
+            import fcntl
+        except ImportError:
+            yield
+            return
+        held = []
+        notified = False
+        start = time.monotonic()
+        try:
+            while True:
+                for i in range(self.limit):
+                    fh = (self.dir / f"slot-{i}.lock").open("a+")
+                    try:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        held.append(fh)
+                        yield
+                        return
+                    except BlockingIOError:
+                        fh.close()
+                if on_wait and not notified and time.monotonic() - start >= 2.0:
+                    on_wait(self.limit)
+                    notified = True
+                time.sleep(0.25)
+        finally:
+            import fcntl
+            for fh in held:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                fh.close()
+
+
+_SLOTS: dict[str, ModelSlots] = {}
+
+
+def model_slots(cfg: dict) -> ModelSlots:
+    key = config_mod.cfg_str(cfg, "base_url")
+    slot = _SLOTS.get(key)
+    if slot is None or slot.limit != resolve_model_concurrency(cfg):
+        slot = ModelSlots(cfg)
+        _SLOTS[key] = slot
+    return slot
