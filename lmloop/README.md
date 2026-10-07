@@ -64,6 +64,7 @@ lmloop skill investigate "vim plug install hangs"
 lmloop skill review                     # review the current branch diff
 lmloop models                           # models loaded on the server
 lmloop config show|get|set              # settings (~/.lmloop/config.json)
+lmloop eval [--json | --design]       # local usage evals and improvement gaps
 lmloop completion zsh                   # print zsh completion script
 ```
 
