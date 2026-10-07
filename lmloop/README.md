@@ -52,7 +52,11 @@ lmloop graph company
 lmloop graph                            # resume latest open graph-run
 lmloop retro                            # alias for memory mine
 lmloop memory graph                     # knowledge-graph stats (use_graph)
+lmloop memory index                     # FTS5 / scan index status
+lmloop memory reindex                   # rebuild index.sqlite3 from JSONL
+lmloop memory canvas [query]            # terminal knowledge canvas (text; use_graph)
 lmloop memory reconcile                 # review contradicts clusters (use_graph)
+lmloop graph propose <name>             # draft a workflow graph from flow stats (≥5 finished runs)
 lmloop skills                           # list skill prompts
 lmloop skills new deploy "roll out staging safely"   # AI draft → review → save
 lmloop skill investigate "vim plug install hangs"
@@ -87,7 +91,11 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | `lmloop memory decisions` | Top active decisions (ID, decision, rationale). | Peek |
 | `lmloop memory dump` | Readable view of the decisions, learnings, and checkpoint injected into the prompt. | Peek |
 | `lmloop memory kg` | Peek **knowledge graph** stats (`use_graph` must be true). `memory graph` is a deprecated alias. | Peek |
+| `lmloop memory index` | Show derived memory index backend, size, and doc counts (`memory_index` config). | Peek |
+| `lmloop memory reindex` | Delete and rebuild `index.sqlite3` from learnings/decisions JSONL. | Write |
+| `lmloop memory canvas` | Read-only knowledge canvas (text layout; full TUI when `prompt_toolkit` canvas ships). | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
+| `lmloop graph propose <name>` | One no-tools draft from `lmloop flow` stats; unified diff; save on `y` only. | Write |
 | `lmloop decisions` | Deprecated alias for `memory decisions` (shows up to 30 rows). | Peek |
 | `lmloop history` | List **session transcript** files under `sessions/*.jsonl` (raw logs, not summarized). | Peek |
 | `lmloop memory mine [N]` | Mine the last N **session files** (default 3) and **write new learnings**. CLI never mines “this conversation.” REPL `/memory mine` can mine **this** session. `retro` / `/retro` are deprecated aliases. | Write |
