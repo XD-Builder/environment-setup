@@ -102,6 +102,11 @@ find yourself updating two lists, you have already added debt.
 | Goal loop (`until` maker/check/eval) | `loop.py` |
 | Derived check plans (no model calls) | `checks.py` |
 | Git snapshots before autonomous maker steps | `snapshot.py` |
+| Derived check plans | `checks.py` |
+| Model slots + concurrency | `server.py` |
+| Shell backend seam | `exec.py` |
+| Memory FTS5/scan index | `memory_index.py` |
+| Flow stats (`lmloop flow`) | `workflow.py` |
 | Authored workflow graphs | `graph.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |

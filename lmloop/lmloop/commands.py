@@ -83,6 +83,8 @@ COMMANDS: tuple = (
                 accepts_arg=True, arg_hint="[--check cmd] [--keep cmd] <goal>", cli=True),
     CommandMeta("graph", "run an authored workflow graph",
                 accepts_arg=True, arg_hint="<name>", cli=True),
+    CommandMeta("flow", "workflow stats and rule-based suggestions from run logs",
+                accepts_arg=True, arg_hint="[--json]", cli=True),
     CommandMeta("save", "checkpoint session for later restore",
                 accepts_arg=True, arg_hint="[title]"),
     # CLI-only alias so `lmloop retro` stays in the registry (not a /help peer).

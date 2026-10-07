@@ -663,6 +663,7 @@ def _run_skill_node(
         goal=node.task or f"complete the {node.skill} playbook",
         handoff=summary or "(none)",
         check_output="(none)",
+        shell_evidence="(none)",
     )
     ev = isolated_act(
         cfg, model, eval_prompt,

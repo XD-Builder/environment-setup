@@ -20,6 +20,8 @@ README_CONFIG_KEYS = frozenset({
     "shell_timeout_s", "web_timeout_s", "max_tool_output", "auto_start_server", "color",
     "context_length", "context_reserve", "until_max_steps", "until_mine",
     "check_inference", "until_baseline",
+    "model_concurrency", "run_token_budget", "eval_model",
+    "memory_index", "recall_sessions",
     "graph_max_steps", "graph_mine", "use_graph", "vision",
 })
 

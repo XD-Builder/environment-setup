@@ -347,7 +347,7 @@ class UntilRunnerTests(unittest.TestCase):
     def test_until_freezes_clock_across_maker_and_eval(self):
         clocks = []
 
-        def fake_prompt(cfg, workspace_root=None, clock_now=None):
+        def fake_prompt(cfg, workspace_root=None, clock_now=None, memory_block=None):
             clocks.append(clock_now)
             return "sys"
 
