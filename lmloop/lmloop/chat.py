@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 
 from . import server, status as status_mod
-from .config import cfg_bool, cfg_float, cfg_int
+from .config import cfg_bool, cfg_float, cfg_int, chat_request_headers
 from .stream import StreamError, _read_sse
 
 API_CHAT_PATH = "/chat/completions"
@@ -33,7 +33,7 @@ def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | Non
     return urllib.request.Request(
         cfg["base_url"].rstrip("/") + API_CHAT_PATH,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream" if stream else "application/json"},
+        headers=chat_request_headers(cfg, stream=stream),
     )
 
 
@@ -95,8 +95,9 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
         if e.code == 400 and "stream_options" in payload:
             payload.pop("stream_options", None)
             retry = urllib.request.Request(
-                req.full_url, data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+                req.full_url,
+                data=json.dumps(payload).encode(),
+                headers=chat_request_headers(cfg, stream=True),
             )
             try:
                 return _open_and_read(retry)

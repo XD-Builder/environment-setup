@@ -1,0 +1,19 @@
+# Illustrative OpenRouter model IDs for future `company_models_allowlist` defaults.
+# Validate tool-calling support on https://openrouter.ai/models before autonomous runs.
+# Override via lmloop config when company mode ships (see DESIGN_MULTI_AGENT_COMPANY.md).
+
+tiers:
+  planner:
+    description: Strategy, retro, long-horizon planning
+    models:
+      - anthropic/claude-sonnet-4
+  maker:
+    description: Implementation with tools
+    models:
+      - openai/gpt-4o-mini
+      - google/gemini-2.5-flash-preview
+  checker:
+    description: QA, eval, cheap verification passes
+    models:
+      - openai/gpt-4o-mini
+      - meta-llama/llama-3.3-70b-instruct

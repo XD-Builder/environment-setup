@@ -230,6 +230,21 @@ local, single-user research loop needs.
 - **New tool:** add an impl + JSON-schema spec in `tools.py::build_tools`.
 - **Different server:** `lmloop config set base_url http://localhost:11434/v1`
   (Ollama example), `lmloop config set model llama3.1`.
+- **OpenRouter (remote):** set `base_url` to `https://openrouter.ai/api/v1`, supply an
+  API key (`OPENROUTER_API_KEY` or `lmloop config set api_key …`), and set
+  `auto_start_server false`. Full steps, privacy notes, and planned Docker sandbox flags:
+  [docs/GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md).
+
+### Remote models and Docker sandbox
+
+| Topic | Status | Doc |
+|-------|--------|-----|
+| **OpenRouter** / any remote OpenAI-compatible API | **Supported** via `base_url` + `api_key` / env | [GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md) |
+| **`--docker` execution sandbox** | **Proposed** (host shell remains the default) | Same guide + [DESIGN_SANDBOX_AND_VERIFICATION.md](docs/DESIGN_SANDBOX_AND_VERIFICATION.md) |
+| **Multi-agent company** on Docker + allowlisted OpenRouter models | **Proposed** | [DESIGN_MULTI_AGENT_COMPANY.md](docs/DESIGN_MULTI_AGENT_COMPANY.md) |
+
+Reference files (build / allowlist templates): `lmloop/sandbox/Dockerfile`,
+`lmloop/company/openrouter_autonomous.yaml`.
 
 ### Config keys
 
@@ -239,6 +254,7 @@ zsh completion for `config set` is generated from these keys.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `base_url` | `http://127.0.0.1:1234/v1` | OpenAI-compatible API root |
+| `api_key` | *(empty)* | Bearer token for remote APIs; empty = none. Also `OPENROUTER_API_KEY` or `LMLOOP_API_KEY` |
 | `model` | *(empty)* | Empty = first model the server reports |
 | `max_rounds` | `60` | Tool-gather rounds per `act()` call; a tools-off answer follows if gather repeats a tool set or hits this budget |
 | `eval_max_rounds` | `8` | Gather rounds for until/graph **eval** `act()` (maker still uses `max_rounds`) |
@@ -274,6 +290,8 @@ zsh completion for `config set` is generated from these keys.
 | Symptom | Fix |
 |---------|-----|
 | No context bar / `limit unknown` in `/stats` | LM Studio native API unreachable; set `lmloop config set context_length <n>` to match your loaded model |
+| OpenRouter HTTP 401 | Set `OPENROUTER_API_KEY` or `lmloop config set api_key …`; confirm `base_url` is `https://openrouter.ai/api/v1` |
+| `lms` errors with OpenRouter | `lmloop config set auto_start_server false` — remote endpoints do not use LM Studio |
 | `prompt_toolkit` import error | Re-run `bash lmloop/setup-lmloop.sh` (creates `lmloop/.venv`) |
 | Zsh completion missing | Ensure `lmloop` is on `PATH`, then re-source `~/.zshrc` (or run `lmloop completion zsh`) |
 | `lmloop --skill …` fails | `--skill` was replaced by the subcommand: `lmloop skill <name> [task]` |

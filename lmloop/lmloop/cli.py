@@ -367,7 +367,7 @@ def cmd_history(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_models(cfg: dict, words: list, console: Console) -> int:
-    models = server.list_models(cfg["base_url"])
+    models = server.list_models(cfg["base_url"], cfg=cfg)
     console.info("\n".join(models) if models else f"(no server at {cfg['base_url']} or nothing loaded)")
     return 0
 
