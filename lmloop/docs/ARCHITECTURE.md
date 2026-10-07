@@ -25,6 +25,7 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
 │   ├── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
+│   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
 │   └── Dockerfile              # reference image for future lmloop sandbox build
