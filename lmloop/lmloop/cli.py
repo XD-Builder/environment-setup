@@ -44,6 +44,7 @@ from .commands import MEMORY_ARG_CHOICES, cli_subcommand_metas, cli_subcommand_n
 from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
 from .repl import mine_sessions, run_repl
 from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
+from . import usage
 
 EPILOG = """
 project memory commands:
@@ -563,12 +564,14 @@ def main(argv=None) -> int:
     sub = words[0] if words else ""
     handlers = cli_handlers()
     if sub in handlers:
+        usage.record("cli.command", command=sub)
         return handlers[sub](cfg, words[1:], console)
     if sub in cli_subcommand_names():
         console.error(f"internal error: no handler for '{sub}'")
         return 1
 
     task = " ".join(words) if words else None
+    usage.record("cli.repl", has_task=bool(task))
     return run_repl(cfg, console=console, skill=None, first_task=task)
 
 

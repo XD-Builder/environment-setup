@@ -103,6 +103,7 @@ find yourself updating two lists, you have already added debt.
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
 | Paths, `DEFAULTS`, project slug, `utc_now()` | `config.py` |
+| Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
 | `@path` completion + ref expansion | `files_index.py` |
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
