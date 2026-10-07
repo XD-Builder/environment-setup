@@ -454,6 +454,9 @@ def run_until(
     config): recoverable in-workspace file ops auto-approve; irreversible ones
     are denied during the maker step and asked once at the cycle boundary.
     """
+    from . import usage
+
+    usage.record("until.run", resume=bool(run.path.exists()))
     if echo_status is None:
         echo_status = echo
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()

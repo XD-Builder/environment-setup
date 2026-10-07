@@ -572,6 +572,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
     """
+    from . import usage
+
+    usage.record("agent.act", readonly=readonly, no_tools=no_tools)
     if echo_status is None:
         echo_status = echo
     if echo_tool is None:

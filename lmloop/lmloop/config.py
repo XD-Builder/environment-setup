@@ -4,6 +4,7 @@ State layout (gstack-inspired, file-only):
 
     ~/.lmloop/
     ├── config.json                    # user settings
+    ├── usage.jsonl                    # append-only local feature-usage events
     ├── history                        # REPL prompt history (prompt_toolkit)
     ├── skills/<name>.md               # user-authored skills (override packaged)
     ├── graphs/<name>.md               # user-authored graphs (override packaged)

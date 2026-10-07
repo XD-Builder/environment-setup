@@ -379,7 +379,8 @@ class CompleterTests(unittest.TestCase):
         cmds = [
             SlashCommand(
                 "/memory", "inspect", lambda *_: True,
-                arg_choices=("list", "decisions", "graph", "dump", "mine", "reconcile"),
+                arg_choices=("list", "decisions", "dump", "mine", "kg", "graph", "reconcile"),
+                completion_arg_choices=("list", "decisions", "dump", "mine", "kg", "reconcile"),
             ),
         ]
         c = LmloopCompleter(lambda: cmds)
@@ -387,10 +388,18 @@ class CompleterTests(unittest.TestCase):
         matches = list(c.get_completions(docs, None))
         texts = [m.text for m in matches]
         self.assertIn("list", texts)
+        filtered = [
+            SlashCommand(
+                "/memory", "inspect", lambda *_: True,
+                arg_choices=("list", "decisions", "dump", "mine", "kg", "graph", "reconcile"),
+                completion_arg_choices=("list", "decisions", "dump", "mine", "kg", "reconcile"),
+            ),
+        ]
         self.assertEqual(
-            _command_arg_choices("/memory d", "d", cmds),
-            ["list", "decisions", "graph", "dump", "mine", "reconcile"],
+            _command_arg_choices("/memory d", "d", filtered),
+            ["list", "decisions", "dump", "mine", "kg", "reconcile"],
         )
+        self.assertNotIn("graph", _command_arg_choices("/memory d", "d", filtered))
         self.assertIsNone(_command_arg_choices("/memory list extra", "extra", cmds))
         self.assertIsNone(_command_arg_choices("/memory", "/memory", cmds))
 

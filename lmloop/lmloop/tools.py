@@ -1459,8 +1459,11 @@ def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
 
 
 def dispatch(impls: dict, name: str, arguments: str) -> str:
+    from . import usage
+
     if not (name or "").strip():
         return "ERROR: empty tool name"
+    usage.record("tool", name=name)
     fn = impls.get(name)
     if not fn:
         return f"ERROR: unknown tool {name}"

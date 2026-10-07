@@ -537,6 +537,9 @@ def run_graph(
     mine=None,
 ) -> GraphRun:
     """Advance ``run`` until pass, gate-no, pause, or interrupt. Mutates run."""
+    from . import usage
+
+    usage.record("graph.run", name=run.name)
     if echo_status is None:
         echo_status = echo
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()

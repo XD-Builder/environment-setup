@@ -229,6 +229,25 @@ def decision_list_lines(limit: int = MEMORY_DECISIONS_LIMIT,
     return _section_lines("Decisions", [decision_view_lines(d) for d in rows])
 
 
+def memory_peek_lines(cfg: dict, slug: "str | None" = None) -> "list[ViewLine]":
+    """Default ``/memory`` view: HUD, top learnings + decisions, navigation hints."""
+    hud = memory_hud(cfg, slug)
+    lines = [
+        ViewLine(hud.line(), "muted"),
+        ViewLine(
+            "Peek: /context (files + injected memory) · /memory dump (memory only)",
+            "muted",
+        ),
+        ViewLine("Write: ask in chat (remember/decide) · /memory mine · /help all",
+                 "muted"),
+        ViewLine(""),
+    ]
+    lines.extend(learning_list_lines(limit=MEMORY_LIST_LIMIT, slug=slug))
+    lines.append(ViewLine(""))
+    lines.extend(decision_list_lines(limit=MEMORY_DECISIONS_LIMIT, slug=slug))
+    return lines
+
+
 def format_learning_line(row: dict) -> str:
     """Model/search line: key, type, confidence, insight."""
     return f"- [{row['key']}] ({row['type']}, {row['confidence']}/10) {row['insight']}"

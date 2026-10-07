@@ -43,6 +43,7 @@ lmloop/
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
 │   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   ├── context.py              # live-thread file manifest for /context
+│   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
 │   ├── markdown_view.py        # render assistant markdown (no quote gutter)
@@ -407,6 +408,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ```
 ~/.lmloop/
 ├── config.json                     # user settings (base_url, model, max_rounds, …)
+├── usage.jsonl                     # append-only local feature-usage events (opt-out: LMLOOP_USAGE=0)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
 ├── steer/<name>.md                 # user always-on steering (concatenated)
