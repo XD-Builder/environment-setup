@@ -80,7 +80,7 @@ COMMANDS: tuple = (
                 arg_hint="[list | decisions | dump | query | mine [n] | kg | reconcile]",
                 arg_choices=MEMORY_ARG_CHOICES, cli=True),
     CommandMeta("until", "work toward a goal until a check or evaluator passes",
-                accepts_arg=True, arg_hint="[--check cmd] <goal>", cli=True),
+                accepts_arg=True, arg_hint="[--check cmd] [--keep cmd] <goal>", cli=True),
     CommandMeta("graph", "run an authored workflow graph",
                 accepts_arg=True, arg_hint="<name>", cli=True),
     CommandMeta("save", "checkpoint session for later restore",

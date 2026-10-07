@@ -67,7 +67,19 @@ class ParseGraphTests(unittest.TestCase):
         node = defn.node("qa")
         self.assertEqual(node.skill, "qa")
         self.assertEqual(node.check_cmd, "pytest -q")
+        self.assertEqual(node.checks, ("pytest -q",))
         self.assertEqual(node.task, "review the diff")
+
+    def test_repeated_check_and_keep_on_until_node(self):
+        text = (
+            "node build until --check 'pytest -q' --keep 'ruff check .' "
+            "--check mypy tidy the parser"
+        )
+        defn = parse_graph(text, "t")
+        node = defn.node("build")
+        self.assertEqual(node.goal, "tidy the parser")
+        self.assertEqual(node.checks, ("pytest -q", "mypy"))
+        self.assertEqual(node.keeps, ("ruff check .",))
 
     def test_unknown_on_token(self):
         with self.assertRaises(GraphError) as ctx:

@@ -19,6 +19,7 @@ README_CONFIG_KEYS = frozenset({
     "autonomous_snapshot",
     "shell_timeout_s", "web_timeout_s", "max_tool_output", "auto_start_server", "color",
     "context_length", "context_reserve", "until_max_steps", "until_mine",
+    "check_inference", "until_baseline",
     "graph_max_steps", "graph_mine", "use_graph", "vision",
 })
 
@@ -83,6 +84,13 @@ class ConfigQualityTests(unittest.TestCase):
         self.assertEqual(coerce_config_value("vision", True), "true")
         self.assertEqual(coerce_config_value("vision", "false"), "false")
         self.assertIsNone(coerce_config_value("vision", "maybe"))
+
+    def test_check_mode_coerces(self):
+        self.assertEqual(coerce_config_value("check_inference", "OFF"), "off")
+        self.assertEqual(coerce_config_value("until_baseline", "auto"), "auto")
+        self.assertIsNone(coerce_config_value("until_baseline", "sometimes"))
+        self.assertEqual(coerce_config_value("autonomous_snapshot", "GIT"), "git")
+        self.assertIsNone(coerce_config_value("autonomous_snapshot", "maybe"))
 
     def test_cfg_get_keeps_zero_values(self):
         cfg = {"context_length": 0, "context_reserve": 512}
