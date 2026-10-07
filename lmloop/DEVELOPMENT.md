@@ -102,7 +102,8 @@ find yourself updating two lists, you have already added debt.
 | Authored workflow graphs | `graph.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
-| Paths, `DEFAULTS`, project slug, `utc_now()` | `config.py` |
+| Paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, project slug, `utc_now()` | `config.py` |
+| Live-thread file manifest (`/context`) | `context.py` |
 | Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
 | `@path` completion + ref expansion | `files_index.py` |
 | PDF/Office/image/audio extraction | `extract.py` |
@@ -132,6 +133,7 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
 - `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`, `eval_max_rounds`), `skills.load_skill`, `memory`, `knowledge_graph.record_skill_use`, `status`.
 - `knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.
 - `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
+- `context.py` is a leaf: `extract`, `files_index`, `memory`, `tools` parsers. It must not import `agent`, `loop`, `graph`, or `repl`.
 - `extract.py` is a leaf: stdlib + optional CLIs (`pdftotext`, `whisper`). It must not import `agent`, `tools`, `loop`, or `graph`. `tools.py`, `agent.py`, `repl.py`, `memory.py`, `markdown_view.py`, and `web.py` may import it.
 - `agent.py`, `tools.py`, and `skills.py` may import `steer`.
 - `skills.py` may import `tools.tool_names`, `steer`, and `memory.context_block`. It must not import `agent` (drafting stays in `agent.generate_skill_draft`).
@@ -286,6 +288,7 @@ Follow [PEP 8](https://peps.python.org/pep-0008/) and [PEP 257](https://peps.pyt
 | Functions / methods | `snake_case`, verb or query | `build_tools()`, `list_skills()`, `is_destructive()` |
 | Instance attrs | `snake_case` | `session_log`, `thinking_history` |
 | Module constants | `UPPER_SNAKE` | `MAX_OUTPUT`, `COMMANDS`, `WEB_HEADERS` |
+| Config reads in the loop | `cfg_get` / `cfg_int` / … from `config.py` | Not `cfg.get(k) or default` (breaks zero values) |
 | Module-private | leading `_` | `_tty_write`, `_TOOL_DEFS`, `_HtmlToolParser` |
 | Type aliases / records | `CapWords` dataclass | `CommandMeta` |
 | Boolean helpers | `is_` / `has_` / `needs_` | `needs_shell`, `is_nudge_message` |

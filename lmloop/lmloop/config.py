@@ -146,6 +146,33 @@ def normalize_config(raw: dict) -> dict:
     return out
 
 
+def cfg_get(cfg: "dict | None", key: str):
+    """Return ``cfg[key]`` when the key is present, else ``DEFAULTS[key]``.
+
+    Prefer this over ``cfg.get(key) or default`` so legitimate zero values are
+    not replaced by the default.
+    """
+    if not cfg or key not in cfg:
+        return DEFAULTS[key]
+    return cfg[key]
+
+
+def cfg_int(cfg: "dict | None", key: str) -> int:
+    return int(cfg_get(cfg, key))
+
+
+def cfg_bool(cfg: "dict | None", key: str) -> bool:
+    return bool(cfg_get(cfg, key))
+
+
+def cfg_float(cfg: "dict | None", key: str) -> float:
+    return float(cfg_get(cfg, key))
+
+
+def cfg_str(cfg: "dict | None", key: str) -> str:
+    return str(cfg_get(cfg, key))
+
+
 def load_config() -> dict:
     global _CONFIG_WARNED
     cfg = dict(DEFAULTS)
