@@ -44,7 +44,9 @@ After installing the binary, open a new shell (or re-source `~/.zshrc`).
 ```bash
 lmloop                                  # interactive REPL
 lmloop "why does setup.sh fail on linux?"   # one-shot task
+lmloop until make the tests pass          # derive a check plan from the project
 lmloop until --check 'pytest -q' make tests pass
+lmloop until --keep 'npm run lint' tidy the parser
 lmloop until                            # resume latest open until-run
 lmloop graph company
 lmloop graph                            # resume latest open graph-run
@@ -117,7 +119,7 @@ Inside the REPL:
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/context` | files held in this conversation (full path on its own line), then injected memory (`/memory dump` is that memory view alone) |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
-| `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
+| `/until [--check cmd] [--keep cmd] <goal>` | isolated maker/checker loop. With no flags, lmloop derives a check plan from the goal and the project, shows it (`Enter` run, `e` edit, `s` checker only; no prompt when stdin is not a TTY), and baselines it once. A check that goes fail → pass finishes the run; an already-passing check becomes an invariant and the evaluator decides. `--check` / `--keep` skip inference. Then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
 | `/memory [list \| decisions \| dump \| query \| mine [n] \| kg \| reconcile]` | dashboard or search; injected memory; mine this session (or last n prior files); knowledge-graph stats (`kg`); reconcile contradictions when `use_graph` |
@@ -228,6 +230,21 @@ local, single-user research loop needs.
 - **New tool:** add an impl + JSON-schema spec in `tools.py::build_tools`.
 - **Different server:** `lmloop config set base_url http://localhost:11434/v1`
   (Ollama example), `lmloop config set model llama3.1`.
+- **OpenRouter (remote):** set `base_url` to `https://openrouter.ai/api/v1`, supply an
+  API key (`OPENROUTER_API_KEY` or `lmloop config set api_key …`), and set
+  `auto_start_server false`. Full steps, privacy notes, and planned Docker sandbox flags:
+  [docs/GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md).
+
+### Remote models and Docker sandbox
+
+| Topic | Status | Doc |
+|-------|--------|-----|
+| **OpenRouter** / any remote OpenAI-compatible API | **Supported** via `base_url` + `api_key` / env | [GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md) |
+| **`--docker` execution sandbox** | **Proposed** (host shell remains the default) | Same guide + [DESIGN_SANDBOX_AND_VERIFICATION.md](docs/DESIGN_SANDBOX_AND_VERIFICATION.md) |
+| **Multi-agent company** on Docker + allowlisted OpenRouter models | **Proposed** | [DESIGN_MULTI_AGENT_COMPANY.md](docs/DESIGN_MULTI_AGENT_COMPANY.md) |
+
+Reference files (build / allowlist templates): `lmloop/sandbox/Dockerfile`,
+`lmloop/company/openrouter_autonomous.yaml`.
 
 ### Config keys
 
@@ -237,6 +254,7 @@ zsh completion for `config set` is generated from these keys.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `base_url` | `http://127.0.0.1:1234/v1` | OpenAI-compatible API root |
+| `api_key` | *(empty)* | Bearer token for remote APIs; empty = none. Also `OPENROUTER_API_KEY` or `LMLOOP_API_KEY` |
 | `model` | *(empty)* | Empty = first model the server reports |
 | `max_rounds` | `60` | Tool-gather rounds per `act()` call; a tools-off answer follows if gather repeats a tool set or hits this budget |
 | `eval_max_rounds` | `8` | Gather rounds for until/graph **eval** `act()` (maker still uses `max_rounds`) |
@@ -250,7 +268,7 @@ zsh completion for `config set` is generated from these keys.
 | `confirm_destructive` | `true` | y/N for rm -rf, sudo, DROP TABLE, force-push, … |
 | `confirm_shell_syntax` | `false` | y/N for pipes/redirection; off to avoid fatigue |
 | `autonomous_gates` | `files` | Gates inside `until` / `graph` runs. `files`: auto-approve backed-up in-workspace overwrite/edit/move/delete, ask once per maker step for the rest. `none`: ask for everything. `all`: never ask (unattended only). |
-| `autonomous_snapshot` | `git` | Before each maker step in `until` / `graph`, record a temp-index commit under `refs/lmloop/` (does not touch your index). `off` disables; non-git workspaces skip with a note. |
+| `autonomous_snapshot` | `git` | Before each maker step in `until` / `graph`, record a git snapshot under `refs/lmloop/` (temp index; does not touch your index). `off` disables; non-git workspaces skip silently. |
 | `shell_timeout_s` | `120` | `run_shell` timeout |
 | `web_timeout_s` | `30` | `web_search` / `fetch_url` timeout |
 | `max_tool_output` | `12000` | Truncate tool results (chars) |
@@ -260,6 +278,8 @@ zsh completion for `config set` is generated from these keys.
 | `context_reserve` | `2048` | Tokens reserved for the model reply on the fill bar |
 | `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` with no goal resumes) |
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
+| `check_inference` | `auto` | `auto`: when `until` has no `--check` or `--keep`, derive a check plan from the goal, project files, repo docs, memory, and earlier runs. `off`: plain-language goals go straight to the evaluator |
+| `until_baseline` | `auto` | `auto`: run the plan once before any work, drop commands that cannot start, and turn already-passing checks into invariants. `off`: a passing check finishes the run immediately |
 | `graph_max_steps` | `24` | Skill/until node entries per `graph` invocation before pause (`/continue` or `lmloop graph` with no name resumes). Mine and HITL gate do not count. |
 | `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
 | `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |
@@ -270,14 +290,17 @@ zsh completion for `config set` is generated from these keys.
 | Symptom | Fix |
 |---------|-----|
 | No context bar / `limit unknown` in `/stats` | LM Studio native API unreachable; set `lmloop config set context_length <n>` to match your loaded model |
+| OpenRouter HTTP 401 | Set `OPENROUTER_API_KEY` or `lmloop config set api_key …`; confirm `base_url` is `https://openrouter.ai/api/v1` |
+| `lms` errors with OpenRouter | `lmloop config set auto_start_server false` — remote endpoints do not use LM Studio |
 | `prompt_toolkit` import error | Re-run `bash lmloop/setup-lmloop.sh` (creates `lmloop/.venv`) |
 | Zsh completion missing | Ensure `lmloop` is on `PATH`, then re-source `~/.zshrc` (or run `lmloop completion zsh`) |
 | `lmloop --skill …` fails | `--skill` was replaced by the subcommand: `lmloop skill <name> [task]` |
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
 | `DENIED: the user declined to overwrite …` | `write_file` on an existing file asks first. Say `y`, or let the model use `update_file` (the intended path for edits). |
 | A file was overwritten or deleted by mistake | The tool result and the dim REPL line cite the backup under `~/.lmloop/projects/<slug>/trash/<stamp>/`. Copy it back (or ask the model to `move_file` it back). Backups are pruned after 14 days. |
-| An autonomous run damaged the tree | Each maker row in the until/graph log may list `snapshot_ref` (or `HEAD` when clean). Restore with `git restore --source=<ref> -- .` or `git checkout <ref> -- <path>`. Refs live under `refs/lmloop/` (not pushed by default `git push`; `git push --mirror` would). Pruned after 14 days like `trash/`. |
+| Autonomous run damaged the workspace | Each maker row in `until/<ts>.jsonl` or `graphs/<name>/<ts>.jsonl` may include `snapshot_ref` (`HEAD` or `refs/lmloop/...`). Restore with `git restore --source=<ref> -- .` or `git checkout <ref> -- <path>`. Refs older than 14 days are pruned; `git push` does not send `refs/lmloop/*` by default. |
 | `/until` keeps asking y/N | Recoverable file ops auto-approve by default; the ask is for destructive shell or outside-workspace writes, once per maker step. `lmloop config set autonomous_gates all` silences it for unattended runs; `none` asks for everything. |
+| `until` runs the wrong check | The plan is printed before the first cycle. Press `e` to edit it, or pass `--check` / `--keep`. `lmloop config set check_inference off` leaves plain-language goals to the evaluator. `until_baseline off` makes a passing check finish the run immediately. |
 | Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
 | "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes, unless a long draft is already on screen (`model stopped without finishing`). |

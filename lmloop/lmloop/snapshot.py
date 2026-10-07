@@ -1,7 +1,7 @@
-"""Git workspace snapshots before autonomous maker steps (host default path).
+"""Git workspace snapshots before autonomous maker steps (host path, leaf module).
 
-Uses a temporary index so the user's index and working tree are untouched.
-Leaf module: no imports from loop, graph, or agent.
+Uses a temporary index so tracked edits and untracked files are captured without
+touching the user's real index or working tree. Refs live under refs/lmloop/*.
 """
 
 from __future__ import annotations
@@ -9,187 +9,189 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SNAPSHOT_MAX_FILE_MB = 20
-SNAPSHOT_RETENTION_DAYS = 14
 REF_PREFIX = "refs/lmloop/"
+SNAPSHOT_RETENTION_DAYS = 14
+SNAPSHOT_MAX_FILE_MB = 20
 
 
 @dataclass(frozen=True)
 class SnapshotResult:
-    """Outcome of one snapshot attempt (always safe to ignore for the run)."""
+    """Outcome of one snapshot attempt."""
 
-    snapshot_ref: str = ""
-    tree: str = ""
+    ref: str = ""
     skipped: tuple[str, ...] = ()
     note: str = ""
 
 
-def _run_git(
+def _mode(cfg: dict) -> str:
+    return str(cfg.get("autonomous_snapshot") or "git").strip().lower()
+
+
+def git_root(workspace: Path) -> Path | None:
+    """Return the git toplevel containing ``workspace``, or None."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    top = proc.stdout.strip()
+    return Path(top).resolve() if top else None
+
+
+def _git(
     root: Path,
     *args: str,
-    env: "dict | None" = None,
+    env: dict | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess:
     merged = os.environ.copy()
     if env:
         merged.update(env)
-    return subprocess.run(
+    proc = subprocess.run(
         ["git", "-C", str(root), *args],
-        env=merged,
         capture_output=True,
         text=True,
-        check=check,
+        timeout=120,
+        env=merged,
+        check=False,
     )
-
-
-def is_git_repo(root: Path) -> bool:
-    try:
-        proc = _run_git(root, "rev-parse", "--git-dir", check=False)
-    except OSError:
-        return False
-    return proc.returncode == 0 and bool((proc.stdout or "").strip())
-
-
-def snapshot_enabled(cfg: "dict | None") -> bool:
-    mode = (cfg or {}).get("autonomous_snapshot") or "git"
-    return str(mode).strip().lower() == "git"
-
-
-def log_fields(result: SnapshotResult | None) -> dict:
-    if result is None:
-        return {}
-    row: dict = {}
-    if result.snapshot_ref:
-        row["snapshot_ref"] = result.snapshot_ref
-    if result.tree:
-        row["tree"] = result.tree
-    if result.skipped:
-        row["snapshot_skipped"] = list(result.skipped)
-    if result.note:
-        row["snapshot_note"] = result.note
-    return row
+    if check and proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(err or f"git {' '.join(args)} failed")
+    return proc
 
 
 def _head_tree(root: Path) -> str:
-    proc = _run_git(root, "rev-parse", "HEAD^{tree}")
-    return (proc.stdout or "").strip()
+    proc = _git(root, "rev-parse", "HEAD^{tree}", check=True)
+    return proc.stdout.strip()
 
 
-def _oversized_untracked(root: Path, max_bytes: int) -> list[str]:
-    proc = _run_git(
+def _oversize_untracked(root: Path, max_bytes: int) -> list[str]:
+    proc = _git(
         root,
         "ls-files",
         "-o",
         "--exclude-standard",
-        check=False,
+        "-z",
+        check=True,
     )
-    if proc.returncode != 0:
+    raw = proc.stdout
+    if not raw:
         return []
     skipped: list[str] = []
-    for rel in (proc.stdout or "").splitlines():
-        rel = rel.strip()
-        if not rel:
+    for part in raw.split("\0"):
+        if not part:
             continue
-        path = root / rel
+        path = root / part
         try:
-            if path.is_file() and path.stat().st_size > max_bytes:
-                skipped.append(rel)
+            size = path.stat().st_size
         except OSError:
             continue
+        if size > max_bytes:
+            skipped.append(part)
     return skipped
 
 
-def take_snapshot(
-    root: Path,
-    cfg: "dict | None",
-    run_id: str,
-    step: int,
-) -> SnapshotResult:
-    """Capture workspace state under ``refs/lmloop/<run_id>/<step>`` when possible."""
-    if not snapshot_enabled(cfg):
-        return SnapshotResult(note="snapshots off (autonomous_snapshot)")
-    root = root.resolve()
-    if not is_git_repo(root):
-        return SnapshotResult(note="snapshots off (not a git repository)")
-    max_bytes = SNAPSHOT_MAX_FILE_MB * 1024 * 1024
-    skipped = tuple(_oversized_untracked(root, max_bytes))
-    head_tree = _head_tree(root)
-    idx_dir = tempfile.mkdtemp(prefix="lmloop-snap-")
-    index_path = os.path.join(idx_dir, "index")
-    env = {"GIT_INDEX_FILE": index_path}
-    try:
-        _run_git(root, "read-tree", "HEAD", env=env)
-        add_args = ["add", "-A", "--", "."]
-        for rel in skipped:
-            add_args.append(f":(exclude){rel}")
-        _run_git(root, *add_args, env=env)
-        proc = _run_git(root, "write-tree", env=env)
-        tree = (proc.stdout or "").strip()
-        if not tree:
-            return SnapshotResult(
-                tree=head_tree,
-                skipped=skipped,
-                note="snapshot failed (empty tree)",
-            )
-        if tree == head_tree:
-            return SnapshotResult(snapshot_ref="HEAD", tree=head_tree, skipped=skipped)
-        msg = f"lmloop snapshot {run_id} {step}"
-        commit = _run_git(root, "commit-tree", tree, "-p", "HEAD", "-m", msg)
-        sha = (commit.stdout or "").strip()
-        ref = f"{REF_PREFIX}{run_id}/{step}"
-        _run_git(root, "update-ref", ref, sha)
-        return SnapshotResult(snapshot_ref=ref, tree=tree, skipped=skipped)
-    except (subprocess.CalledProcessError, OSError) as exc:
-        err = getattr(exc, "stderr", None) or str(exc)
-        return SnapshotResult(
-            tree=head_tree,
-            skipped=skipped,
-            note=f"snapshot failed ({err.strip()[:200]})",
-        )
-    finally:
-        try:
-            os.unlink(index_path)
-        except OSError:
-            pass
-        try:
-            os.rmdir(idx_dir)
-        except OSError:
-            pass
-
-
-def prune_old_refs(root: Path, cfg: "dict | None" = None) -> None:
-    """Drop ``refs/lmloop/*`` older than ``SNAPSHOT_RETENTION_DAYS``."""
-    if not snapshot_enabled(cfg):
-        return
-    root = root.resolve()
-    if not is_git_repo(root):
-        return
+def _prune_old_refs(root: Path) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=SNAPSHOT_RETENTION_DAYS)
-    proc = _run_git(
+    proc = _git(
         root,
         "for-each-ref",
-        "--format=%(refname)\t%(creatordate:iso8601-strict)",
+        "--format=%(refname) %(creatordate:iso-strict)",
         REF_PREFIX,
         check=False,
     )
     if proc.returncode != 0:
         return
-    for line in (proc.stdout or "").splitlines():
-        parts = line.split("\t", 1)
+    for line in proc.stdout.splitlines():
+        parts = line.strip().split(" ", 1)
         if len(parts) != 2:
             continue
-        refname, created = parts[0].strip(), parts[1].strip()
-        if not refname.startswith(REF_PREFIX):
-            continue
+        ref, when = parts[0], parts[1]
         try:
-            when = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            ts = datetime.fromisoformat(when.replace("Z", "+00:00"))
         except ValueError:
             continue
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=timezone.utc)
-        if when < cutoff:
-            _run_git(root, "update-ref", "-d", refname, check=False)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts < cutoff:
+            _git(root, "update-ref", "-d", ref, check=False)
+
+
+def take_snapshot(
+    cfg: dict,
+    workspace: Path,
+    *,
+    run_label: str,
+    step: int,
+) -> SnapshotResult:
+    """Capture workspace state under refs/lmloop/<run_label>/<step> when enabled."""
+    if _mode(cfg) == "off":
+        return SnapshotResult(note="snapshots off")
+    root = git_root(workspace)
+    if root is None:
+        return SnapshotResult(note="not a git repository")
+
+    safe_label = "".join(c if c.isalnum() or c in "-_." else "-" for c in run_label)
+    ref_name = f"{REF_PREFIX}{safe_label}/{step}"
+    max_bytes = SNAPSHOT_MAX_FILE_MB * 1024 * 1024
+    try:
+        skipped = tuple(_oversize_untracked(root, max_bytes))
+    except RuntimeError as exc:
+        return SnapshotResult(note=str(exc))
+
+    try:
+        return _write_snapshot(root, ref_name, safe_label, step, skipped)
+    except RuntimeError as exc:
+        return SnapshotResult(note=str(exc))
+
+
+def _write_snapshot(
+    root: Path,
+    ref_name: str,
+    safe_label: str,
+    step: int,
+    skipped: tuple[str, ...],
+) -> SnapshotResult:
+    with tempfile.TemporaryDirectory(prefix="lmloop-snap-") as tmp:
+        index_path = Path(tmp) / "index"
+        env = {"GIT_INDEX_FILE": str(index_path)}
+        _git(root, "read-tree", "HEAD", env=env, check=True)
+        add_args = ["add", "-A", "--", "."]
+        for rel in skipped:
+            add_args.append(f":(exclude){rel}")
+        _git(root, *add_args, env=env, check=True)
+        tree_proc = _git(root, "write-tree", env=env, check=True)
+        new_tree = tree_proc.stdout.strip()
+
+    if new_tree == _head_tree(root):
+        _prune_old_refs(root)
+        return SnapshotResult(ref="HEAD", skipped=skipped)
+
+    msg = f"lmloop snapshot {safe_label} {step}"
+    commit_proc = _git(
+        root,
+        "commit-tree",
+        new_tree,
+        "-p",
+        "HEAD",
+        "-m",
+        msg,
+        check=True,
+    )
+    sha = commit_proc.stdout.strip()
+    _git(root, "update-ref", ref_name, sha, check=True)
+    _prune_old_refs(root)
+    return SnapshotResult(ref=ref_name, skipped=skipped)
+

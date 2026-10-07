@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import memory
-from .config import utc_now
+from .config import cfg_bool, utc_now
 
 GRAPH_NODE_TYPES = frozenset({
     "learning", "decision", "session", "file", "skill", "concept",
@@ -84,7 +84,7 @@ class KnowledgeGraph:
 
     @staticmethod
     def enabled(cfg: "dict | None") -> bool:
-        return bool(cfg and cfg.get("use_graph"))
+        return bool(cfg and cfg_bool(cfg, "use_graph"))
 
     def ensure(self, cfg: dict) -> None:
         if not self.enabled(cfg):
@@ -532,7 +532,7 @@ def contradiction_clusters(slug: "str | None" = None) -> str:
 
 def inspect_report(cfg: dict, slug: "str | None" = None) -> str:
     """``/memory graph`` body: stats plus contradiction clusters, or how to enable."""
-    if not cfg.get("use_graph"):
+    if not cfg_bool(cfg, "use_graph"):
         return MSG_GRAPH_OFF
     KnowledgeGraph(slug).ensure(cfg)
     return graph_stats(slug) + "\n" + contradiction_clusters(slug)

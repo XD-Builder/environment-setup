@@ -24,7 +24,12 @@ lmloop/
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # model lock, DAG fan-out/joins, flow mining, TUI canvas (proposed)
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
 │   ├── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
-│   └── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
+│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
+│   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
+├── sandbox/
+│   └── Dockerfile              # reference image for future lmloop sandbox build
+├── company/
+│   └── openrouter_autonomous.yaml  # illustrative allowlist tiers (company mode proposed)
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -41,7 +46,8 @@ lmloop/
 │   ├── web.py                  # web_search / fetch_url + HTML parsers
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
-│   ├── config.py               # ~/.lmloop/config.json, project slug, utc_now
+│   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
+│   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
@@ -50,6 +56,8 @@ lmloop/
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
 │   ├── status.py               # status / resume / until-graph follow-up copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
+│   ├── checks.py               # derived check plans (no model calls)
+│   ├── snapshot.py             # git temp-index refs before autonomous maker steps
 │   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
@@ -91,7 +99,7 @@ flowchart TB
 
   subgraph control["Control flow"]
     graphpy["graph.py<br/>authored workflow graphs"]
-    loop["loop.py<br/>until: maker → check / eval"]
+    loop["loop.py<br/>until: plan → maker → check / eval"]
   end
 
   subgraph core["Agent core"]
@@ -245,7 +253,7 @@ flowchart TD
 
 Key properties:
 
-- **No SDK dependency.** Plain `urllib` in `chat.py` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, or anything OpenAI-compatible. When tools are present the payload includes `tool_choice: "auto"`; the answer round and `no_tools` omit both `tools` and `tool_choice`.
+- **No SDK dependency.** Plain `urllib` in `chat.py` against `/v1/chat/completions`. Swap `base_url` to point at Ollama, llama.cpp, OpenRouter, or anything OpenAI-compatible. Optional bearer auth via `api_key` / `OPENROUTER_API_KEY` (`config.resolve_api_key`). When tools are present the payload includes `tool_choice: "auto"`; the answer round and `no_tools` omit both `tools` and `tool_choice`. User-facing remote + Docker notes: [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md).
 - **Tool errors are reported back** as text so the model can self-correct instead of crashing the session.
 - **Usage tracking.** Prompt/completion/total tokens accumulated per-turn; fed to the UI for context fill bars.
 - **Streaming is on by default** (`stream: true` in config). Completions use SSE (`stream.py`); tokens render live via `rich.Live` markdown when available (else plain tokens) in `display.py`. The live view grows with the answer up to the terminal and never shrinks (reflow cannot leave leftover rows in scrollback); it only tails if it would overflow. `finish()` reprints the full answer folded at the terminal width (list items included — never cropped). Live refreshes on new tokens only (`auto_refresh` off) and closes when `tool_calls` start, so a long `write_file` argument stream cannot redraw the same preamble into scrollback. A spinner shows until the first token, and again while tool arguments stream. Set `stream: false` for a non-SSE full reply. Within one SSE body, `stream.py` halt-loops repeating thinking (including paraphrases) and exact-repeat content. `_halted` means the round did not finish on its own: a looping answer, or looping thinking that either forced the body closed or never reached an answer — thinking that looped and then produced content before a natural `[DONE]` is a normal round. A halted stream closes before the server's `usage` chunk, so that round's `last_*` stats are zeroed (the round line omits them; context fill falls back to the estimate). A halt with no tools is unfinished: gather nudges when the model has not produced a draft (empty CoT hang, punctuation-only noise such as a run of `.` lines, or a last-line "let me…"); a halted long answer is kept. Across rounds, `act()` is gather/answer: tools stay on for up to `max_rounds` gather steps; a repeated tool set (exact name+args already run this turn) or that budget forces one tools-off answer. Eval threads use `eval_max_rounds` (default 8) instead of `max_rounds`.
@@ -303,26 +311,36 @@ Before the loop starts, `ensure_server()` (`LmsClient.ensure`) checks if LM Stud
 
 ## Goal loop
 
-**File:** `loop.py`
+**Files:** `loop.py`, `checks.py`
 
-`until` is a while-statement around isolated `act()` calls. The maker does not declare the goal done — an external check or a **fresh** eval thread does.
+`until` is a while-statement around isolated `act()` calls. The maker does not declare the goal done — exit codes or a **fresh** eval thread do.
 
 ```
 until goal:
-    maker  — isolated act() with the goal + prior handoff
-    if --check: run that shell command (exit 0 → pass; nonzero → next maker)
-    else: isolated eval act() with read-only tools (+ run_shell); last line STATUS: pass|fail|blocked
+    plan     — flags, or checks.py derives commands (goal text, project files,
+               repo docs, memory, proven history). Shown once on a TTY.
+    baseline — run the plan once (until_baseline). Unrunnable inferred commands
+               are dropped; unrunnable typed ones block. An inferred check that
+               already passes becomes a keep. A failing keep blocks.
+    maker    — isolated act() with the goal + prior handoff
+    check    — run the plan. A check that went fail → pass, with keeps and
+               advisory commands green, is done (no eval). Otherwise a failing
+               command returns to the maker. If nothing can prove the goal,
+               eval judges and every keep must still pass.
+    eval     — isolated act() with read-only tools; last line STATUS: pass|fail|blocked
     fail → next maker cycle; blocked → y/N gate; pass → optional memory mine → done
 ```
 
+- `checks.py` does not call the model. Trust is a property of the source: flags, goal text, project files, repo docs, user-stated memory, and proven history are authoritative. Observed or inferred memory, and CI lines whose program is not on `PATH`, are advisory — a failure sends the cycle back to the maker, a pass never finishes the run.
+- `--check` and `--keep` are repeatable. Either flag disables inference for that run. `check_inference: off` disables it globally. `until_baseline: off` restores direct gating: a passing check finishes the run, with no reclassification.
+- The plan is stored on the until log (`checks` on the meta row, then on the `baseline` or `plan` row). Resume reuses it and does not baseline again. A graph until-node copies the plan onto the node row's `verify` field.
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
 - Eval cannot `write_file`, `update_file`, `move_file`, `delete_file`, `remember`, `log_decision`, or `graph_add_edge` (`tools.READONLY_OMIT`). It may `run_shell` to verify; a destructive shell request there is simply `DENIED` under the until/graph `GatePolicy` and never re-asked.
-- `--check` fail (nonzero exit) goes straight back to maker — no eval turn. Check `DENIED:` is `blocked` → gate.
+- A failing check goes straight back to the maker — no eval turn. `DENIED:`, spawn `ERROR:`, and exit 126/127 are `blocked` → gate.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
-- Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role.
-- When `autonomous_snapshot` is `git` (default) and the workspace is a git repo, each maker step takes a temp-index snapshot before work: `refs/lmloop/<run-ts>/<step>` via `snapshot.py`. Untracked files are included; files over 20 MB are skipped and listed on the row. A clean tree records `snapshot_ref: HEAD` without creating a ref. Refs older than 14 days are pruned on run start.
+- Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role. Maker rows may include `snapshot_ref` (`HEAD` or `refs/lmloop/…`) from `snapshot.take_snapshot` when `autonomous_snapshot` is `git` and the workspace is a git repo.
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
 This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
@@ -336,8 +354,10 @@ This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`
 A graph is a list of named loops with **authored** sparse edges. Until is the inner node. There is no LLM router over a fully connected graph.
 
 ```
-node <name> skill <skill> [task…]     isolated act + eval STATUS: (read-only tools) unless --check
-node <name> until [--check cmd] <goal>  existing run_until
+node <name> skill <skill> [--check cmd] [--keep cmd] [task…]
+    isolated act + eval STATUS: (read-only tools) unless --check
+node <name> until [--check cmd] [--keep cmd] <goal>
+    existing run_until, including derived checks when no flag is set
 node <name> mine                      memory mine over this graph run's session logs
 edge <from> -> <to> [on pass|fail|blocked]
 ```
@@ -517,7 +537,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 |---------|-------------|
 | `lmloop` | Interactive REPL |
 | `lmloop "task"` | Task, then REPL prompt when stdin is a TTY (exits when piped) |
-| `lmloop until [--check cmd] <goal>` | Goal loop, then REPL prompt when stdin is a TTY |
+| `lmloop until [--check cmd] [--keep cmd] <goal>` | Goal loop (derived plan when no flag is given), then REPL prompt when stdin is a TTY |
 | `lmloop until` | Resume latest open until-run |
 | `lmloop graph <name>` | Authored workflow graph, then REPL prompt when stdin is a TTY |
 | `lmloop graph` | Resume latest open graph-run |

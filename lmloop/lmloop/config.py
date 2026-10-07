@@ -39,6 +39,7 @@ def utc_now() -> str:
 
 DEFAULTS = {
     "base_url": "http://127.0.0.1:1234/v1",
+    "api_key": "",  # empty = no Authorization header; see resolve_api_key()
     "model": "",  # empty = first model the server reports
     "max_rounds": 60,
     "max_continue_nudges": 2,  # auto-resume when model narrates next step without tools
@@ -54,7 +55,7 @@ DEFAULTS = {
     # (backed up to trash/), ask once per cycle for the rest; none = ask for
     # everything; all = never ask (unattended runs only)
     "autonomous_gates": "files",
-    "autonomous_snapshot": "git",  # git | off — temp-index refs under refs/lmloop/
+    "autonomous_snapshot": "git",  # git | off — temp-index refs under refs/lmloop/*
     "shell_timeout_s": 120,
     "web_timeout_s": 30,
     "max_tool_output": 12000,
@@ -65,6 +66,8 @@ DEFAULTS = {
     "eval_max_rounds": 8,  # gather rounds for until/graph eval act(); maker keeps max_rounds
     "until_max_steps": 12,  # maker cycles per until invocation before pause
     "until_mine": True,  # after until pass, mine learnings from the run
+    "check_inference": "auto",  # auto: derive a check plan when no --check/--keep; off: eval only
+    "until_baseline": "auto",  # auto: baseline and reclassify a non-empty plan; off: checks gate directly
     "graph_max_steps": 24,  # node entries per graph invocation before pause
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings
     "use_graph": False,  # opt-in knowledge-graph memory (JSONL nodes/edges)
@@ -83,6 +86,10 @@ def coerce_config_value(key: str, value):
     back to DEFAULTS). Unknown keys return None.
     """
     if key not in DEFAULTS:
+        return None
+    if key in ("check_inference", "until_baseline"):
+        if isinstance(value, str) and value.strip().lower() in ("auto", "off"):
+            return value.strip().lower()
         return None
     if key == "autonomous_snapshot":
         if isinstance(value, str):
@@ -151,6 +158,72 @@ def normalize_config(raw: dict) -> dict:
             continue
         out[key] = coerced
     return out
+
+
+def cfg_get(cfg: "dict | None", key: str):
+    """Return ``cfg[key]`` when the key is present, else ``DEFAULTS[key]``.
+
+    Prefer this over ``cfg.get(key) or default`` so legitimate zero values are
+    not replaced by the default.
+    """
+    if not cfg or key not in cfg:
+        return DEFAULTS[key]
+    return cfg[key]
+
+
+def cfg_int(cfg: "dict | None", key: str) -> int:
+    return int(cfg_get(cfg, key))
+
+
+def cfg_bool(cfg: "dict | None", key: str) -> bool:
+    return bool(cfg_get(cfg, key))
+
+
+def cfg_float(cfg: "dict | None", key: str) -> float:
+    return float(cfg_get(cfg, key))
+
+
+def cfg_str(cfg: "dict | None", key: str) -> str:
+    return str(cfg_get(cfg, key))
+
+
+def resolve_api_key(cfg: dict) -> str:
+    """Bearer token for OpenAI-compatible APIs (OpenRouter, etc.)."""
+    key = cfg_str(cfg, "api_key").strip()
+    if key:
+        return key
+    for env_name in ("OPENROUTER_API_KEY", "LMLOOP_API_KEY"):
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def api_auth_headers(cfg: dict) -> dict:
+    key = resolve_api_key(cfg)
+    if not key:
+        return {}
+    return {"Authorization": f"Bearer {key}"}
+
+
+def openrouter_extra_headers() -> dict:
+    """Optional OpenRouter ranking headers from the environment."""
+    out = {}
+    referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+    title = os.environ.get("OPENROUTER_X_TITLE", "").strip()
+    if referer:
+        out["HTTP-Referer"] = referer
+    if title:
+        out["X-Title"] = title
+    return out
+
+
+def chat_request_headers(cfg: dict, *, stream: bool) -> dict:
+    headers = {"Content-Type": "application/json"}
+    headers.update(api_auth_headers(cfg))
+    headers.update(openrouter_extra_headers())
+    headers["Accept"] = "text/event-stream" if stream else "application/json"
+    return headers
 
 
 def load_config() -> dict:

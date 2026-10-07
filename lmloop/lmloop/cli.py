@@ -2,7 +2,7 @@
 
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
-    lmloop until [--check cmd] goal work until a check or evaluator passes; REPL on a TTY
+    lmloop until [--check cmd] [--keep cmd] goal  work until checks or an evaluator pass; REPL on a TTY
     lmloop until                    resume latest open until-run
     lmloop graph <name>             run an authored workflow graph; REPL on a TTY
     lmloop graph                    resume latest open graph-run
@@ -48,7 +48,15 @@ from .commands import (
     cli_subcommand_metas,
     cli_subcommand_names,
 )
-from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
+from .config import (
+    CONFIG_PATH,
+    DEFAULTS,
+    cfg_bool,
+    cfg_int,
+    coerce_config_value,
+    load_config,
+    save_config,
+)
 from .repl import mine_sessions, run_repl
 from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
 from . import usage
@@ -309,7 +317,7 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         console.info(knowledge_graph.inspect_report(cfg))
         return 0
     if verb == "reconcile":
-        if not cfg.get("use_graph"):
+        if not cfg_bool(cfg, "use_graph"):
             console.info(knowledge_graph.MSG_GRAPH_OFF)
             return 0
         knowledge_graph.ensure_graph(cfg)
@@ -336,7 +344,7 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
             echo_tool=console.tool_call,
             echo_round=console.round_usage,
             context_limit=server.get_context_limit(model, cfg),
-            context_reserve=int(cfg.get("context_reserve") or 2048),
+            context_reserve=cfg_int(cfg, "context_reserve"),
             workspace_root=Path.cwd().resolve(),
             log_label="/memory reconcile",
         )
@@ -359,7 +367,7 @@ def cmd_history(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_models(cfg: dict, words: list, console: Console) -> int:
-    models = server.list_models(cfg["base_url"])
+    models = server.list_models(cfg["base_url"], cfg=cfg)
     console.info("\n".join(models) if models else f"(no server at {cfg['base_url']} or nothing loaded)")
     return 0
 
@@ -368,13 +376,13 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
     if not words:
         run = loop_mod.latest_open_until_run()
         if run is None:
-            console.error("usage: lmloop until [--check <cmd>] <goal>")
+            console.error("usage: lmloop until [--check <cmd>] [--keep <cmd>] <goal>")
             console.info("  no open until-run to resume")
             return 1
         return _cli_run_until(cfg, console, run)
-    goal, check_cmd, err = loop_mod.parse_until_args(words)
-    if err:
-        console.error(err)
+    parsed = loop_mod.parse_until_args(words)
+    if parsed.err:
+        console.error(parsed.err)
         return 1
     try:
         model = server.ensure_server(cfg, echo=console.info)
@@ -382,8 +390,10 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
         console.error(f"error: {e}")
         return 1
     hint = loop_mod.superseded_until_hint()
-    run = loop_mod.UntilRun.create(goal, check_cmd=check_cmd)
-    console.hint(f"[until · {goal}]")
+    run = loop_mod.UntilRun.create(
+        parsed.goal, checks=parsed.checks, keeps=parsed.keeps,
+    )
+    console.hint(f"[until · {parsed.goal}]")
     if hint:
         console.hint(hint)
     return _cli_run_until(cfg, console, run, model=model)
@@ -413,10 +423,10 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
         context_limit=server.get_context_limit(model, cfg),
-        context_reserve=int(cfg.get("context_reserve") or 2048),
+        context_reserve=cfg_int(cfg, "context_reserve"),
         workspace_root=Path.cwd().resolve(),
         ask_gate=ask_until_gate,
-        mine=mine if cfg.get("until_mine", True) else None,
+        mine=mine if cfg_bool(cfg, "until_mine") else None,
     )
     loaded = loop_mod.UntilRun.load(run.path)
     if sys.stdin.isatty():
@@ -484,10 +494,10 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
         context_limit=server.get_context_limit(model, cfg),
-        context_reserve=int(cfg.get("context_reserve") or 2048),
+        context_reserve=cfg_int(cfg, "context_reserve"),
         workspace_root=Path.cwd().resolve(),
         ask_gate=ask_until_gate,
-        mine=mine if cfg.get("graph_mine", True) else None,
+        mine=mine if cfg_bool(cfg, "graph_mine") else None,
     )
     loaded = graph_mod.GraphRun.load(run.path)
     if sys.stdin.isatty():
@@ -568,7 +578,7 @@ def main(argv=None) -> int:
     cfg = load_config()
     if args.model:
         cfg["model"] = args.model
-    console = Console(cfg.get("color", True))
+    console = Console(cfg_bool(cfg, "color"))
 
     words = ([args.cmd] if args.cmd else []) + list(args.args)
     sub = words[0] if words else ""
