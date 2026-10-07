@@ -27,6 +27,7 @@ from .status import (
     status as status_line,
 )
 from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate, write_clipboard
+from . import usage
 
 _THINKING_HISTORY_MAX = 30
 _REF_CONTENTS_HEADER = (
@@ -1264,6 +1265,8 @@ def _suggest_slash_command(line: str) -> "str | None":
 
 def _dispatch_slash(state: SessionState, line: str) -> bool:
     """Handle a slash command. Returns False to exit REPL."""
+    stem = line.split(None, 1)[0].lstrip("/")
+    usage.record("repl.command", command=stem)
     for cmd in SLASH_COMMANDS:
         if cmd.exits and line in (cmd.name,):
             return False
@@ -1337,6 +1340,7 @@ def run_repl(cfg: dict, console: "Console | None" = None,
         state.prompt_session = prompt_session
 
     console.banner(slug)
+    usage.record("repl.session", interactive=interactive, skill=skill or "")
 
     if graph_run is not None:
         attach_graph_result(state, graph_run)
