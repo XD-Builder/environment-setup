@@ -19,11 +19,12 @@ lmloop/
 │   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (shipped opt-in)
 │   ├── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
 │   ├── DESIGN_LLM_CALLING.md   # completions HTTP + act() budgets (shipped)
-│   ├── DESIGN_FILE_READING.md  # @path gift + read_file header (proposal)
-│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # opt-in --docker exec + acceptance gates (proposed)
-│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # model lock, DAG fan-out/joins, flow mining, TUI canvas (proposed)
-│   ├── DESIGN_MEMORY_RETRIEVAL.md  # memory hot paths, ranking, FTS5 index, rerank (proposed)
-│   ├── DESIGN_ROADMAP.md       # final review: build order, cuts, config budget (proposed)
+│   ├── DESIGN_FILE_READING.md  # @path gift + read_file header (shipped)
+│   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (partial)
+│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks shipped; --docker proposed
+│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, text canvas shipped; TUI partial
+│   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
+│   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps → design loop (partial)
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
 │   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
@@ -47,7 +48,10 @@ lmloop/
 │   ├── tools.py                # tool registry: specs + Python impls
 │   ├── web.py                  # web_search / fetch_url + HTML parsers
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
+│   ├── memory_index.py         # derived FTS5/scan index (memory_index config)
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
+│   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
+│   ├── exec.py                 # shell backend seam (LocalBackend; Docker proposed)
 │   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
