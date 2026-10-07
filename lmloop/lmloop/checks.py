@@ -917,6 +917,53 @@ def command_parses(cmd: str) -> bool:
     return bool(ShellCommand(cmd).argv)
 
 
+PROPOSE_PROMPT = """You propose verification commands for an autonomous coding agent.
+Goal:
+{goal}
+
+Reply with at most TWO lines. Each line is one shell command that could verify the goal.
+No markdown, no numbering, no explanations."""
+
+
+def plan_needs_proposal(checks: tuple) -> bool:
+    """True when no authoritative check can prove the goal (V8)."""
+    if not checks:
+        return True
+    for item in checks:
+        if (
+            item.role == ROLE_CHECK
+            and item.tier == TIER_AUTHORITATIVE
+            and item.proves
+        ):
+            return False
+    return True
+
+
+def parse_proposed_commands(text: str) -> tuple:
+    """Up to two advisory checks from a no-tools model reply."""
+    rows: list[PlannedCheck] = []
+    for line in (text or "").splitlines():
+        cmd = line.strip().strip("`-")
+        if not cmd or cmd.startswith("#"):
+            continue
+        if not command_parses(cmd):
+            continue
+        argv = _argv(cmd)
+        if argv and not argv[0].startswith(("./", "/")) and not shutil.which(argv[0]):
+            continue
+        rows.append(PlannedCheck(
+            cmd=cmd,
+            role=ROLE_CHECK,
+            source="proposed",
+            tier=TIER_ADVISORY,
+            reason="proposed for this goal",
+            proves=False,
+        ))
+        if len(rows) >= 2:
+            break
+    return tuple(rows)
+
+
 def _test_paths_for_change(rel: str, root: Path) -> list[Path]:
     p = Path(rel)
     out: list[Path] = []

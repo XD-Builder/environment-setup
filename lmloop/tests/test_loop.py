@@ -196,10 +196,12 @@ class UntilRunGraphTests(unittest.TestCase):
 class UntilRunnerTests(unittest.TestCase):
     def _run(self, root: Path, cfg, fake_act, **kwargs):
         echo_status = kwargs.pop("echo_status", lambda *_a, **_k: None)
+        propose = kwargs.pop("propose_checks", ())
         with patch("lmloop.loop.project_dir", return_value=root), \
              patch("lmloop.memory.project_dir", return_value=root), \
              patch("lmloop.loop.agent.act", side_effect=fake_act), \
-             patch("lmloop.loop.skills.system_prompt", return_value="sys"):
+             patch("lmloop.loop.skills.system_prompt", return_value="sys"), \
+             patch("lmloop.loop._model_propose_checks", return_value=propose):
             run = UntilRun.create(
                 kwargs.pop("goal", "make it work"),
                 check_cmd=kwargs.pop("check_cmd", None),
@@ -368,7 +370,8 @@ class UntilRunnerTests(unittest.TestCase):
             with patch("lmloop.loop.project_dir", return_value=root), \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  patch("lmloop.loop.agent.act", side_effect=fake_act), \
-                 patch("lmloop.loop.skills.system_prompt", side_effect=fake_prompt):
+                 patch("lmloop.loop.skills.system_prompt", side_effect=fake_prompt), \
+                 patch("lmloop.loop._model_propose_checks", return_value=()):
                 run = UntilRun.create("make it work")
                 run_until(
                     _cfg(), "m", run=run, echo=lambda *_a, **_k: None,

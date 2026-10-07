@@ -22,6 +22,9 @@ from .checks import (
     infer_plan,
     judge_cycle,
     order_cycle_checks,
+    parse_proposed_commands,
+    plan_needs_proposal,
+    PROPOSE_PROMPT,
     shell_evidence_table,
 )
 from .config import DEFAULTS, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
@@ -523,8 +526,58 @@ def _read_plan_line(prompt: str = "") -> str:
         return ""
 
 
+def _model_propose_checks(
+    cfg: dict, model: str, goal: str, root: Path, echo_status,
+    *, memory_block: "str | None", clock_now,
+) -> tuple:
+    """One no-tools call; returns up to two advisory PlannedChecks (V8)."""
+    prompt = PROPOSE_PROMPT.format(goal=goal)
+    stats: dict = {}
+    result = isolated_act(
+        cfg, model, prompt,
+        confirm_gate=None,
+        echo=echo_status,
+        echo_status=echo_status,
+        workspace_root=root,
+        log_label="/until propose-checks",
+        no_tools=True,
+        max_rounds=1,
+        clock_now=clock_now,
+        memory_block=memory_block,
+        usage_stats=stats,
+        model_override=eval_model_name(cfg, model),
+    )
+    if result is None:
+        return ()
+    messages, _session = result
+    return parse_proposed_commands(last_assistant(messages))
+
+
+def _maybe_propose_checks(
+    planned: list, cfg: dict, model: str, goal: str, root: Path,
+    echo_status, *, memory_block, clock_now,
+) -> list:
+    if not _choice_on(cfg, "check_inference"):
+        return planned
+    if not plan_needs_proposal(tuple(planned)):
+        return planned
+    proposed = _model_propose_checks(
+        cfg, model, goal, root, echo_status,
+        memory_block=memory_block, clock_now=clock_now,
+    )
+    if not proposed:
+        return planned
+    for item in proposed:
+        echo_status(
+            f"  advisory  {item.cmd}\n            {item.reason}",
+        )
+    return planned + list(proposed)
+
+
 def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
-                  interactive: bool, confirm_gate) -> None:
+                  interactive: bool, confirm_gate, *, model: str,
+                  memory_block: "str | None" = None,
+                  clock_now=None) -> None:
     """Infer or reuse a plan, then baseline it once. Resume does not repeat."""
     if any(ev.get("role") in ("plan", "baseline") for ev in run.events):
         return
@@ -544,7 +597,11 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
             echo_status(format_plan(run.goal, tuple(planned)))
     payload = [item.as_dict() for item in planned]
     if not planned or not _choice_on(cfg, "until_baseline"):
-        run.append("plan", "ready", checks=payload)
+        planned = _maybe_propose_checks(
+            planned, cfg, model, run.goal, root, echo_status,
+            memory_block=memory_block, clock_now=clock_now,
+        )
+        run.append("plan", "ready", checks=[item.as_dict() for item in planned])
         return
     echo_status(status_mod.msg_until_baseline())
     results = run_plan_commands(
@@ -556,6 +613,20 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
     for note in outcome.notes:
         echo_status(status_mod.msg_until_note(note))
     stored = outcome.checks if outcome.status == "ready" else tuple(planned)
+    stored_list = list(stored)
+    stored_list = _maybe_propose_checks(
+        stored_list, cfg, model, run.goal, root, echo_status,
+        memory_block=memory_block, clock_now=clock_now,
+    )
+    if len(stored_list) > len(stored):
+        extra = stored_list[len(stored):]
+        extra_results = run_plan_commands(
+            cfg, [item.cmd for item in extra], confirm_gate, root,
+        )
+        for row in extra_results:
+            echo_status(row["output"])
+        results = list(results) + extra_results
+    stored = tuple(stored_list)
     run.append(
         "baseline", outcome.status,
         handoff="\n".join(outcome.notes),
@@ -564,7 +635,7 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
     )
 
 
-def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "list[str]":
+def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "tuple[list[str], list[str]]":
     """Ask once for the irreversible actions a GatePolicy denied this cycle.
 
     Returns the approved commands (now pre-approved on ``policy``), or [] when
@@ -572,18 +643,18 @@ def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "l
     said no. Never raises except KeyboardInterrupt (caller pauses the run).
     """
     if not isinstance(policy, tools.GatePolicy):
-        return []
+        return [], []
     policy.expire_approvals()  # the step they were approved for has ended
     denied = policy.take_denied()
     if not denied:
-        return []
+        return [], []
     echo_status(status_mod.msg_gates_denied(len(denied), label))
     for command in denied:
         echo_status("    " + command)
     if ask_gate is None or not ask_gate(status_mod.gates_denied_prompt(len(denied))):
-        return []
+        return [], list(denied)
     policy.approve(denied)
-    return denied
+    return list(denied), []
 
 
 def drop_denied(policy) -> None:
@@ -661,7 +732,10 @@ def run_until(
     changed_files: list[str] = []
 
     try:
-        _prepare_plan(run, cfg, root, echo_status, interactive, gate)
+        _prepare_plan(
+            run, cfg, root, echo_status, interactive, gate,
+            model=model, memory_block=memory_block, clock_now=clock_now,
+        )
         while True:
             if run.is_done():
                 return run
@@ -717,14 +791,16 @@ def run_until(
                         ]
                 except OSError:
                     pass
+                denied_log = list(gate.denied) if isinstance(gate, tools.GatePolicy) else []
                 run.append(
                     "maker", "next",
                     handoff=last_assistant(messages),
                     session=str(session_log),
                     snapshot_ref=snap.ref,
                     usage=dict(step_stats),
+                    denied=denied_log or None,
                 )
-                approved = boundary_approval(gate, ask_gate, echo_status)
+                approved, _unused = boundary_approval(gate, ask_gate, echo_status)
                 if approved:
                     run.append(APPROVE_ROLE, "yes", handoff=json.dumps(approved))
                 continue

@@ -3,6 +3,7 @@
 Learnings, decisions, sessions, and checkpoints stay in ``memory.py``.
 """
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,15 @@ GRAPH_EDGE_TYPES = frozenset({
     "uses_skill", "related_to", "supersedes",
 })
 MSG_GRAPH_OFF = "knowledge graph is off — `lmloop config set use_graph true`"
+CANVAS_NODE_CAP = 2000
+_TYPE_BAND = {
+    "session": 0.0,
+    "learning": 1.0,
+    "decision": 2.0,
+    "file": 3.0,
+    "skill": 4.0,
+    "concept": 5.0,
+}
 
 # Per-project fingerprint: skip _backfill when learnings/decisions/sessions unchanged.
 _BACKFILL_FP: dict[str, tuple] = {}
@@ -70,6 +80,27 @@ class GraphView:
     adjacency: dict
 
 
+@dataclass(frozen=True)
+class CanvasNode:
+    id: str
+    type: str
+    label: str
+    detail: str
+    confidence: int
+    ts: str
+    degree: int
+    x: float
+    y: float
+
+
+@dataclass(frozen=True)
+class CanvasView:
+    nodes: tuple
+    edges: tuple
+    truncated: bool
+    total_nodes: int
+
+
 @dataclass
 class KnowledgeGraph:
     """Opt-in JSONL knowledge graph for one project slug."""
@@ -102,6 +133,75 @@ class KnowledgeGraph:
         live = self.nodes()
         edge_rows = self._live_edges(live)
         return GraphView(live, edge_rows, self._adjacency(edge_rows))
+
+    def canvas_view(
+        self,
+        query: str = "",
+        types: "tuple[str, ...]" = (),
+        limit: int = CANVAS_NODE_CAP,
+    ) -> CanvasView:
+        """Filter, cap, and lay out nodes for the terminal canvas (pure function)."""
+        view = self.load_view()
+        terms = [t.lower() for t in memory._query_terms(query)]
+        type_filter = frozenset(types) if types else None
+        candidates: list[tuple] = []
+        for ident, row in view.nodes.items():
+            typ = row.get("type") or ""
+            if type_filter and typ not in type_filter:
+                continue
+            label = (row.get("label") or row.get("key") or "").strip()
+            detail = label
+            if typ == "learning":
+                detail = row.get("label") or row.get("insight") or label
+            hay = f"{row.get('key', '')} {label} {detail}".lower()
+            if terms and not any(t in hay for t in terms):
+                continue
+            degree = len(view.adjacency.get(ident, []))
+            candidates.append((ident, row, degree, detail))
+        candidates.sort(key=lambda item: (item[0][0], item[0][1]))
+        total = len(candidates)
+        truncated = total > limit
+        if truncated:
+            candidates = candidates[:limit]
+        by_band: dict[float, list] = {}
+        for ident, row, degree, detail in candidates:
+            band = _TYPE_BAND.get(row.get("type") or "", 6.0)
+            by_band.setdefault(band, []).append((ident, row, degree, detail))
+        canvas_nodes: list[CanvasNode] = []
+        for band in sorted(by_band):
+            row_items = sorted(
+                by_band[band],
+                key=lambda item: (-item[2], item[0][1]),
+            )
+            for index, (ident, row, degree, detail) in enumerate(row_items):
+                node_id = f"{ident[0]}:{ident[1]}"
+                jitter = int(hashlib.sha1(node_id.encode()).hexdigest()[:8], 16)
+                x = float(index) + (jitter % 100) / 500.0
+                y = band + ((jitter >> 8) % 100) / 500.0
+                canvas_nodes.append(CanvasNode(
+                    id=node_id,
+                    type=row.get("type") or "",
+                    label=(row.get("label") or row.get("key") or "")[:80],
+                    detail=detail[:500],
+                    confidence=int(row.get("confidence") or 0),
+                    ts=str(row.get("ts") or row.get("date") or ""),
+                    degree=degree,
+                    x=x,
+                    y=y,
+                ))
+        edge_out: list[tuple[str, str, str]] = []
+        ids = {n.id for n in canvas_nodes}
+        for e in view.edges:
+            a = f"{e['from_type']}:{e['from_key']}"
+            b = f"{e['to_type']}:{e['to_key']}"
+            if a in ids and b in ids:
+                edge_out.append((a, b, e.get("edge_type") or ""))
+        return CanvasView(
+            nodes=tuple(canvas_nodes),
+            edges=tuple(edge_out),
+            truncated=truncated,
+            total_nodes=total,
+        )
 
     def add_node(self, typ: str, key: str, label: str = "", confidence: int = 7,
                  source: str = "observed", extra: "dict | None" = None) -> dict:
@@ -536,6 +636,27 @@ def inspect_report(cfg: dict, slug: "str | None" = None) -> str:
         return MSG_GRAPH_OFF
     KnowledgeGraph(slug).ensure(cfg)
     return graph_stats(slug) + "\n" + contradiction_clusters(slug)
+
+
+def format_canvas_text(cfg: dict, query: str = "", slug: "str | None" = None) -> str:
+    """Text fallback when the full-screen canvas is unavailable."""
+    if not cfg_bool(cfg, "use_graph"):
+        return MSG_GRAPH_OFF
+    kg = KnowledgeGraph(slug)
+    kg.ensure(cfg)
+    view = kg.canvas_view(query=query)
+    lines = [
+        f"canvas · {len(view.nodes)} nodes shown"
+        + (f" (truncated from {view.total_nodes})" if view.truncated else ""),
+        "",
+    ]
+    for node in sorted(view.nodes, key=lambda n: (n.y, n.x))[:60]:
+        lines.append(
+            f"  ({node.type}) {node.label} · deg {node.degree} · ({node.x:.1f},{node.y:.1f})",
+        )
+    if len(view.nodes) > 60:
+        lines.append(f"  … {len(view.nodes) - 60} more (install prompt_toolkit for pan/zoom)")
+    return "\n".join(lines)
 
 
 def try_add_graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
