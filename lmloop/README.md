@@ -21,7 +21,8 @@ under `~/.lmloop/`.
 bash lmloop/setup-lmloop.sh
 ```
 
-Setup creates `lmloop/.venv`, installs `requirements.txt` (prompt_toolkit, rich, ddgs), and
+Setup requires **Python 3.14+** (see `lmloop/.python-version`). It creates
+`lmloop/.venv`, installs `requirements.txt` (prompt_toolkit, rich, ddgs), and
 symlinks `lmloop` into `~/.local/bin`.
 
 Run tests:
