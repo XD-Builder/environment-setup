@@ -41,7 +41,8 @@ lmloop/
 │   ├── web.py                  # web_search / fetch_url + HTML parsers
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
-│   ├── config.py               # ~/.lmloop/config.json, project slug, utc_now
+│   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
+│   ├── context.py              # live-thread file manifest for /context
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
 │   ├── markdown_view.py        # render assistant markdown (no quote gutter)

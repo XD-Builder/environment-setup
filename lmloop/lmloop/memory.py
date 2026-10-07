@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import project_dir, utc_now
+from .config import cfg_bool, cfg_int, project_dir, utc_now
 from .extract import flatten_content
 
 LEARNING_TYPES = ("pattern", "pitfall", "preference", "architecture", "tool", "operational")
@@ -273,7 +273,7 @@ def get_learnings(query: str = "", limit: "int | None" = 20,
 def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10,
                   slug: "str | None" = None, cfg: "dict | None" = None) -> str:
     """Shared keyword search over learnings + decisions (used by recall_memory)."""
-    if cfg and cfg.get("use_graph"):
+    if cfg and cfg_bool(cfg, "use_graph"):
         kg = _kg(slug)
         kg.ensure(cfg)
         return kg.search(
@@ -580,7 +580,7 @@ def memory_hud(cfg: dict, slug: "str | None" = None) -> MemoryHud:
     return MemoryHud(
         learnings=len(get_learnings(limit=None, slug=slug)),
         decisions=len(get_decisions(limit=None, slug=slug)),
-        graph_on=bool(cfg.get("use_graph")) and _graph_populated(slug),
+        graph_on=cfg_bool(cfg, "use_graph") and _graph_populated(slug),
         checkpoint=recent_checkpoint(slug=slug) is not None,
     )
 
@@ -616,14 +616,14 @@ def _injected_snapshot(cfg: dict, slug: "str | None" = None):
         kg.ensure(cfg)
         graph_view = kg.load_view()
     decisions = []
-    for row in get_decisions(limit=cfg.get("context_decisions", 6), slug=slug):
+    for row in get_decisions(limit=cfg_int(cfg, "context_decisions"), slug=slug):
         neighbors = (
             kg.neighbor_lines(_node_id("decision", row["id"]), graph_view)
             if graph_view is not None else []
         )
         decisions.append((row, neighbors))
     learnings = []
-    for row in get_learnings(limit=cfg.get("context_learnings", 8), slug=slug):
+    for row in get_learnings(limit=cfg_int(cfg, "context_learnings"), slug=slug):
         neighbors = (
             kg.neighbor_lines(_node_id("learning", row["key"]), graph_view)
             if graph_view is not None else []
