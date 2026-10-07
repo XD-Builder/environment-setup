@@ -16,6 +16,7 @@ README_CONFIG_KEYS = frozenset({
     "base_url", "model", "max_rounds", "eval_max_rounds", "max_continue_nudges",
     "temperature", "timeout_s", "stream", "context_learnings", "context_decisions",
     "confirm_shell", "confirm_destructive", "confirm_shell_syntax", "autonomous_gates",
+    "autonomous_snapshot",
     "shell_timeout_s", "web_timeout_s", "max_tool_output", "auto_start_server", "color",
     "context_length", "context_reserve", "until_max_steps", "until_mine",
     "graph_max_steps", "graph_mine", "use_graph", "vision",

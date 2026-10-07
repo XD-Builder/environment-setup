@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import agent, memory, server, skills, status as status_mod, tools
+from . import agent, memory, server, skills, snapshot, status as status_mod, tools
 from .config import DEFAULTS, cfg_bool, cfg_int, project_dir, utc_now
 from .tools import run_shell, shell_confirm_flags
 
@@ -261,16 +261,19 @@ class UntilRun:
         self.events.append(row)
 
     def append(self, role: str, status: str, handoff: str = "",
-               session: str = "") -> None:
+               session: str = "", snapshot_ref: str = "") -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
-        self._write({
+        row = {
             "ts": utc_now(),
             "step": step,
             "role": role,
             "status": status,
             "handoff": handoff,
             "session": session,
-        })
+        }
+        if snapshot_ref:
+            row["snapshot_ref"] = snapshot_ref
+        self._write(row)
 
     def last_work(self) -> "dict | None":
         for ev in reversed(self.events):
@@ -488,6 +491,11 @@ def run_until(
                     echo_status(status_mod.msg_until_max_steps())
                     return run
                 makers_this_call += 1
+                snap = snapshot.take_snapshot(
+                    cfg, root,
+                    run_label=run.path.stem,
+                    step=makers_this_call,
+                )
                 echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
                 prompt = MAKER_PROMPT.format(
                     goal=run.goal,
@@ -509,6 +517,7 @@ def run_until(
                     "maker", "next",
                     handoff=last_assistant(messages),
                     session=str(session_log),
+                    snapshot_ref=snap.ref,
                 )
                 approved = boundary_approval(gate, ask_gate, echo_status)
                 if approved:

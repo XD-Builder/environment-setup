@@ -250,6 +250,7 @@ zsh completion for `config set` is generated from these keys.
 | `confirm_destructive` | `true` | y/N for rm -rf, sudo, DROP TABLE, force-push, … |
 | `confirm_shell_syntax` | `false` | y/N for pipes/redirection; off to avoid fatigue |
 | `autonomous_gates` | `files` | Gates inside `until` / `graph` runs. `files`: auto-approve backed-up in-workspace overwrite/edit/move/delete, ask once per maker step for the rest. `none`: ask for everything. `all`: never ask (unattended only). |
+| `autonomous_snapshot` | `git` | Before each maker step in `until` / `graph`, record a git snapshot under `refs/lmloop/` (temp index; does not touch your index). `off` disables; non-git workspaces skip silently. |
 | `shell_timeout_s` | `120` | `run_shell` timeout |
 | `web_timeout_s` | `30` | `web_search` / `fetch_url` timeout |
 | `max_tool_output` | `12000` | Truncate tool results (chars) |
@@ -275,6 +276,7 @@ zsh completion for `config set` is generated from these keys.
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
 | `DENIED: the user declined to overwrite …` | `write_file` on an existing file asks first. Say `y`, or let the model use `update_file` (the intended path for edits). |
 | A file was overwritten or deleted by mistake | The tool result and the dim REPL line cite the backup under `~/.lmloop/projects/<slug>/trash/<stamp>/`. Copy it back (or ask the model to `move_file` it back). Backups are pruned after 14 days. |
+| Autonomous run damaged the workspace | Each maker row in `until/<ts>.jsonl` or `graphs/<name>/<ts>.jsonl` may include `snapshot_ref` (`HEAD` or `refs/lmloop/...`). Restore with `git restore --source=<ref> -- .` or `git checkout <ref> -- <path>`. Refs older than 14 days are pruned; `git push` does not send `refs/lmloop/*` by default. |
 | `/until` keeps asking y/N | Recoverable file ops auto-approve by default; the ask is for destructive shell or outside-workspace writes, once per maker step. `lmloop config set autonomous_gates all` silences it for unattended runs; `none` asks for everything. |
 | Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
