@@ -194,7 +194,7 @@ class LmloopCompleter(Completer):
                 )
             return
 
-        cmds = list(self._commands_provider())
+        cmds = _completion_commands(list(self._commands_provider()))
         choices = _command_arg_choices(text_before, word, cmds)
         if choices is not None:
             prefix = "" if word.startswith("/") else word
@@ -282,6 +282,14 @@ def _in_skill_arg(text_before: str, word: str) -> bool:
     return False
 
 
+def _completion_commands(commands: list) -> list:
+    """Slash rows visible in ``/`` completion (core tier, not hidden)."""
+    return [
+        cmd for cmd in commands
+        if not getattr(cmd, "hidden", False) and not getattr(cmd, "advanced", False)
+    ]
+
+
 def _command_arg_choices(text_before: str, word: str, commands: list) -> "list[str] | None":
     """First-arg completions from ``CommandMeta.arg_choices`` / ``SlashCommand``."""
     if word.startswith("/"):
@@ -289,7 +297,11 @@ def _command_arg_choices(text_before: str, word: str, commands: list) -> "list[s
     stripped = text_before.lstrip()
     for cmd in commands:
         name = cmd.name if str(cmd.name).startswith("/") else "/" + cmd.name
-        choices = getattr(cmd, "arg_choices", ()) or ()
+        choices = (
+            getattr(cmd, "completion_arg_choices", ())
+            or getattr(cmd, "arg_choices", ())
+            or ()
+        )
         if not choices:
             continue
         if stripped != name and not stripped.startswith(name + " "):

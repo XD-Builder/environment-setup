@@ -24,14 +24,14 @@ from .steer import format_current_time
 from .web import DEFAULT_WEB_TIMEOUT_S
 
 # --- Limits (module defaults; some overridable via config in build_tools) ---
-MAX_OUTPUT = 12000  # chars returned to the model per tool call
+MAX_OUTPUT = config.DEFAULTS["max_tool_output"]  # chars returned to the model per tool call
 MAX_READ_LINES = 400
 TOOL_READ_FILE = "read_file"
 MAX_SEARCH_MATCHES = 50
 MAX_SEARCH_CONTEXT = 5
 MAX_FIND_RESULTS = 200
 UPDATE_DIFF_LINES = 60
-DEFAULT_SHELL_TIMEOUT_S = 120
+DEFAULT_SHELL_TIMEOUT_S = config.DEFAULTS["shell_timeout_s"]
 MAX_CONCURRENT_TOOLS = 8
 
 _TRUNCATE_HINT = (
@@ -67,7 +67,7 @@ _GATE_KINDS: "dict[str, tuple[str, str]]" = {
     GATE_DELETE: ("delete a file", GATE_RECOVERABLE),
 }
 AUTONOMOUS_GATE_MODES = ("files", "none", "all")
-DEFAULT_AUTONOMOUS_GATES = "files"
+DEFAULT_AUTONOMOUS_GATES = config.DEFAULTS["autonomous_gates"]
 
 # Pre-image backups: project_dir()/trash/<process-stamp>/<workspace-relative path>
 TRASH_DIR = "trash"
@@ -154,7 +154,7 @@ class GatePolicy:
 
     @classmethod
     def from_config(cls, cfg: dict, fallback=None, echo_status=None) -> "GatePolicy":
-        mode = str(cfg.get("autonomous_gates") or DEFAULT_AUTONOMOUS_GATES).lower()
+        mode = config.cfg_str(cfg, "autonomous_gates").lower()
         return cls(mode, fallback=fallback, echo_status=echo_status)
 
     def _say(self, text: str) -> None:
@@ -1056,11 +1056,11 @@ READONLY_OMIT = frozenset({
 
 def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
     """Return (confirm_destructive, confirm_shell_syntax). confirm_shell is master."""
-    if cfg.get("confirm_shell") is False:
+    if config.cfg_bool(cfg, "confirm_shell") is False:
         return False, False
     return (
-        bool(cfg.get("confirm_destructive", True)),
-        bool(cfg.get("confirm_shell_syntax", False)),
+        config.cfg_bool(cfg, "confirm_destructive"),
+        config.cfg_bool(cfg, "confirm_shell_syntax"),
     )
 
 
@@ -1078,10 +1078,10 @@ def build_tools(cfg: dict, confirm_gate=None,
     """
     global _TOOL_DEFS, MAX_OUTPUT
 
-    max_out = int(cfg.get("max_tool_output") or MAX_OUTPUT)
+    max_out = config.cfg_int(cfg, "max_tool_output")
     MAX_OUTPUT = max(1000, max_out)
-    shell_timeout = int(cfg.get("shell_timeout_s") or DEFAULT_SHELL_TIMEOUT_S)
-    web_timeout = int(cfg.get("web_timeout_s") or DEFAULT_WEB_TIMEOUT_S)
+    shell_timeout = config.cfg_int(cfg, "shell_timeout_s")
+    web_timeout = config.cfg_int(cfg, "web_timeout_s")
     confirm_destructive, confirm_shell_syntax = shell_confirm_flags(cfg)
     gate = confirm_gate  # may be None when confirms disabled
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
@@ -1342,7 +1342,7 @@ def build_tools(cfg: dict, confirm_gate=None,
         ),
     ]
     _TOOL_DEFS = {d.name: d for d in defs}
-    if not cfg.get("use_graph"):
+    if not config.cfg_bool(cfg, "use_graph"):
         defs = [d for d in defs if d.name != "graph_add_edge"]
     if readonly:
         defs = [d for d in defs if d.name not in READONLY_OMIT]
@@ -1459,8 +1459,11 @@ def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
 
 
 def dispatch(impls: dict, name: str, arguments: str) -> str:
+    from . import usage
+
     if not (name or "").strip():
         return "ERROR: empty tool name"
+    usage.record("tool", name=name)
     fn = impls.get(name)
     if not fn:
         return f"ERROR: unknown tool {name}"

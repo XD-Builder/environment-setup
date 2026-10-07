@@ -9,15 +9,15 @@
     lmloop skills [names]           list skill prompts (names = one per line)
     lmloop skills new <name> [brief]  draft a skill with AI, review, then save
     lmloop skill <name> [task]      start with a skill
-    lmloop retro [N]                alias for memory mine
-    lmloop memory [query]           peek curated learnings (read-only)
-    lmloop memory list              top 5 active learnings
-    lmloop memory decisions         top 3 active decisions
+    lmloop memory [query]           peek dashboard or search learnings
+    lmloop memory list              same dashboard (top learnings + decisions)
+    lmloop memory decisions         top active decisions
     lmloop memory dump              readable view of injected memory
     lmloop memory mine [N]          mine last N sessions into learnings (writes)
-    lmloop memory graph             knowledge-graph stats (use_graph)
+    lmloop memory kg                knowledge-graph stats (use_graph)
     lmloop memory reconcile         review contradicts clusters (use_graph)
-    lmloop decisions                peek durable project decisions (read-only)
+    lmloop retro [N]                deprecated — use memory mine
+    lmloop decisions                deprecated — use memory decisions
     lmloop history                  list past session transcript files
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
@@ -25,12 +25,12 @@
 
 Project memory commands:
 
-    memory            peek curated learnings (read-only); list | decisions | dump
+    memory            peek dashboard; list | decisions | dump | kg | mine | reconcile
     memory mine [N]   mine last N sessions into learnings (writes memory)
-    memory graph      knowledge-graph stats (requires use_graph)
+    memory kg         knowledge-graph stats (requires use_graph)
     memory reconcile  review contradicts clusters (requires use_graph)
-    retro [N]         alias for memory mine
-    decisions         peek durable project decisions (read-only)
+    retro [N]         deprecated — use memory mine
+    decisions         deprecated — use memory decisions
     history           list past session transcript files
 """
 
@@ -40,22 +40,38 @@ from pathlib import Path
 
 from . import agent, knowledge_graph, loop as loop_mod, memory, server, skills
 from . import graph as graph_mod
-from .commands import MEMORY_ARG_CHOICES, cli_subcommand_metas, cli_subcommand_names
-from .config import CONFIG_PATH, DEFAULTS, coerce_config_value, load_config, save_config
+from .commands import (
+    MEMORY_ARG_CHOICES,
+    MSG_DEPRECATE_DECISIONS,
+    MSG_DEPRECATE_MEMORY_GRAPH,
+    MSG_DEPRECATE_RETRO,
+    cli_subcommand_metas,
+    cli_subcommand_names,
+)
+from .config import (
+    CONFIG_PATH,
+    DEFAULTS,
+    cfg_bool,
+    cfg_int,
+    coerce_config_value,
+    load_config,
+    save_config,
+)
 from .repl import mine_sessions, run_repl
 from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
+from . import usage
 
 EPILOG = """
 project memory commands:
-  memory [query]     peek curated learnings (read-only)
-  memory list        top 5 active learnings
-  memory decisions   top 3 active decisions
+  memory [query]     peek dashboard or search learnings
+  memory list        same dashboard (HUD + top learnings/decisions)
+  memory decisions   top active decisions
   memory dump        readable view of injected memory
   memory mine [N]    mine last N sessions into learnings (writes memory)
-  memory graph       knowledge-graph stats (requires use_graph)
+  memory kg          knowledge-graph stats (requires use_graph)
   memory reconcile   review contradicts clusters (requires use_graph)
-  retro [N]          alias for memory mine
-  decisions          peek durable project decisions (read-only)
+  retro [N]          deprecated — use memory mine
+  decisions          deprecated — use memory decisions
   history            list past session transcript files
 
 examples:
@@ -69,9 +85,8 @@ examples:
   lmloop skills new deploy "roll out staging safely"
   lmloop skill investigate "vim plug install hangs"
   lmloop skill review
-  lmloop retro
   lmloop memory mine 3
-  lmloop memory graph
+  lmloop memory kg
 """
 
 
@@ -93,6 +108,7 @@ def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
 
 
 def cmd_retro(cfg: dict, count: int, console: Console) -> int:
+    console.hint(MSG_DEPRECATE_RETRO)
     console.hint("[memory mine]")
     return cmd_memory_mine(cfg, count, console)
 
@@ -281,7 +297,7 @@ def cmd_config(cfg: dict, words: list, console: Console) -> int:
 def cmd_memory(cfg: dict, words: list, console: Console) -> int:
     verb = words[0] if words else "list"
     if not words or verb == "list":
-        console.write_lines(memory.learning_list_lines(limit=memory.MEMORY_LIST_LIMIT))
+        console.write_lines(memory.memory_peek_lines(cfg))
         return 0
     if verb == "decisions":
         console.write_lines(
@@ -295,11 +311,13 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         rest = words[1:]
         count = int(rest[0]) if rest and rest[0].isdigit() else 3
         return cmd_memory_mine(cfg, count, console)
-    if verb == "graph":
+    if verb in ("kg", "graph"):
+        if verb == "graph":
+            console.hint(MSG_DEPRECATE_MEMORY_GRAPH)
         console.info(knowledge_graph.inspect_report(cfg))
         return 0
     if verb == "reconcile":
-        if not cfg.get("use_graph"):
+        if not cfg_bool(cfg, "use_graph"):
             console.info(knowledge_graph.MSG_GRAPH_OFF)
             return 0
         knowledge_graph.ensure_graph(cfg)
@@ -326,7 +344,7 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
             echo_tool=console.tool_call,
             echo_round=console.round_usage,
             context_limit=server.get_context_limit(model, cfg),
-            context_reserve=int(cfg.get("context_reserve") or 2048),
+            context_reserve=cfg_int(cfg, "context_reserve"),
             workspace_root=Path.cwd().resolve(),
             log_label="/memory reconcile",
         )
@@ -337,6 +355,7 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_decisions(cfg: dict, words: list, console: Console) -> int:
+    console.hint(MSG_DEPRECATE_DECISIONS)
     console.write_lines(memory.decision_list_lines(limit=30))
     return 0
 
@@ -402,10 +421,10 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
         context_limit=server.get_context_limit(model, cfg),
-        context_reserve=int(cfg.get("context_reserve") or 2048),
+        context_reserve=cfg_int(cfg, "context_reserve"),
         workspace_root=Path.cwd().resolve(),
         ask_gate=ask_until_gate,
-        mine=mine if cfg.get("until_mine", True) else None,
+        mine=mine if cfg_bool(cfg, "until_mine") else None,
     )
     loaded = loop_mod.UntilRun.load(run.path)
     if sys.stdin.isatty():
@@ -473,10 +492,10 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
         context_limit=server.get_context_limit(model, cfg),
-        context_reserve=int(cfg.get("context_reserve") or 2048),
+        context_reserve=cfg_int(cfg, "context_reserve"),
         workspace_root=Path.cwd().resolve(),
         ask_gate=ask_until_gate,
-        mine=mine if cfg.get("graph_mine", True) else None,
+        mine=mine if cfg_bool(cfg, "graph_mine") else None,
     )
     loaded = graph_mod.GraphRun.load(run.path)
     if sys.stdin.isatty():
@@ -557,18 +576,20 @@ def main(argv=None) -> int:
     cfg = load_config()
     if args.model:
         cfg["model"] = args.model
-    console = Console(cfg.get("color", True))
+    console = Console(cfg_bool(cfg, "color"))
 
     words = ([args.cmd] if args.cmd else []) + list(args.args)
     sub = words[0] if words else ""
     handlers = cli_handlers()
     if sub in handlers:
+        usage.record("cli.command", command=sub)
         return handlers[sub](cfg, words[1:], console)
     if sub in cli_subcommand_names():
         console.error(f"internal error: no handler for '{sub}'")
         return 1
 
     task = " ".join(words) if words else None
+    usage.record("cli.repl", has_task=bool(task))
     return run_repl(cfg, console=console, skill=None, first_task=task)
 
 

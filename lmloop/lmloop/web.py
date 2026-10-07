@@ -12,12 +12,13 @@ import urllib.request
 from html.parser import HTMLParser
 
 from . import extract
+from .config import DEFAULTS
 
 MAX_WEB_RESULTS = 10
 MAX_WEB_QUERY_LEN = 400
 MAX_PAGE_LINKS = 20
 MAX_FETCH_BODY = 8000  # leave room for header + links inside untrusted fence
-DEFAULT_WEB_TIMEOUT_S = 30
+DEFAULT_WEB_TIMEOUT_S = DEFAULTS["web_timeout_s"]
 MAX_DOWNLOAD_BYTES = 1_000_000
 
 # --- Web search backends (no API key; HTML adapters fail loudly if markup drifts) ---

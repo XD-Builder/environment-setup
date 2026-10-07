@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import extract, memory, server, skills, tools
+from .config import DEFAULTS, cfg_bool, cfg_int
 from . import status as status_mod
 from .chat import _chat, _chat_stream
 from .display import (
@@ -531,7 +532,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
         echo_status=None, stats: "dict | None" = None, echo_round=None,
         on_thinking=None, context_limit: int = 0,
-        context_reserve: int = 2048,
+        context_reserve: int = DEFAULTS["context_reserve"],
         workspace_root: "Path | None" = None,
         readonly: bool = False,
         no_tools: bool = False,
@@ -571,6 +572,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
     """
+    from . import usage
+
+    usage.record("agent.act", readonly=readonly, no_tools=no_tools)
     if echo_status is None:
         echo_status = echo
     if echo_tool is None:
@@ -585,7 +589,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
                     echo(f"    {rest}")
                 return
             echo(f"  ⚙ {name}({preview})")
-    color = bool(cfg.get("color", True))
+    color = cfg_bool(cfg, "color")
     if no_tools:
         tool_specs, impls = None, {}
     else:
@@ -593,11 +597,11 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             cfg, confirm_gate=confirm_gate, workspace_root=workspace_root,
             readonly=readonly, extra_readable=extra_readable,
         )
-    use_stream = bool(cfg.get("stream", True))
-    gather_budget = max_rounds if max_rounds is not None else cfg.get("max_rounds", 60)
+    use_stream = cfg_bool(cfg, "stream")
+    gather_budget = max_rounds if max_rounds is not None else cfg_int(cfg, "max_rounds")
     turn = GatherTurn(
         max_gather=max(1, int(gather_budget)),
-        max_nudges=max(0, int(cfg.get("max_continue_nudges", 2))),
+        max_nudges=max(0, cfg_int(cfg, "max_continue_nudges")),
         checkpoint=len(messages),
     )
     prev_session = memory.set_active_session(session_log)

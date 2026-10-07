@@ -12,14 +12,14 @@ from lmloop.files_index import (
     prompt_file_mentions,
     ref_line,
 )
-from lmloop.repl import (
+from lmloop.context import (
     ACTIVE_FILES_HEADING,
     DURABLE_MEMORY_HEADING,
     NO_SESSION_FILES,
-    _with_ref_excerpts,
     active_context_files,
     format_session_context,
 )
+from lmloop.repl import _with_ref_excerpts
 from lmloop.tools import ToolResult, read_file
 
 

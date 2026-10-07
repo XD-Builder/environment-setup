@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import knowledge_graph, memory, skills, snapshot, status as status_mod, tools
-from .config import STATE_ROOT, project_dir, utc_now
+from .config import DEFAULTS, STATE_ROOT, cfg_bool, cfg_int, project_dir, utc_now
 from .loop import (
     DONE_ROLES,
     EVAL_PROMPT,
@@ -534,17 +534,20 @@ def run_graph(
     echo_error=None,
     echo_round=None,
     context_limit: int = 0,
-    context_reserve: int = 2048,
+    context_reserve: int = DEFAULTS["context_reserve"],
     workspace_root: "Path | None" = None,
     ask_gate=None,
     mine=None,
 ) -> GraphRun:
     """Advance ``run`` until pass, gate-no, pause, or interrupt. Mutates run."""
+    from . import usage
+
+    usage.record("graph.run", name=run.name)
     if echo_status is None:
         echo_status = echo
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
-    do_mine = bool(cfg.get("graph_mine", True)) and mine is not None
-    max_steps = max(1, int(cfg.get("graph_max_steps") or 24))
+    do_mine = cfg_bool(cfg, "graph_mine") and mine is not None
+    max_steps = max(1, cfg_int(cfg, "graph_max_steps"))
     steps_this_call = 0
     current_node = ""
     current_until = ""
