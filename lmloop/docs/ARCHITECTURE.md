@@ -41,7 +41,8 @@ lmloop/
 │   ├── web.py                  # web_search / fetch_url + HTML parsers
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
-│   ├── config.py               # ~/.lmloop/config.json, project slug, utc_now
+│   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
+│   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
@@ -51,6 +52,7 @@ lmloop/
 │   ├── status.py               # status / resume / until-graph follow-up copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
 │   ├── checks.py               # derived check plans (no model calls)
+│   ├── snapshot.py             # git temp-index refs before autonomous maker steps
 │   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
@@ -333,7 +335,7 @@ until goal:
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
-- Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role.
+- Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role. Maker rows may include `snapshot_ref` (`HEAD` or `refs/lmloop/…`) from `snapshot.take_snapshot` when `autonomous_snapshot` is `git` and the workspace is a git repo.
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
 This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).

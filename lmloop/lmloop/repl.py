@@ -10,14 +10,15 @@ from . import agent, extract, knowledge_graph, loop as loop_mod, memory, server,
 from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
 from .commands import (
+    ADVANCED_SKILL_SLASH,
     MEMORY_ARG_COMPLETION,
     MSG_DEPRECATE_DECISIONS,
     MSG_DEPRECATE_MEMORY_GRAPH,
     MSG_DEPRECATE_RETRO,
-    ADVANCED_SKILL_SLASH,
     slash_command_metas,
 )
-from .config import project_slug
+from .config import cfg_bool, cfg_int, project_slug
+from .context import active_context_files, context_view_lines
 from .files_index import (
     AtRefExpansion,
     attached_heading,
@@ -40,11 +41,6 @@ _THINKING_HISTORY_MAX = 30
 _REF_CONTENTS_HEADER = (
     "Attached file contents (extracted in place; do not copy into the workspace):"
 )
-ACTIVE_FILES_HEADING = "Active files"
-DURABLE_MEMORY_HEADING = "Durable memory"
-NO_SESSION_FILES = "(no files in this conversation)"
-
-
 @dataclass
 class SlashCommand:
     name: str
@@ -83,7 +79,7 @@ class SessionState:
 
     @property
     def context_reserve(self) -> int:
-        return int(self.cfg.get("context_reserve") or 2048)
+        return cfg_int(self.cfg, "context_reserve")
 
     def push_thinking(self, text: str) -> None:
         """Store a thinking block for later review."""
@@ -326,7 +322,7 @@ def _cmd_memory_graph(state: SessionState) -> bool:
 
 
 def _cmd_memory_reconcile(state: SessionState, confirm_gate) -> bool:
-    if not state.cfg.get("use_graph"):
+    if not cfg_bool(state.cfg, "use_graph"):
         state.console.info(knowledge_graph.MSG_GRAPH_OFF)
         return True
     knowledge_graph.ensure_graph(state.cfg)
@@ -390,7 +386,7 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
     except FileNotFoundError as e:
         console.error(str(e))
         return 1
-    if cfg.get("use_graph"):
+    if cfg_bool(cfg, "use_graph"):
         knowledge_graph.ensure_graph(cfg)
         try:
             task += "\n\n" + skills.load_skill("_graph_mine")
@@ -405,7 +401,7 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
         echo_tool=console.tool_call,
         echo_round=console.round_usage,
         context_limit=server.get_context_limit(model, cfg),
-        context_reserve=int(cfg.get("context_reserve") or 2048),
+        context_reserve=cfg_int(cfg, "context_reserve"),
         workspace_root=Path.cwd().resolve(),
         log_label=label,
     )
@@ -488,7 +484,9 @@ def _cmd_undo(state: SessionState, _arg: str) -> bool:
 
 
 def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
-    transcript = memory.format_messages_transcript(state.messages, max_chars=12000)
+    transcript = memory.format_messages_transcript(
+        state.messages, max_chars=cfg_int(state.cfg, "max_tool_output"),
+    )
     if not transcript:
         state.console.info("(nothing to compact)")
         return True
@@ -768,7 +766,7 @@ def _until_callbacks(state: SessionState, confirm_gate):
         context_reserve=state.context_reserve,
         workspace_root=state.workspace_root,
         ask_gate=ask_until_gate,
-        mine=mine if state.cfg.get("until_mine", True) else None,
+        mine=mine if cfg_bool(state.cfg, "until_mine") else None,
     )
 
 
@@ -839,7 +837,7 @@ def _graph_callbacks(state: SessionState, confirm_gate):
         context_reserve=state.context_reserve,
         workspace_root=state.workspace_root,
         ask_gate=ask_until_gate,
-        mine=mine if state.cfg.get("graph_mine", True) else None,
+        mine=mine if cfg_bool(state.cfg, "graph_mine") else None,
     )
 
 
@@ -925,228 +923,6 @@ def _cmd_continue(state: SessionState, arg: str, confirm_gate) -> bool:
         state.until_run = None
     _run_turn(state, arg or "Continue where you left off.", confirm_gate)
     return True
-
-
-# --- context manifest (live thread, not ~/.lmloop) ---
-
-@dataclass(frozen=True)
-class ContextFile:
-    """One path named in the live message list."""
-    path: str
-    loaded: bool
-    attached: bool = False
-    image: bool = False
-    spans: tuple = ()
-
-
-@dataclass
-class _FileBuild:
-    path: str
-    loaded: bool = False
-    attached: bool = False
-    image: bool = False
-    spans: list = field(default_factory=list)
-
-
-def _canon_path(path: str, workspace_root: "Path | None") -> str:
-    try:
-        return resolve_user_path(path, workspace_root).as_posix()
-    except (OSError, RuntimeError, ValueError):
-        return path
-
-
-def _message_has_image(content) -> bool:
-    if not isinstance(content, list):
-        return False
-    return any(
-        isinstance(part, dict) and part.get("type") == "image_url"
-        for part in content
-    )
-
-
-def _note_file(
-    builds: dict, order: list, path: str, workspace_root, *,
-    loaded: bool = False, attached: bool = False, image: bool = False,
-    span: "tuple | None" = None,
-) -> None:
-    if not path:
-        return
-    key = _canon_path(path, workspace_root)
-    row = builds.get(key)
-    if row is None:
-        row = _FileBuild(path=key)
-        builds[key] = row
-        order.append(key)
-    if loaded:
-        row.loaded = True
-    if attached:
-        row.attached = True
-        row.loaded = True
-    if image:
-        row.image = True
-        row.loaded = True
-    if span and span not in row.spans:
-        row.spans.append(span)
-        row.loaded = True
-
-
-def _note_read_result(builds, order, content, arguments, workspace_root) -> None:
-    text = content if isinstance(content, str) else str(content)
-    if text.startswith("ERROR") or text.startswith("DENIED"):
-        return
-    header = tools.parse_read_header(text)
-    if header:
-        label, start, end, total = header
-        _note_file(builds, order, label, workspace_root, span=(start, end, total))
-        return
-    image_label = tools.parse_image_read_label(text)
-    if image_label:
-        _note_file(builds, order, image_label, workspace_root, image=True)
-        return
-    arg_path = tools.tool_path_argument(arguments)
-    if arg_path:
-        _note_file(builds, order, arg_path, workspace_root, loaded=True)
-
-
-def active_context_files(messages: list, workspace_root: "Path | None" = None) -> list:
-    """Files named in the live thread, in first-seen order.
-
-    ``loaded`` is true when the file body is in the window: a successful
-    ``read_file``, an ``@`` attachment excerpt, or an image part. Other ``@``
-    paths are referenced only. ``/undo``, ``/new``, and a compact replace drop
-    files by dropping the messages that held them.
-    """
-    results = {}
-    for message in messages or []:
-        if message.get("role") == "tool" and message.get("tool_call_id"):
-            results[message["tool_call_id"]] = message.get("content")
-    builds: dict = {}
-    order: list = []
-    for message in messages or []:
-        role = message.get("role")
-        if role == "user":
-            content = message.get("content")
-            has_image = _message_has_image(content)
-            for kind, path in prompt_file_mentions(extract.flatten_content(content)):
-                if kind == "attached":
-                    _note_file(builds, order, path, workspace_root, attached=True)
-                    continue
-                suffix = Path(path).suffix.lower()
-                if has_image and suffix in extract.IMAGE_SUFFIXES:
-                    _note_file(builds, order, path, workspace_root, image=True)
-                else:
-                    _note_file(builds, order, path, workspace_root)
-        elif role == "assistant":
-            for call in message.get("tool_calls") or []:
-                fn = call.get("function") or {}
-                if (fn.get("name") or "") != tools.TOOL_READ_FILE:
-                    continue
-                content = results.get(call.get("id"))
-                if content is None:
-                    continue
-                _note_read_result(
-                    builds, order, content, fn.get("arguments"), workspace_root,
-                )
-    return [
-        ContextFile(
-            path=builds[key].path,
-            loaded=builds[key].loaded,
-            attached=builds[key].attached,
-            image=builds[key].image,
-            spans=tuple(builds[key].spans),
-        )
-        for key in order
-    ]
-
-
-def _display_path(path: str, workspace_root: "Path | None") -> str:
-    if workspace_root is None:
-        return path
-    try:
-        rel = Path(path).resolve().relative_to(Path(workspace_root).resolve())
-    except (ValueError, OSError):
-        return path
-    text = rel.as_posix()
-    return text or path
-
-
-def _format_spans(spans: tuple) -> str:
-    groups = []
-    for start, end, total in spans:
-        rendered = f"{start}-{end}"
-        if groups and groups[-1][0] == total:
-            groups[-1][1].append(rendered)
-        else:
-            groups.append((total, [rendered]))
-    parts = []
-    for total, ranges in groups:
-        parts.append("lines " + ", ".join(ranges) + f" of {total}")
-    return "; ".join(parts)
-
-
-def _file_detail(row: ContextFile) -> str:
-    if not row.loaded:
-        try:
-            if Path(row.path).is_dir():
-                return "directory · not opened"
-        except OSError:
-            pass
-        return "referenced · not loaded"
-    bits = []
-    if row.attached:
-        bits.append("attached excerpt")
-    if row.image:
-        bits.append("image")
-    if row.spans:
-        span = _format_spans(row.spans)
-        bits.append(span if bits else f"read · {span}")
-    elif not bits:
-        bits.append("read")
-    return " · ".join(bits)
-
-
-def _file_context_lines(files: list, workspace_root: "Path | None") -> list:
-    """Each path on its own line so a long name is never clipped."""
-    lines = [memory.ViewLine(ACTIVE_FILES_HEADING, "heading"), memory.ViewLine("")]
-    if not files:
-        lines.append(memory.ViewLine(f"  {NO_SESSION_FILES}", "muted"))
-        return lines
-    for row in files:
-        shown = _display_path(row.path, workspace_root)
-        lines.append(memory.ViewLine(
-            f"  {shown}", "path" if row.loaded else "muted",
-        ))
-        lines.append(memory.ViewLine(
-            f"    {_file_detail(row)}", "ok" if row.loaded else "muted",
-        ))
-    return lines
-
-
-def context_view_lines(
-    files: list, cfg: dict, workspace_root: "Path | None" = None,
-) -> list:
-    """Active files, then the readable injected-memory view."""
-    lines = _file_context_lines(files, workspace_root)
-    lines.append(memory.ViewLine(""))
-    lines.append(memory.ViewLine(DURABLE_MEMORY_HEADING, "heading"))
-    lines.append(memory.ViewLine(""))
-    lines.extend(memory.injected_memory_lines(cfg))
-    return lines
-
-
-def format_session_context(
-    files: list, durable: str, workspace_root: "Path | None" = None,
-) -> str:
-    """Plain active-file list plus a caller-supplied memory block."""
-    lines = _file_context_lines(files, workspace_root)
-    lines.append(memory.ViewLine(""))
-    lines.append(memory.ViewLine(DURABLE_MEMORY_HEADING, "heading"))
-    body = (durable or "").rstrip("\n")
-    if body:
-        lines.append(memory.ViewLine(""))
-        for raw in body.splitlines():
-            lines.append(memory.ViewLine(raw))
-    return "\n".join(line.text for line in lines)
 
 
 def _cmd_context(state: SessionState, _arg: str) -> bool:
@@ -1309,7 +1085,7 @@ def run_repl(cfg: dict, console: "Console | None" = None,
              skill: "str | None" = None, first_task: "str | None" = None,
              until_run: "loop_mod.UntilRun | None" = None,
              graph_run: "graph_mod.GraphRun | None" = None) -> int:
-    console = console or Console(cfg.get("color", True))
+    console = console or Console(cfg_bool(cfg, "color"))
 
     try:
         model = server.ensure_server(cfg, echo=console.info)
@@ -1350,7 +1126,7 @@ def run_repl(cfg: dict, console: "Console | None" = None,
         prompt_session = build_prompt_session(
             commands_provider=lambda: SLASH_COMMANDS,
             state_getter=lambda: state,
-            color=bool(cfg.get("color", True)),
+            color=cfg_bool(cfg, "color"),
         )
         state.prompt_session = prompt_session
 

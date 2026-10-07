@@ -1,6 +1,6 @@
 # Design roadmap: final review of the proposals
 
-**Status:** proposed order. Step 2 derived checks (V1–V6) shipped ahead of snapshots; snapshots remain the next safety item. This file still adds no feature of its own.
+**Status:** proposed order. R1 snapshots and step 2 derived checks (V1–V6) have shipped. The sandbox (Phase S) and V7–V9 remain proposed. This file still adds no feature of its own.
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: cuts applied to the design docs)
 **Covers:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
