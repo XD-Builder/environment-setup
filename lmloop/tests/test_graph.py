@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lmloop.graph import (
+    JOIN_HANDOFF_CLIP,
     GraphError,
     GraphRun,
     load_graph,
@@ -56,10 +57,10 @@ class ParseGraphTests(unittest.TestCase):
         self.assertIsNone(defn.node("build").check_cmd)
         self.assertEqual(defn.node("build").goal, "implement the agreed change")
         self.assertEqual(defn.node("mine").kind, "mine")
-        self.assertEqual(defn.edge_for("qa", "pass").dst, "mine")
-        self.assertEqual(defn.edge_for("qa", "fail").dst, "build")
-        self.assertEqual(defn.edge_for("qa", "blocked").dst, "ceo")
-        self.assertEqual(defn.edge_for("ceo", "pass").dst, "build")
+        self.assertEqual(defn.edge_for("qa", "pass").dsts, ("mine",))
+        self.assertEqual(defn.edge_for("qa", "fail").dsts, ("build",))
+        self.assertEqual(defn.edge_for("qa", "blocked").dsts, ("ceo",))
+        self.assertEqual(defn.edge_for("ceo", "pass").dsts, ("build",))
 
     def test_quoted_check_on_skill(self):
         text = "node qa skill qa --check 'pytest -q' review the diff"
@@ -113,6 +114,80 @@ class ParseGraphTests(unittest.TestCase):
         self.assertEqual(defn.name, "company")
         self.assertEqual(defn.start, "ceo")
 
+    def test_multi_target_pass_edge(self):
+        text = (
+            "node plan skill ceo\n"
+            "node api until implement api\n"
+            "node docs skill review\n"
+            "edge plan -> api docs"
+        )
+        defn = parse_graph(text, "t")
+        self.assertEqual(defn.edge_for("plan", "pass").dsts, ("api", "docs"))
+
+    def test_multi_target_fail_is_parse_error(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph(
+                "node a skill ceo\nnode b skill qa\n"
+                "edge a -> b c on fail",
+                "t",
+            )
+        self.assertIn("multi-target", str(ctx.exception))
+
+    def test_node_needs(self):
+        text = (
+            "node plan skill ceo\n"
+            "node api until implement api\n"
+            "node ui until implement ui\n"
+            "node package skill review needs api ui\n"
+            "edge plan -> api ui\n"
+            "edge api -> package\n"
+            "edge ui -> package"
+        )
+        defn = parse_graph(text, "t")
+        self.assertEqual(defn.node("package").needs, ("api", "ui"))
+
+    def test_validate_unknown_need(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph("node a skill ceo needs missing", "t")
+        self.assertIn("unknown need", str(ctx.exception))
+        self.assertIn("a", str(ctx.exception))
+
+    def test_validate_self_need(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph("node a skill ceo needs a", "t")
+        self.assertIn("cannot need itself", str(ctx.exception))
+
+    def test_validate_needs_cycle(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph(
+                "node a skill ceo needs b\nnode b skill qa needs a",
+                "t",
+            )
+        self.assertIn("cycle", str(ctx.exception))
+
+    def test_validate_unreachable_need(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph(
+                "node start skill ceo\nnode orphan skill qa\n"
+                "node join skill review needs orphan",
+                "t",
+            )
+        self.assertIn("unreachable", str(ctx.exception))
+
+    def test_validate_mine_with_needs(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph("node m mine needs a\nnode a skill ceo", "t")
+        self.assertIn("mine", str(ctx.exception))
+
+    def test_validate_mine_multi_target(self):
+        with self.assertRaises(GraphError) as ctx:
+            parse_graph(
+                "node a skill ceo\nnode m mine\nnode x skill qa\n"
+                "edge a -> m x",
+                "t",
+            )
+        self.assertIn("mine", str(ctx.exception))
+
 
 class GraphRunTests(unittest.TestCase):
     def test_next_step_start_and_edges(self):
@@ -138,6 +213,111 @@ class GraphRunTests(unittest.TestCase):
                 run.append("gate", "no", node="a")
                 self.assertTrue(run.is_done())
                 self.assertEqual(run.next_step(defn), (None, None))
+
+    def test_chain_next_step_equivalence(self):
+        """Linear graphs: frontier replay matches single-edge stepping."""
+        defn = parse_graph(COMPANY, "company")
+        steps = []
+        with tempfile.TemporaryDirectory() as d:
+            with patch("lmloop.graph.project_dir", return_value=Path(d)):
+                run = GraphRun.create("company")
+                while True:
+                    kind, node = run.next_step(defn)
+                    if kind is None:
+                        break
+                    if kind == "gate":
+                        break
+                    if defn.node(node).kind == "mine":
+                        break
+                    steps.append(node)
+                    run.append("node", "pass", node=node)
+        self.assertEqual(steps, ["ceo", "build", "qa"])
+
+    def test_fanout_docs_runs_when_api_fails(self):
+        text = (
+            "node plan skill ceo\n"
+            "node api skill review\n"
+            "node docs skill review\n"
+            "edge plan -> api docs\n"
+            "edge api -> plan on fail"
+        )
+        defn = parse_graph(text, "t")
+        with tempfile.TemporaryDirectory() as d:
+            with patch("lmloop.graph.project_dir", return_value=Path(d)):
+                run = GraphRun.create("t")
+                run.append("node", "pass", node="plan")
+                self.assertEqual(run.next_step(defn), ("run", "api"))
+                run.append("node", "fail", node="api")
+                frontier, unrouted, _ = run._replay_frontier(defn)
+                self.assertIn("docs", frontier)
+                self.assertEqual(unrouted, [])
+                ran = []
+                while True:
+                    kind, node = run.next_step(defn)
+                    if kind != "run":
+                        break
+                    ran.append(node)
+                    run.append("node", "pass", node=node)
+                self.assertIn("docs", ran)
+
+    def test_diamond_join_waits_for_both_branches(self):
+        text = (
+            "node plan skill ceo\n"
+            "node api skill review\n"
+            "node ui skill review\n"
+            "node package skill review needs api ui\n"
+            "edge plan -> api ui\n"
+            "edge api -> package\n"
+            "edge ui -> package"
+        )
+        defn = parse_graph(text, "t")
+        with tempfile.TemporaryDirectory() as d:
+            with patch("lmloop.graph.project_dir", return_value=Path(d)):
+                run = GraphRun.create("t")
+                run.append("node", "pass", node="plan")
+                self.assertEqual(run.next_step(defn), ("run", "api"))
+                run.append("node", "pass", node="api")
+                self.assertEqual(run.next_step(defn), ("run", "ui"))
+                run.append("node", "pass", node="ui")
+                self.assertEqual(run.next_step(defn), ("run", "package"))
+
+    def test_unsatisfiable_join_is_gate(self):
+        text = (
+            "node plan skill ceo\n"
+            "node api skill review\n"
+            "node package skill review needs api\n"
+            "edge plan -> api package"
+        )
+        defn = parse_graph(text, "t")
+        with tempfile.TemporaryDirectory() as d:
+            with patch("lmloop.graph.project_dir", return_value=Path(d)):
+                run = GraphRun.create("t")
+                run.append("node", "pass", node="plan")
+                run.append("node", "fail", node="api")
+                self.assertEqual(run.next_step(defn), ("gate", "api"))
+
+    def test_join_handoff_labeled_and_clipped(self):
+        text = (
+            "node plan skill ceo\n"
+            "node api skill review\n"
+            "node ui skill review\n"
+            "node package skill review needs api ui\n"
+            "edge plan -> api ui\n"
+            "edge api -> package\n"
+            "edge ui -> package"
+        )
+        defn = parse_graph(text, "t")
+        with tempfile.TemporaryDirectory() as d:
+            with patch("lmloop.graph.project_dir", return_value=Path(d)):
+                run = GraphRun.create("t")
+                run.append("node", "pass", node="api", handoff="api summary")
+                run.append("node", "pass", node="ui", handoff="u" * 2000)
+                joined = run.join_handoff(defn.node("package"))
+        self.assertIn("[api]\napi summary", joined)
+        self.assertIn("[ui]\n", joined)
+        ui_part = joined.split("[ui]\n", 1)[1]
+        self.assertLessEqual(len(ui_part), JOIN_HANDOFF_CLIP + 1)
+        self.assertTrue(ui_part.endswith("…"))
 
 
 class GraphRunnerTests(unittest.TestCase):
