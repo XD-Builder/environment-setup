@@ -805,15 +805,17 @@ def _advance_until(state: SessionState, run: loop_mod.UntilRun, confirm_gate) ->
 
 
 def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
-    goal, check_cmd, err = loop_mod.parse_until_arg_line(arg)
-    if err:
-        state.console.info(err)
-        state.console.info("  /until [--check <cmd>] <goal>")
+    parsed = loop_mod.parse_until_arg_line(arg)
+    if parsed.err:
+        state.console.info(parsed.err)
+        state.console.info("  /until [--check <cmd>] [--keep <cmd>] <goal>")
         state.console.info("  /continue resumes a paused until-run")
         return True
     hint = loop_mod.superseded_until_hint()
-    run = loop_mod.UntilRun.create(goal, check_cmd=check_cmd)
-    state.console.hint(f"[until · {goal}]")
+    run = loop_mod.UntilRun.create(
+        parsed.goal, checks=parsed.checks, keeps=parsed.keeps,
+    )
+    state.console.hint(f"[until · {parsed.goal}]")
     if hint:
         state.console.hint(hint)
     _advance_until(state, run, confirm_gate)

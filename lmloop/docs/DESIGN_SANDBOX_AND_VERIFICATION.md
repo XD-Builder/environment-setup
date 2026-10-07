@@ -1,6 +1,6 @@
 # Design: Execution sandbox and verification hardening
 
-**Status:** proposed (nothing here is implemented)
+**Status:** derived checks shipped (Phase V, tasks V1–V6 and the `company` graph half of V10). Snapshots (Phase R), the sandbox (Phase S), and V7–V9 are still proposed.
 **Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 4)
 **Depends on:** `tools.run_shell`, `tools.GatePolicy`, `loop.run_until`, `graph.run_graph`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·

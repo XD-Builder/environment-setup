@@ -6,11 +6,22 @@ an isolated checker thread — so the maker cannot grade its own work.
 
 import json
 import shlex
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import agent, memory, server, skills, status as status_mod, tools
+from .checks import (
+    PlannedCheck,
+    CheckPlan,
+    apply_baseline,
+    confirm_plan,
+    flags_plan,
+    format_plan,
+    infer_plan,
+    judge_cycle,
+)
 from .config import project_dir, utc_now
 from .tools import run_shell, shell_confirm_flags
 
@@ -113,33 +124,62 @@ def check_status_from_output(output: str) -> str:
     return "fail"
 
 
-def parse_until_args(words: list) -> "tuple[str, str | None, str | None]":
-    """Return (goal, check_cmd, err). err is set when the line is invalid."""
-    check_cmd = None
+_UNTIL_USAGE = "usage: until [--check <cmd>] [--keep <cmd>] <goal>"
+
+
+@dataclass(frozen=True)
+class UntilArgs:
+    """Parsed ``until`` invocation. Empty checks and keeps means infer a plan."""
+
+    goal: str = ""
+    checks: tuple = ()
+    keeps: tuple = ()
+    err: "str | None" = None
+
+    @property
+    def check_cmd(self) -> "str | None":
+        return self.checks[0] if self.checks else None
+
+
+def split_check_flags(words: list) -> "tuple[tuple, tuple, list, str | None]":
+    """Pull repeatable ``--check`` / ``--keep`` off ``words``. Fail closed."""
+    checks: list[str] = []
+    keeps: list[str] = []
     rest: list[str] = []
     i = 0
     while i < len(words):
-        w = words[i]
-        if w == "--check":
-            if i + 1 >= len(words):
-                return "", None, "usage: until [--check <cmd>] <goal>"
-            check_cmd = words[i + 1]
+        word = words[i]
+        if word in ("--check", "--keep"):
+            if i + 1 >= len(words) or str(words[i + 1]).startswith("--"):
+                return (), (), [], _UNTIL_USAGE
+            cmd = str(words[i + 1]).strip()
+            if not cmd:
+                return (), (), [], _UNTIL_USAGE
+            (checks if word == "--check" else keeps).append(cmd)
             i += 2
             continue
-        rest.append(w)
+        rest.append(word)
         i += 1
+    return tuple(checks), tuple(keeps), rest, None
+
+
+def parse_until_args(words: list) -> UntilArgs:
+    """Parse an until goal. ``err`` is set when the line is invalid."""
+    checks, keeps, rest, err = split_check_flags(words)
+    if err:
+        return UntilArgs(err=err)
     goal = " ".join(rest).strip()
     if not goal:
-        return "", check_cmd, "usage: until [--check <cmd>] <goal>"
-    return goal, check_cmd, None
+        return UntilArgs(checks=checks, keeps=keeps, err=_UNTIL_USAGE)
+    return UntilArgs(goal=goal, checks=checks, keeps=keeps)
 
 
-def parse_until_arg_line(arg: str) -> "tuple[str, str | None, str | None]":
+def parse_until_arg_line(arg: str) -> UntilArgs:
     """Parse a REPL /until argument line with shlex (quoted --check)."""
     try:
         words = shlex.split(arg or "")
     except ValueError as e:
-        return "", None, str(e)
+        return UntilArgs(err=str(e))
     return parse_until_args(words)
 
 
@@ -229,7 +269,8 @@ class UntilRun:
 
     @classmethod
     def create(cls, goal: str, check_cmd: "str | None" = None,
-               slug: "str | None" = None) -> "UntilRun":
+               slug: "str | None" = None, checks: "tuple | None" = None,
+               keeps: "tuple | None" = None) -> "UntilRun":
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         d = until_dir(slug)
         path = d / f"{ts}.jsonl"
@@ -237,12 +278,19 @@ class UntilRun:
         while path.exists():
             path = d / f"{ts}-{n}.jsonl"
             n += 1
-        run = cls(path=path, goal=goal, check_cmd=check_cmd or None, events=[])
+        check_list = list(checks or ())
+        if check_cmd and check_cmd not in check_list:
+            check_list.insert(0, check_cmd)
+        planned = flags_plan(tuple(check_list), tuple(keeps or ()))
+        first = next((item.cmd for item in planned if item.role == "check"), "")
+        run = cls(path=path, goal=goal, check_cmd=first or None, events=[])
         run._write({
             "ts": utc_now(),
             "role": META_ROLE,
             "goal": goal,
-            "check_cmd": check_cmd or "",
+            "check_cmd": first,
+            "checks": [item.as_dict() for item in planned],
+            "explicit": bool(planned),
         })
         return run
 
@@ -261,16 +309,52 @@ class UntilRun:
         self.events.append(row)
 
     def append(self, role: str, status: str, handoff: str = "",
-               session: str = "") -> None:
+               session: str = "", checks=None, results=None) -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
-        self._write({
+        row = {
             "ts": utc_now(),
             "step": step,
             "role": role,
             "status": status,
             "handoff": handoff,
             "session": session,
-        })
+        }
+        if checks is not None:
+            row["checks"] = checks
+        if results is not None:
+            row["results"] = results
+        self._write(row)
+
+    def current_checks(self) -> list:
+        """Latest plan. A stored empty list means the user skipped inference."""
+        latest = None
+        for ev in self.events:
+            if "checks" in ev:
+                latest = ev["checks"]
+        if latest is not None:
+            return [PlannedCheck.from_dict(row) for row in latest if row.get("cmd")]
+        if self.check_cmd:
+            return [PlannedCheck(
+                cmd=self.check_cmd, role="check", source="flag",
+                tier="authoritative", reason="--check", user_typed=True,
+            )]
+        return []
+
+    def baseline_statuses(self) -> dict:
+        for ev in reversed(self.events):
+            if ev.get("role") != "baseline":
+                continue
+            return {
+                row.get("cmd"): row.get("status")
+                for row in ev.get("results") or []
+                if row.get("cmd")
+            }
+        return {}
+
+    def explicit_plan(self) -> bool:
+        if self.events and self.events[0].get("role") == META_ROLE:
+            return bool(self.events[0].get("explicit"))
+        return bool(self.check_cmd)
 
     def last_work(self) -> "dict | None":
         for ev in reversed(self.events):
@@ -337,10 +421,12 @@ class UntilRun:
         key = (role, status)
         after_pass = "mine" if do_mine else None
         table = {
-            ("maker", "next"): "check" if self.check_cmd else "eval",
+            ("maker", "next"): "check" if self.current_checks() else "eval",
             ("check", "pass"): after_pass,
+            ("check", "pending"): "eval",
             ("check", "fail"): "maker",
             ("check", "blocked"): "gate",
+            ("baseline", "blocked"): "gate",
             ("eval", "pass"): after_pass,
             ("eval", "fail"): "maker",
             ("eval", "blocked"): "gate",
@@ -385,6 +471,78 @@ def run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> st
         confirm_destructive=destructive,
         confirm_shell_syntax=syntax,
         workspace_root=workspace_root,
+    )
+
+
+def run_plan_commands(cfg: dict, commands, confirm_gate, workspace_root: Path) -> list:
+    """Run each planned command. One result dict per command."""
+    results = []
+    for cmd in commands:
+        output = run_check(cfg, cmd, confirm_gate, workspace_root)
+        results.append({
+            "cmd": cmd,
+            "status": check_status_from_output(output),
+            "output": clip_check_output(output),
+        })
+    drop_denied(confirm_gate)
+    return results
+
+
+def _plan_handoff(results: list) -> str:
+    parts = [f"$ {row['cmd']}\n{row['output']}" for row in results]
+    return clip_check_output("\n".join(parts))
+
+
+def _choice_on(cfg: dict, key: str) -> bool:
+    return str(cfg.get(key) or "auto").strip().lower() != "off"
+
+
+def _read_plan_line(prompt: str = "") -> str:
+    try:
+        return input(prompt)
+    except EOFError:
+        print()
+        return ""
+
+
+def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
+                  interactive: bool, confirm_gate) -> None:
+    """Infer or reuse a plan, then baseline it once. Resume does not repeat."""
+    if any(ev.get("role") in ("plan", "baseline") for ev in run.events):
+        return
+    if any(ev.get("role") != META_ROLE for ev in run.events):
+        return
+    if run.explicit_plan() or not _choice_on(cfg, "check_inference"):
+        planned = run.current_checks()
+    else:
+        inferred = infer_plan(run.goal, root)
+        planned = list(inferred.checks)
+        if planned and interactive:
+            confirmed = confirm_plan(
+                CheckPlan(run.goal, tuple(planned)), _read_plan_line, echo_status,
+            )
+            planned = list(confirmed.checks)
+        elif planned:
+            echo_status(format_plan(run.goal, tuple(planned)))
+    payload = [item.as_dict() for item in planned]
+    if not planned or not _choice_on(cfg, "until_baseline"):
+        run.append("plan", "ready", checks=payload)
+        return
+    echo_status(status_mod.msg_until_baseline())
+    results = run_plan_commands(
+        cfg, [item.cmd for item in planned], confirm_gate, root,
+    )
+    for row in results:
+        echo_status(row["output"])
+    outcome = apply_baseline(tuple(planned), results)
+    for note in outcome.notes:
+        echo_status(status_mod.msg_until_note(note))
+    stored = outcome.checks if outcome.status == "ready" else tuple(planned)
+    run.append(
+        "baseline", outcome.status,
+        handoff="\n".join(outcome.notes),
+        checks=[item.as_dict() for item in stored],
+        results=results,
     )
 
 
@@ -447,6 +605,7 @@ def run_until(
     mine=None,
     seed_handoff: str = "",
     clock_now=None,
+    interactive: "bool | None" = None,
 ) -> UntilRun:
     """Advance ``run`` until pass, gate-no, pause, or interrupt. Mutates run.
 
@@ -472,8 +631,11 @@ def run_until(
     gate = tools.autonomous_gate(cfg, confirm_gate, echo_status)
     if isinstance(gate, tools.GatePolicy):
         gate.approve(run.approved_commands())  # resumed right after a yes
+    if interactive is None:
+        interactive = sys.stdin.isatty()
 
     try:
+        _prepare_plan(run, cfg, root, echo_status, interactive, gate)
         while True:
             if run.is_done():
                 return run
@@ -516,12 +678,27 @@ def run_until(
                 continue
             if role == "check":
                 echo_status(status_mod.msg_until_step("check", makers_this_call, max_steps))
-                check_output = run_check(cfg, run.check_cmd or "", gate, root)
-                drop_denied(gate)
-                displayed = clip_check_output(check_output)
-                echo_status(displayed)
-                status = check_status_from_output(check_output)
-                run.append("check", status, handoff=displayed)
+                planned = run.current_checks()
+                results = run_plan_commands(
+                    cfg, [item.cmd for item in planned], gate, root,
+                )
+                for row in results:
+                    echo_status(row["output"])
+                check_output = _plan_handoff(results)
+                status = judge_cycle(
+                    tuple(planned), results,
+                    baseline_on=any(
+                        ev.get("role") == "baseline" for ev in run.events
+                    ),
+                    baseline=run.baseline_statuses(),
+                )
+                if status == "blocked":
+                    blocked = next(
+                        (row["cmd"] for row in results if row["status"] == "blocked"),
+                        "",
+                    )
+                    echo_status(status_mod.msg_until_check_blocked(blocked))
+                run.append("check", status, handoff=check_output, results=results)
                 continue
             if role == "eval":
                 echo_status(status_mod.msg_until_step("eval", makers_this_call, max_steps))

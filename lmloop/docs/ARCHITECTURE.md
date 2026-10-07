@@ -50,6 +50,7 @@ lmloop/
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
 │   ├── status.py               # status / resume / until-graph follow-up copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
+│   ├── checks.py               # derived check plans (no model calls)
 │   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
@@ -91,7 +92,7 @@ flowchart TB
 
   subgraph control["Control flow"]
     graphpy["graph.py<br/>authored workflow graphs"]
-    loop["loop.py<br/>until: maker → check / eval"]
+    loop["loop.py<br/>until: plan → maker → check / eval"]
   end
 
   subgraph core["Agent core"]
@@ -303,21 +304,32 @@ Before the loop starts, `ensure_server()` (`LmsClient.ensure`) checks if LM Stud
 
 ## Goal loop
 
-**File:** `loop.py`
+**Files:** `loop.py`, `checks.py`
 
-`until` is a while-statement around isolated `act()` calls. The maker does not declare the goal done — an external check or a **fresh** eval thread does.
+`until` is a while-statement around isolated `act()` calls. The maker does not declare the goal done — exit codes or a **fresh** eval thread do.
 
 ```
 until goal:
-    maker  — isolated act() with the goal + prior handoff
-    if --check: run that shell command (exit 0 → pass; nonzero → next maker)
-    else: isolated eval act() with read-only tools (+ run_shell); last line STATUS: pass|fail|blocked
+    plan     — flags, or checks.py derives commands (goal text, project files,
+               repo docs, memory, proven history). Shown once on a TTY.
+    baseline — run the plan once (until_baseline). Unrunnable inferred commands
+               are dropped; unrunnable typed ones block. An inferred check that
+               already passes becomes a keep. A failing keep blocks.
+    maker    — isolated act() with the goal + prior handoff
+    check    — run the plan. A check that went fail → pass, with keeps and
+               advisory commands green, is done (no eval). Otherwise a failing
+               command returns to the maker. If nothing can prove the goal,
+               eval judges and every keep must still pass.
+    eval     — isolated act() with read-only tools; last line STATUS: pass|fail|blocked
     fail → next maker cycle; blocked → y/N gate; pass → optional memory mine → done
 ```
 
+- `checks.py` does not call the model. Trust is a property of the source: flags, goal text, project files, repo docs, user-stated memory, and proven history are authoritative. Observed or inferred memory, and CI lines whose program is not on `PATH`, are advisory — a failure sends the cycle back to the maker, a pass never finishes the run.
+- `--check` and `--keep` are repeatable. Either flag disables inference for that run. `check_inference: off` disables it globally. `until_baseline: off` restores direct gating: a passing check finishes the run, with no reclassification.
+- The plan is stored on the until log (`checks` on the meta row, then on the `baseline` or `plan` row). Resume reuses it and does not baseline again. A graph until-node copies the plan onto the node row's `verify` field.
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
 - Eval cannot `write_file`, `update_file`, `move_file`, `delete_file`, `remember`, `log_decision`, or `graph_add_edge` (`tools.READONLY_OMIT`). It may `run_shell` to verify; a destructive shell request there is simply `DENIED` under the until/graph `GatePolicy` and never re-asked.
-- `--check` fail (nonzero exit) goes straight back to maker — no eval turn. Check `DENIED:` is `blocked` → gate.
+- A failing check goes straight back to the maker — no eval turn. `DENIED:`, spawn `ERROR:`, and exit 126/127 are `blocked` → gate.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
@@ -335,8 +347,10 @@ This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`
 A graph is a list of named loops with **authored** sparse edges. Until is the inner node. There is no LLM router over a fully connected graph.
 
 ```
-node <name> skill <skill> [task…]     isolated act + eval STATUS: (read-only tools) unless --check
-node <name> until [--check cmd] <goal>  existing run_until
+node <name> skill <skill> [--check cmd] [--keep cmd] [task…]
+    isolated act + eval STATUS: (read-only tools) unless --check
+node <name> until [--check cmd] [--keep cmd] <goal>
+    existing run_until, including derived checks when no flag is set
 node <name> mine                      memory mine over this graph run's session logs
 edge <from> -> <to> [on pass|fail|blocked]
 ```
@@ -516,7 +530,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 |---------|-------------|
 | `lmloop` | Interactive REPL |
 | `lmloop "task"` | Task, then REPL prompt when stdin is a TTY (exits when piped) |
-| `lmloop until [--check cmd] <goal>` | Goal loop, then REPL prompt when stdin is a TTY |
+| `lmloop until [--check cmd] [--keep cmd] <goal>` | Goal loop (derived plan when no flag is given), then REPL prompt when stdin is a TTY |
 | `lmloop until` | Resume latest open until-run |
 | `lmloop graph <name>` | Authored workflow graph, then REPL prompt when stdin is a TTY |
 | `lmloop graph` | Resume latest open graph-run |

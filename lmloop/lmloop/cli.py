@@ -2,7 +2,7 @@
 
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
-    lmloop until [--check cmd] goal work until a check or evaluator passes; REPL on a TTY
+    lmloop until [--check cmd] [--keep cmd] goal  work until checks or an evaluator pass; REPL on a TTY
     lmloop until                    resume latest open until-run
     lmloop graph <name>             run an authored workflow graph; REPL on a TTY
     lmloop graph                    resume latest open graph-run
@@ -368,13 +368,13 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
     if not words:
         run = loop_mod.latest_open_until_run()
         if run is None:
-            console.error("usage: lmloop until [--check <cmd>] <goal>")
+            console.error("usage: lmloop until [--check <cmd>] [--keep <cmd>] <goal>")
             console.info("  no open until-run to resume")
             return 1
         return _cli_run_until(cfg, console, run)
-    goal, check_cmd, err = loop_mod.parse_until_args(words)
-    if err:
-        console.error(err)
+    parsed = loop_mod.parse_until_args(words)
+    if parsed.err:
+        console.error(parsed.err)
         return 1
     try:
         model = server.ensure_server(cfg, echo=console.info)
@@ -382,8 +382,10 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
         console.error(f"error: {e}")
         return 1
     hint = loop_mod.superseded_until_hint()
-    run = loop_mod.UntilRun.create(goal, check_cmd=check_cmd)
-    console.hint(f"[until · {goal}]")
+    run = loop_mod.UntilRun.create(
+        parsed.goal, checks=parsed.checks, keeps=parsed.keeps,
+    )
+    console.hint(f"[until · {parsed.goal}]")
     if hint:
         console.hint(hint)
     return _cli_run_until(cfg, console, run, model=model)
