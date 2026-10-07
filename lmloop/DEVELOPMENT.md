@@ -99,6 +99,8 @@ find yourself updating two lists, you have already added debt.
 | JSONL memory (learnings, decisions, sessions, checkpoints) | `memory.py` |
 | Knowledge-graph nodes/edges (`use_graph`) | `knowledge_graph.py` |
 | Goal loop (`until` maker/check/eval) | `loop.py` |
+| Derived check plans (no model calls) | `checks.py` |
+| Git snapshots before autonomous maker steps | `snapshot.py` |
 | Authored workflow graphs | `graph.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
@@ -129,8 +131,10 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
   `tools`, `loop`, or `graph`.
 - `ui.py` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
-- `loop.py` may import `agent.act`, `skills.system_prompt`, `memory`, `status`, and `tools.run_shell` for the check command.
-- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_check`, `eval_max_rounds`), `skills.load_skill`, `memory`, `knowledge_graph.record_skill_use`, `status`.
+- `checks.py` may import `tools.ShellCommand` and `memory` (learnings, until logs). It must not import `agent`, `loop`, or `graph`.
+- `loop.py` may import `agent.act`, `skills.system_prompt`, `memory`, `status`, `checks`, `snapshot`, and `tools.run_shell` for the check command.
+- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_plan_commands`, `eval_max_rounds`), `skills.load_skill`, `memory`, `knowledge_graph.record_skill_use`, `status`, and `snapshot`.
+- `snapshot.py` is a leaf: git via subprocess. It must not import `agent`, `loop`, or `graph`.
 - `knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.
 - `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
 - `context.py` is a leaf: `extract`, `files_index`, `memory`, `tools` parsers. It must not import `agent`, `loop`, `graph`, or `repl`.

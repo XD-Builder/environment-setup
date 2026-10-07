@@ -65,6 +65,8 @@ DEFAULTS = {
     "eval_max_rounds": 8,  # gather rounds for until/graph eval act(); maker keeps max_rounds
     "until_max_steps": 12,  # maker cycles per until invocation before pause
     "until_mine": True,  # after until pass, mine learnings from the run
+    "check_inference": "auto",  # auto: derive a check plan when no --check/--keep; off: eval only
+    "until_baseline": "auto",  # auto: baseline and reclassify a non-empty plan; off: checks gate directly
     "graph_max_steps": 24,  # node entries per graph invocation before pause
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings
     "use_graph": False,  # opt-in knowledge-graph memory (JSONL nodes/edges)
@@ -83,6 +85,10 @@ def coerce_config_value(key: str, value):
     back to DEFAULTS). Unknown keys return None.
     """
     if key not in DEFAULTS:
+        return None
+    if key in ("check_inference", "until_baseline"):
+        if isinstance(value, str) and value.strip().lower() in ("auto", "off"):
+            return value.strip().lower()
         return None
     if key == "autonomous_snapshot":
         if isinstance(value, str):

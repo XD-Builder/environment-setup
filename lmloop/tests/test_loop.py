@@ -33,27 +33,46 @@ def _cfg(**kwargs) -> dict:
 
 class ParseUntilTests(unittest.TestCase):
     def test_goal_only(self):
-        goal, check, err = parse_until_args(["make", "tests", "pass"])
-        self.assertIsNone(err)
-        self.assertEqual(goal, "make tests pass")
-        self.assertIsNone(check)
+        parsed = parse_until_args(["make", "tests", "pass"])
+        self.assertIsNone(parsed.err)
+        self.assertEqual(parsed.goal, "make tests pass")
+        self.assertEqual(parsed.checks, ())
+        self.assertEqual(parsed.keeps, ())
 
     def test_check_flag(self):
-        goal, check, err = parse_until_args(["--check", "pytest -q", "green"])
-        self.assertIsNone(err)
-        self.assertEqual(goal, "green")
-        self.assertEqual(check, "pytest -q")
+        parsed = parse_until_args(["--check", "pytest -q", "green"])
+        self.assertIsNone(parsed.err)
+        self.assertEqual(parsed.goal, "green")
+        self.assertEqual(parsed.check_cmd, "pytest -q")
+        self.assertEqual(parsed.checks, ("pytest -q",))
+
+    def test_repeated_check_and_keep(self):
+        parsed = parse_until_args([
+            "--check", "pytest -q", "--keep", "ruff check .",
+            "--check", "mypy", "ship", "it",
+        ])
+        self.assertIsNone(parsed.err)
+        self.assertEqual(parsed.checks, ("pytest -q", "mypy"))
+        self.assertEqual(parsed.keeps, ("ruff check .",))
+        self.assertEqual(parsed.goal, "ship it")
+
+    def test_missing_command_fails_closed(self):
+        parsed = parse_until_args(["--check"])
+        self.assertIsNotNone(parsed.err)
+        parsed = parse_until_args(["--keep", "--check", "true", "goal"])
+        self.assertIsNotNone(parsed.err)
 
     def test_missing_goal(self):
-        goal, check, err = parse_until_args(["--check", "true"])
-        self.assertIsNotNone(err)
-        self.assertEqual(goal, "")
+        parsed = parse_until_args(["--check", "true"])
+        self.assertIsNotNone(parsed.err)
+        self.assertEqual(parsed.goal, "")
 
     def test_shlex_quoted_check(self):
-        goal, check, err = parse_until_arg_line("--check 'pytest -q' ship it")
-        self.assertIsNone(err)
-        self.assertEqual(check, "pytest -q")
-        self.assertEqual(goal, "ship it")
+        parsed = parse_until_arg_line("--check 'pytest -q' --keep 'ruff check .' ship it")
+        self.assertIsNone(parsed.err)
+        self.assertEqual(parsed.checks, ("pytest -q",))
+        self.assertEqual(parsed.keeps, ("ruff check .",))
+        self.assertEqual(parsed.goal, "ship it")
 
 
 class EvalStatusTests(unittest.TestCase):
@@ -181,8 +200,12 @@ class UntilRunnerTests(unittest.TestCase):
              patch("lmloop.memory.project_dir", return_value=root), \
              patch("lmloop.loop.agent.act", side_effect=fake_act), \
              patch("lmloop.loop.skills.system_prompt", return_value="sys"):
-            run = UntilRun.create(kwargs.pop("goal", "make it work"),
-                                  check_cmd=kwargs.pop("check_cmd", None))
+            run = UntilRun.create(
+                kwargs.pop("goal", "make it work"),
+                check_cmd=kwargs.pop("check_cmd", None),
+                checks=kwargs.pop("checks", None),
+                keeps=kwargs.pop("keeps", None),
+            )
             return run_until(
                 cfg, "m", run=run, echo=lambda *_a, **_k: None,
                 echo_status=echo_status,
@@ -210,7 +233,10 @@ class UntilRunnerTests(unittest.TestCase):
             root = Path(d)
             run = self._run(root, _cfg(), fake_act)
             self.assertTrue(run.is_done())
-            roles = [e.get("role") for e in run.events if e.get("role") != "meta"]
+            roles = [
+                e.get("role") for e in run.events
+                if e.get("role") not in ("meta", "plan", "baseline")
+            ]
             self.assertEqual(roles[:4], ["maker", "eval", "maker", "eval"])
             self.assertIn("done", roles)
             self.assertEqual(evals["n"], 2)
@@ -368,7 +394,7 @@ class UntilRunnerTests(unittest.TestCase):
                     ask_gate=lambda _p: False,
                 )
         roles = [e.get("role") for e in run.events]
-        self.assertIn("check", roles)
+        self.assertIn("baseline", roles)
         self.assertNotIn("eval", roles)
         self.assertIn("gate", roles)
         self.assertTrue(run.is_done())
@@ -385,7 +411,7 @@ class UntilRunnerTests(unittest.TestCase):
             root = Path(d)
             with patch("lmloop.loop.run_shell", return_value="ok\n[exit code: 0]") as shell:
                 run = self._run(
-                    root, _cfg(), fake_act, check_cmd="true",
+                    root, _cfg(until_baseline="off"), fake_act, check_cmd="true",
                 )
             shell.assert_called_once()
             self.assertEqual(acts["n"], 1)
@@ -536,11 +562,177 @@ class UntilRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             with patch("lmloop.loop.run_shell", return_value=big):
-                run = self._run(root, _cfg(), fake_act, check_cmd="true")
+                run = self._run(
+                    root, _cfg(until_baseline="off"), fake_act, check_cmd="true",
+                )
             checks = [e for e in run.events if e.get("role") == "check"]
             self.assertTrue(checks)
             self.assertIn("[truncated", checks[0]["handoff"])
             self.assertTrue(run.is_done())
+
+    def test_fail_then_pass_proves_without_eval(self):
+        outputs = iter(["[exit code: 1]", "ok\n[exit code: 0]"])
+
+        def fake_act(cfg, model, messages, **kwargs):
+            messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.loop.run_shell", side_effect=lambda *_a, **_k: next(outputs)):
+                run = self._run(
+                    root, _cfg(), fake_act, check_cmd="pytest -q",
+                    interactive=False,
+                )
+        roles = [e.get("role") for e in run.events]
+        self.assertIn("baseline", roles)
+        self.assertNotIn("eval", roles)
+        self.assertTrue(run.is_done())
+        self.assertEqual(
+            [e.get("status") for e in run.events if e.get("role") == "check"],
+            ["pass"],
+        )
+
+    def test_already_passing_check_also_asks_eval(self):
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        notes = []
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.loop.run_shell", return_value="ok\n[exit code: 0]"):
+                run = self._run(
+                    root, _cfg(), fake_act, check_cmd="true",
+                    interactive=False, echo_status=notes.append,
+                )
+        roles = [e.get("role") for e in run.events]
+        self.assertIn("eval", roles)
+        self.assertTrue(run.is_done())
+        self.assertTrue(any("cannot show the change" in note for note in notes))
+
+    def test_passing_inferred_check_becomes_keep_and_eval(self):
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Makefile").write_text("test:\n\ttrue\n")
+            with patch("lmloop.loop.run_shell", return_value="ok\n[exit code: 0]"):
+                run = self._run(root, _cfg(), fake_act, interactive=False)
+        roles = [e.get("role") for e in run.events]
+        self.assertEqual(roles.count("eval"), 1)
+        self.assertTrue(run.is_done())
+        plan = run.current_checks()
+        self.assertTrue(plan)
+        self.assertTrue(all(item.role == "keep" for item in plan))
+
+    def test_broken_keep_blocks_before_maker(self):
+        acts = {"n": 0}
+
+        def fake_act(cfg, model, messages, **kwargs):
+            acts["n"] += 1
+            messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.loop.run_shell", return_value="[exit code: 1]"):
+                run = self._run(
+                    root, _cfg(), fake_act, keeps=("make test",),
+                    interactive=False, ask_gate=lambda _p: False,
+                )
+        self.assertEqual(acts["n"], 0)
+        roles = [e.get("role") for e in run.events]
+        self.assertIn("baseline", roles)
+        self.assertIn("gate", roles)
+        self.assertNotIn("maker", roles)
+        self.assertTrue(run.is_done())
+
+    def test_resume_does_not_rebaseline(self):
+        calls = {"n": 0}
+
+        def shell(*_a, **_k):
+            calls["n"] += 1
+            return "[exit code: 1]"
+
+        def fake_act(cfg, model, messages, **kwargs):
+            messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with patch("lmloop.loop.run_shell", side_effect=shell):
+                run = self._run(
+                    root, _cfg(until_max_steps=1), fake_act, check_cmd="pytest -q",
+                    interactive=False,
+                )
+                self.assertTrue(run.is_paused())
+                self.assertEqual(calls["n"], 2)
+                with patch("lmloop.loop.project_dir", return_value=root), \
+                     patch("lmloop.memory.project_dir", return_value=root), \
+                     patch("lmloop.loop.agent.act", side_effect=fake_act), \
+                     patch("lmloop.loop.skills.system_prompt", return_value="sys"):
+                    loaded = UntilRun.load(run.path)
+                    run_until(
+                        _cfg(until_max_steps=1), "m", run=loaded,
+                        echo=lambda *_a, **_k: None,
+                        echo_status=lambda *_a, **_k: None,
+                        workspace_root=root, interactive=False,
+                    )
+        self.assertEqual(calls["n"], 3)
+
+    def test_inference_off_skips_project_checks(self):
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Makefile").write_text("test:\n\ttrue\n")
+            with patch("lmloop.loop.run_shell") as shell:
+                run = self._run(
+                    root, _cfg(check_inference="off"), fake_act, interactive=False,
+                )
+            shell.assert_not_called()
+        roles = [e.get("role") for e in run.events]
+        self.assertNotIn("check", roles)
+        self.assertIn("eval", roles)
+        self.assertTrue(run.is_done())
+
+    def test_unattended_plan_does_not_prompt(self):
+        def fake_act(cfg, model, messages, **kwargs):
+            text = messages[-1]["content"]
+            if "independent checker" in text:
+                messages.append({"role": "assistant", "content": "ok\nSTATUS: pass"})
+            else:
+                messages.append({"role": "assistant", "content": "worked"})
+            return messages
+
+        def explode(_prompt=""):
+            raise AssertionError("prompted")
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Makefile").write_text("test:\n\ttrue\n")
+            with patch("builtins.input", side_effect=explode), \
+                 patch("lmloop.loop.run_shell", return_value="ok\n[exit code: 0]"):
+                run = self._run(root, _cfg(), fake_act, interactive=False)
+        self.assertTrue(run.is_done())
+        self.assertTrue(run.current_checks())
 
 
 class UntilGatePolicyTests(unittest.TestCase):
@@ -578,7 +770,10 @@ class UntilGatePolicyTests(unittest.TestCase):
                 echo_status=said.append,
             )
         self.assertTrue(run.is_done())
-        roles = [e.get("role") for e in run.events if e.get("role") != "meta"]
+        roles = [
+            e.get("role") for e in run.events
+            if e.get("role") not in ("meta", "plan", "baseline")
+        ]
         self.assertEqual(roles[:4], ["maker", "approve", "maker", "eval"])
         # first maker: denied inside act(); second maker: pre-approved
         self.assertEqual(gates, [False, True])
@@ -600,7 +795,10 @@ class UntilGatePolicyTests(unittest.TestCase):
                 Path(d), _cfg(confirm_shell=True), fake_act,
                 confirm_gate=lambda _c: False, ask_gate=lambda _p: False,
             )
-        roles = [e.get("role") for e in run.events if e.get("role") != "meta"]
+        roles = [
+            e.get("role") for e in run.events
+            if e.get("role") not in ("meta", "plan", "baseline")
+        ]
         self.assertEqual(roles[:2], ["maker", "eval"])
         self.assertNotIn("approve", roles)
         self.assertEqual(gates, [False])

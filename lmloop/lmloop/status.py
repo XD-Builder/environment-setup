@@ -70,6 +70,19 @@ def msg_until_blocked() -> str:
     return status("until checker is blocked — need a yes/no")
 
 
+def msg_until_baseline() -> str:
+    return status("until baseline · running the check plan once before any work")
+
+
+def msg_until_note(note: str) -> str:
+    return status(f"until · {note}")
+
+
+def msg_until_check_blocked(cmd: str) -> str:
+    named = f" — {cmd} is not runnable here" if cmd else ""
+    return status(f"until checker is blocked{named}")
+
+
 def msg_gates_denied(count: int, label: str = "until") -> str:
     noun = "action" if count == 1 else "actions"
     return status(f"{label}: {count} irreversible {noun} denied this cycle — need a yes/no")

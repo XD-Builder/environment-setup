@@ -44,7 +44,9 @@ After installing the binary, open a new shell (or re-source `~/.zshrc`).
 ```bash
 lmloop                                  # interactive REPL
 lmloop "why does setup.sh fail on linux?"   # one-shot task
+lmloop until make the tests pass          # derive a check plan from the project
 lmloop until --check 'pytest -q' make tests pass
+lmloop until --keep 'npm run lint' tidy the parser
 lmloop until                            # resume latest open until-run
 lmloop graph company
 lmloop graph                            # resume latest open graph-run
@@ -117,7 +119,7 @@ Inside the REPL:
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/context` | files held in this conversation (full path on its own line), then injected memory (`/memory dump` is that memory view alone) |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
-| `/until [--check cmd] <goal>` | isolated maker/checker loop until a check or evaluator passes; `--check` fail retries the maker (no eval); eval uses read-only tools; then type to continue from a handoff |
+| `/until [--check cmd] [--keep cmd] <goal>` | isolated maker/checker loop. With no flags, lmloop derives a check plan from the goal and the project, shows it (`Enter` run, `e` edit, `s` checker only; no prompt when stdin is not a TTY), and baselines it once. A check that goes fail → pass finishes the run; an already-passing check becomes an invariant and the evaluator decides. `--check` / `--keep` skip inference. Then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
 | `/memory [list \| decisions \| dump \| query \| mine [n] \| kg \| reconcile]` | dashboard or search; injected memory; mine this session (or last n prior files); knowledge-graph stats (`kg`); reconcile contradictions when `use_graph` |
@@ -260,6 +262,8 @@ zsh completion for `config set` is generated from these keys.
 | `context_reserve` | `2048` | Tokens reserved for the model reply on the fill bar |
 | `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` with no goal resumes) |
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
+| `check_inference` | `auto` | `auto`: when `until` has no `--check` or `--keep`, derive a check plan from the goal, project files, repo docs, memory, and earlier runs. `off`: plain-language goals go straight to the evaluator |
+| `until_baseline` | `auto` | `auto`: run the plan once before any work, drop commands that cannot start, and turn already-passing checks into invariants. `off`: a passing check finishes the run immediately |
 | `graph_max_steps` | `24` | Skill/until node entries per `graph` invocation before pause (`/continue` or `lmloop graph` with no name resumes). Mine and HITL gate do not count. |
 | `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
 | `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |
@@ -278,6 +282,7 @@ zsh completion for `config set` is generated from these keys.
 | A file was overwritten or deleted by mistake | The tool result and the dim REPL line cite the backup under `~/.lmloop/projects/<slug>/trash/<stamp>/`. Copy it back (or ask the model to `move_file` it back). Backups are pruned after 14 days. |
 | Autonomous run damaged the workspace | Each maker row in `until/<ts>.jsonl` or `graphs/<name>/<ts>.jsonl` may include `snapshot_ref` (`HEAD` or `refs/lmloop/...`). Restore with `git restore --source=<ref> -- .` or `git checkout <ref> -- <path>`. Refs older than 14 days are pruned; `git push` does not send `refs/lmloop/*` by default. |
 | `/until` keeps asking y/N | Recoverable file ops auto-approve by default; the ask is for destructive shell or outside-workspace writes, once per maker step. `lmloop config set autonomous_gates all` silences it for unattended runs; `none` asks for everything. |
+| `until` runs the wrong check | The plan is printed before the first cycle. Press `e` to edit it, or pass `--check` / `--keep`. `lmloop config set check_inference off` leaves plain-language goals to the evaluator. `until_baseline off` makes a passing check finish the run immediately. |
 | Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
 | "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes, unless a long draft is already on screen (`model stopped without finishing`). |

@@ -21,16 +21,15 @@ from .loop import (
     UntilRun,
     approved_note,
     boundary_approval,
-    check_status_from_output,
-    clip_check_output,
     drop_denied,
     eval_max_rounds,
     isolated_act,
     last_assistant,
     parse_eval_status,
     parse_until_args,
-    run_check,
+    run_plan_commands,
     run_until,
+    split_check_flags,
 )
 
 NODE_KINDS = frozenset({"skill", "until", "mine"})
@@ -54,6 +53,8 @@ class NodeDef:
     task: str = ""
     goal: str = ""
     check_cmd: "str | None" = None
+    checks: tuple = ()
+    keeps: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -147,32 +148,27 @@ def _parse_node(tokens: list) -> NodeDef:
     if kind == "mine":
         return NodeDef(name=name, kind=kind)
     if kind == "until":
-        goal, check_cmd, err = parse_until_args(rest)
-        if err or not goal:
+        parsed = parse_until_args(rest)
+        if parsed.err or not parsed.goal:
             raise GraphError(f"until node {name!r} needs a goal")
-        return NodeDef(name=name, kind=kind, goal=goal, check_cmd=check_cmd)
-    skill, task, check_cmd = _parse_skill_rest(rest)
+        return NodeDef(
+            name=name, kind=kind, goal=parsed.goal,
+            check_cmd=parsed.check_cmd, checks=parsed.checks, keeps=parsed.keeps,
+        )
+    skill, task, checks, keeps = _parse_skill_rest(rest)
     return NodeDef(
-        name=name, kind=kind, skill=skill, task=task, check_cmd=check_cmd,
+        name=name, kind=kind, skill=skill, task=task,
+        check_cmd=checks[0] if checks else None, checks=checks, keeps=keeps,
     )
 
 
-def _parse_skill_rest(words: list) -> "tuple[str, str, str | None]":
-    check_cmd = None
-    rest: list[str] = []
-    i = 0
-    while i < len(words):
-        if words[i] == "--check":
-            if i + 1 >= len(words):
-                raise GraphError("skill node --check needs a command")
-            check_cmd = words[i + 1]
-            i += 2
-            continue
-        rest.append(words[i])
-        i += 1
+def _parse_skill_rest(words: list) -> "tuple[str, str, tuple, tuple]":
+    checks, keeps, rest, err = split_check_flags(words)
+    if err:
+        raise GraphError("skill node --check/--keep needs a command")
     if not rest:
         raise GraphError("skill node needs a skill name")
-    return rest[0], " ".join(rest[1:]).strip(), check_cmd
+    return rest[0], " ".join(rest[1:]).strip(), checks, keeps
 
 
 def _parse_edge(tokens: list) -> EdgeDef:
@@ -284,7 +280,7 @@ class GraphRun:
 
     def append(self, role: str, status: str, node: str = "",
                handoff: str = "", session: str = "",
-               until_run: str = "", snapshot_ref: str = "") -> None:
+               until_run: str = "", verify=None, snapshot_ref: str = "") -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
         row = {
             "ts": utc_now(),
@@ -296,6 +292,8 @@ class GraphRun:
             "session": session,
             "until_run": until_run,
         }
+        if verify:
+            row["verify"] = verify
         if snapshot_ref:
             row["snapshot_ref"] = snapshot_ref
         self._write(row)
@@ -459,13 +457,11 @@ def _run_skill_node(
     messages, session_log = result
     knowledge_graph.record_skill_use(node.skill, session=session_log, cfg=cfg)
     summary = last_assistant(messages)
-    if node.check_cmd:
-        output = run_check(cfg, node.check_cmd, confirm_gate, workspace_root)
-        drop_denied(confirm_gate)
-        displayed = clip_check_output(output)
-        echo_status(displayed)
-        status = check_status_from_output(output)
-        return status, summary, str(session_log)
+    command_status = _skill_command_status(
+        cfg, node, confirm_gate, workspace_root, echo_status,
+    )
+    if command_status is not None:
+        return command_status, summary, str(session_log)
     eval_prompt = EVAL_PROMPT.format(
         goal=node.task or f"complete the {node.skill} playbook",
         handoff=summary or "(none)",
@@ -490,18 +486,45 @@ def _run_skill_node(
     return status, summary, str(session_log)
 
 
+def _skill_command_status(cfg, node: NodeDef, confirm_gate, workspace_root,
+                          echo_status) -> "str | None":
+    """Run explicit skill --check/--keep commands.
+
+    Returns pass, fail, or blocked. None means there is no check command, or
+    only keeps passed and the eval checker must still judge the task.
+    """
+    checks = tuple(node.checks or (() if not node.check_cmd else (node.check_cmd,)))
+    keeps = tuple(node.keeps or ())
+    if not checks and not keeps:
+        return None
+    results = run_plan_commands(
+        cfg, list(checks) + list(keeps), confirm_gate, workspace_root,
+    )
+    for row in results:
+        echo_status(row["output"])
+    if any(row["status"] == "blocked" for row in results):
+        return "blocked"
+    if any(row["status"] != "pass" for row in results):
+        return "fail"
+    if checks:
+        return "pass"
+    return None
+
+
 def _run_until_node(
     cfg: dict, model: str, node: NodeDef, handoff: str, *,
     resume_until: "str | None",
     confirm_gate, echo, echo_status, echo_error, echo_tool, echo_round,
     context_limit, context_reserve, workspace_root, ask_gate,
     clock_now=None,
-) -> "tuple[str, str, str, str]":
-    """Return (status, handoff, session, until_path)."""
+) -> "tuple[str, str, str, str, list]":
+    """Return (status, handoff, session, until_path, verify)."""
     if resume_until:
         urun = UntilRun.load(Path(resume_until))
     else:
-        urun = UntilRun.create(node.goal, check_cmd=node.check_cmd)
+        urun = UntilRun.create(
+            node.goal, checks=node.checks, keeps=node.keeps,
+        )
     result = run_until(
         cfg, model, run=urun,
         confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
@@ -515,12 +538,13 @@ def _run_until_node(
     paths = result.session_paths()
     session = str(paths[-1]) if paths else ""
     summary = result.last_maker_handoff() or ""
+    verify = [item.as_dict() for item in result.current_checks()]
     if result.is_paused():
-        return "pause", summary, session, until_path
+        return "pause", summary, session, until_path, verify
     last = result.last_work()
     if last and last.get("role") == "gate" and last.get("status") == "no":
-        return "blocked", summary, session, until_path
-    return "pass", summary, session, until_path
+        return "blocked", summary, session, until_path, verify
+    return "pass", summary, session, until_path, verify
 
 
 def run_graph(
@@ -625,7 +649,7 @@ def run_graph(
             if node.kind == "until":
                 resume = run.resume_until(node.name)
                 current_until = resume or ""
-                status, summary, session, until_path = _run_until_node(
+                status, summary, session, until_path, verify = _run_until_node(
                     cfg, model, node, handoff, resume_until=resume,
                     confirm_gate=confirm_gate, echo=echo,
                     echo_status=echo_status, echo_error=echo_error,
@@ -646,6 +670,7 @@ def run_graph(
                 run.append(
                     "node", status, node=node.name,
                     handoff=summary, session=session, until_run=until_path,
+                    verify=verify,
                     snapshot_ref=snap_ref,
                 )
                 continue
