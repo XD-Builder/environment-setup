@@ -9,7 +9,14 @@ from typing import Callable
 from . import agent, extract, knowledge_graph, loop as loop_mod, memory, server, skills, tools
 from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
-from .commands import slash_command_metas
+from .commands import (
+    MEMORY_ARG_COMPLETION,
+    MSG_DEPRECATE_DECISIONS,
+    MSG_DEPRECATE_MEMORY_GRAPH,
+    MSG_DEPRECATE_RETRO,
+    ADVANCED_SKILL_SLASH,
+    slash_command_metas,
+)
 from .config import project_slug
 from .files_index import (
     AtRefExpansion,
@@ -47,7 +54,9 @@ class SlashCommand:
     accepts_arg: bool = False
     exits: bool = False
     hidden: bool = False
+    advanced: bool = False
     arg_choices: tuple = ()
+    completion_arg_choices: tuple = ()
 
 
 @dataclass
@@ -237,8 +246,9 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
 
 # --- session ---
 
-def _cmd_help(state: SessionState, _arg: str) -> bool:
-    print(state.console.help_text(SLASH_COMMANDS))
+def _cmd_help(state: SessionState, arg: str) -> bool:
+    show_all = (arg or "").strip().lower() in ("all", "advanced")
+    print(state.console.help_text(SLASH_COMMANDS, show_all=show_all))
     return True
 
 
@@ -277,7 +287,7 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
     parts = (arg or "").split(None, 1)
     verb = parts[0] if parts else "list"
     if not parts or verb == "list":
-        return _cmd_memory_list(state)
+        return _cmd_memory_peek(state)
     if verb == "decisions":
         return _cmd_memory_decisions(state)
     if verb == "dump":
@@ -285,7 +295,9 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
     if verb == "mine":
         rest = parts[1] if len(parts) > 1 else ""
         return _cmd_memory_mine(state, rest, confirm_gate)
-    if verb == "graph":
+    if verb in ("kg", "graph"):
+        if verb == "graph":
+            state.console.hint(MSG_DEPRECATE_MEMORY_GRAPH)
         return _cmd_memory_graph(state)
     if verb == "reconcile":
         return _cmd_memory_reconcile(state, confirm_gate)
@@ -293,17 +305,13 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
     return True
 
 
-def _cmd_memory_list(state: SessionState) -> bool:
-    state.console.write_lines(
-        memory.learning_list_lines(limit=memory.MEMORY_LIST_LIMIT),
-    )
+def _cmd_memory_peek(state: SessionState) -> bool:
+    state.console.write_lines(memory.memory_peek_lines(state.cfg))
     return True
 
 
-def _cmd_memory_decisions(state: SessionState) -> bool:
-    state.console.write_lines(
-        memory.decision_list_lines(limit=memory.MEMORY_DECISIONS_LIMIT),
-    )
+def _cmd_memory_decisions(state: SessionState, *, limit: int = memory.MEMORY_DECISIONS_LIMIT) -> bool:
+    state.console.write_lines(memory.decision_list_lines(limit=limit))
     return True
 
 
@@ -453,6 +461,7 @@ def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
 
 
 def _cmd_retro(state: SessionState, arg: str, confirm_gate) -> bool:
+    state.console.hint(MSG_DEPRECATE_RETRO)
     state.console.hint("[memory mine]")
     return _cmd_memory_mine(state, arg, confirm_gate)
 
@@ -635,8 +644,8 @@ def _cmd_checkpoints(state: SessionState, arg: str) -> bool:
 
 
 def _cmd_decisions(state: SessionState, _arg: str) -> bool:
-    state.console.write_lines(memory.decision_list_lines(limit=30))
-    return True
+    state.console.hint(MSG_DEPRECATE_DECISIONS)
+    return _cmd_memory_decisions(state, limit=30)
 
 
 def _restore_usage(console: Console) -> None:
@@ -1214,10 +1223,13 @@ def _build_slash_commands(confirm_gate) -> list:
         handler = handlers.get(meta.name)
         if handler is None:
             raise RuntimeError(f"no handler for /{meta.name}")
+        completion_subs = MEMORY_ARG_COMPLETION if meta.name == "memory" else ()
         commands.append(SlashCommand(
             f"/{meta.name}", meta.desc, handler,
             arg_hint=meta.arg_hint, accepts_arg=meta.accepts_arg, exits=meta.exits,
             arg_choices=meta.arg_choices,
+            advanced=meta.help_tier == "advanced",
+            completion_arg_choices=completion_subs,
         ))
     commands.append(SlashCommand(
         "/retro", "alias for /memory mine",
@@ -1234,6 +1246,7 @@ def _build_slash_commands(confirm_gate) -> list:
             slash, blurb,
             lambda s, a, n=name: _run_named_skill(s, n, a, confirm_gate),
             "[task]", accepts_arg=True,
+            advanced=name in ADVANCED_SKILL_SLASH,
         ))
     return commands
 

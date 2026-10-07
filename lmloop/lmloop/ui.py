@@ -437,11 +437,14 @@ class Console:
         lines.append(row("cwd", str(Path.cwd()), t.dim))
         return "\n".join(lines)
 
-    def help_text(self, commands: list) -> str:
+    def help_text(self, commands: list, *, show_all: bool = False) -> str:
         t = self.t
-        lines = [t.c("commands:", t.bold)]
+        heading = "commands (all):" if show_all else "commands:"
+        lines = [t.c(heading, t.bold)]
         for cmd in commands:
             if cmd.exits or getattr(cmd, "hidden", False):
+                continue
+            if not show_all and getattr(cmd, "advanced", False):
                 continue
             name = t.c(cmd.name, t.green)
             arg = f" {cmd.arg_hint}" if cmd.arg_hint else ""
@@ -449,6 +452,12 @@ class Console:
             lines.append(f"  {name}{arg}{' ' * pad}{cmd.desc}")
         lines.append(f"  {t.c('/quit', t.green)}{' ' * 16}exit  (/exit, /q)")
         lines.append("")
+        if not show_all:
+            lines.append(
+                f"  {t.c('/help all', t.green)}{' ' * 12}"
+                "restore, compact, undo, /memory reconcile, …"
+            )
+            lines.append("")
         lines.append(
             f"  {t.c('/', t.green)} or Tab completes /commands, /skill names, and @files"
             f"  ({t.c('/', t.green)} on @dir/ lists that directory)"
