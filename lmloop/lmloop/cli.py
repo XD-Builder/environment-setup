@@ -22,6 +22,7 @@
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
+    lmloop eval [--json | --design] local usage evals and improvement gaps
 
 Project memory commands:
 
@@ -35,6 +36,7 @@ Project memory commands:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -607,6 +609,34 @@ def cmd_skill_cli(cfg: dict, words: list, console: Console) -> int:
     return run_repl(cfg, console=console, skill=name, first_task=task)
 
 
+def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
+    from . import evals
+
+    as_json = False
+    as_design = False
+    rest: list[str] = []
+    for w in words:
+        if w == "--json":
+            as_json = True
+        elif w in ("--design", "--design-doc"):
+            as_design = True
+        else:
+            rest.append(w)
+    if rest:
+        console.error("usage: lmloop eval [--json | --design]")
+        return 1
+    stats = evals.load_stats()
+    gaps = evals.find_gaps(stats)
+    if as_json:
+        console.echo(json.dumps(evals.report_dict(stats, gaps), indent=2))
+        return 0
+    if as_design:
+        console.echo(evals.design_doc_skeleton(gaps))
+        return 0
+    console.echo(evals.format_report(stats, gaps))
+    return 0
+
+
 def cmd_completion_cli(cfg: dict, words: list, console: Console) -> int:
     shell = words[0] if words else ""
     if not shell:
@@ -630,6 +660,7 @@ def cli_handlers() -> dict:
         "skills": cmd_skills_cli,
         "skill": cmd_skill_cli,
         "completion": cmd_completion_cli,
+        "eval": cmd_eval_cli,
     }
 
 

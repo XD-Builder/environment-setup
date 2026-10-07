@@ -1469,10 +1469,12 @@ def dispatch(impls: dict, name: str, arguments: str) -> str:
     from . import usage
 
     if not (name or "").strip():
+        usage.record("tool.error", name="", phase="empty")
         return "ERROR: empty tool name"
     usage.record("tool", name=name)
     fn = impls.get(name)
     if not fn:
+        usage.record("tool.error", name=name, phase="unknown")
         return f"ERROR: unknown tool {name}"
     # Ensure validation table exists even if build_tools was not called first.
     if name not in _TOOL_DEFS:
@@ -1480,11 +1482,14 @@ def dispatch(impls: dict, name: str, arguments: str) -> str:
     try:
         kwargs = json.loads(arguments or "{}")
         if not isinstance(kwargs, dict):
+            usage.record("tool.error", name=name, phase="json")
             return "ERROR: tool arguments must be a JSON object"
     except json.JSONDecodeError as e:
+        usage.record("tool.error", name=name, phase="json")
         return f"ERROR: bad tool arguments: {e}"
     err = _validate_tool_kwargs(name, kwargs)
     if err:
+        usage.record("tool.error", name=name, phase="validate")
         return err
     try:
         params = inspect.signature(fn).parameters
@@ -1492,8 +1497,13 @@ def dispatch(impls: dict, name: str, arguments: str) -> str:
         result = fn(**filtered)
         if isinstance(result, ToolResult):
             return result
-        return str(result)
+        text = str(result)
+        if text.startswith("ERROR:"):
+            usage.record("tool.error", name=name, phase="impl")
+        return text
     except TypeError as e:
+        usage.record("tool.error", name=name, phase="type")
         return f"ERROR: {e}"
     except Exception as e:  # tool errors go back to the model, never crash the loop
+        usage.record("tool.error", name=name, phase="exception")
         return f"ERROR: {type(e).__name__}: {e}"

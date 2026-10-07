@@ -572,9 +572,9 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
     """
-    from . import usage
+    from . import usage as usage_mod
 
-    usage.record("agent.act", readonly=readonly, no_tools=no_tools)
+    usage_mod.record("agent.act", readonly=readonly, no_tools=no_tools)
     if echo_status is None:
         echo_status = echo
     if echo_tool is None:
@@ -605,8 +605,11 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         checkpoint=len(messages),
     )
     prev_session = memory.set_active_session(session_log)
+    act_ok = False
 
     def _finish() -> list:
+        nonlocal act_ok
+        act_ok = True
         turn.commit_stats(stats)
         return messages
 
@@ -627,11 +630,11 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             )
             try:
                 round_specs = None if (is_answer or no_tools) else tool_specs
-                msg, usage = _chat(
+                msg, chat_usage = _chat(
                     cfg, model, messages, round_specs,
                     **round_ui.chat_kwargs(),
                 )
-                _accumulate_usage(stats, usage)
+                _accumulate_usage(stats, chat_usage)
                 turn.turn_rounds += 1
                 tool_calls, content = round_ui.settle(msg, is_answer or no_tools)
                 halted = bool(msg.get("_halted"))
@@ -684,4 +687,13 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         _rollback_incomplete_messages(messages, turn.checkpoint)
         raise
     finally:
+        usage_mod.record(
+            "agent.act.finish",
+            readonly=readonly,
+            no_tools=no_tools,
+            rounds=turn.turn_rounds,
+            tools=turn.turn_tools,
+            interrupted=bool(stats and stats.get("interrupted")),
+            ok=act_ok,
+        )
         memory.set_active_session(prev_session)

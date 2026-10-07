@@ -39,6 +39,28 @@ PAUSE_ROLE = "pause"
 # User approved this cycle's denied irreversible actions; handoff holds them as JSON.
 APPROVE_ROLE = "approve"
 DONE_ROLES = frozenset({"mine", "done"})
+
+
+def _until_outcome_label(events: list) -> str:
+    """Coarse until-run outcome for local usage evals."""
+    if not events:
+        return "empty"
+    last = events[-1]
+    role = last.get("role")
+    status = last.get("status")
+    if role == "pause":
+        return "paused"
+    if role == "done" and status == "pass":
+        return "pass"
+    if role == "mine":
+        return "pass_mined"
+    if role == "gate" and status == "no":
+        return "stopped"
+    if role == "eval":
+        return f"eval_{status}"
+    if role == "check":
+        return f"check_{status}"
+    return f"{role}:{status}"
 CHECK_OUTPUT_LIMIT = 2000
 _CHECK_TRUNCATED = "\n... [truncated, {total} chars total]"
 
@@ -705,6 +727,42 @@ def run_until(
     from . import usage
 
     usage.record("until.run", resume=bool(run.path.exists()))
+    try:
+        return _run_until_body(
+            cfg, model, run=run, confirm_gate=confirm_gate, echo=echo,
+            echo_status=echo_status, echo_tool=echo_tool, echo_error=echo_error,
+            echo_round=echo_round, context_limit=context_limit,
+            context_reserve=context_reserve, workspace_root=workspace_root,
+            ask_gate=ask_gate, mine=mine, seed_handoff=seed_handoff,
+            clock_now=clock_now, interactive=interactive,
+        )
+    finally:
+        usage.record(
+            "until.finish",
+            outcome=_until_outcome_label(run.events),
+            paused=run.is_paused(),
+            done=run.is_done(),
+        )
+
+
+def _run_until_body(
+    cfg: dict, model: str, *,
+    run: UntilRun,
+    confirm_gate=None,
+    echo=print,
+    echo_status=None,
+    echo_tool=None,
+    echo_error=None,
+    echo_round=None,
+    context_limit: int = 0,
+    context_reserve: int = DEFAULTS["context_reserve"],
+    workspace_root: "Path | None" = None,
+    ask_gate=None,
+    mine=None,
+    seed_handoff: str = "",
+    clock_now=None,
+    interactive: "bool | None" = None,
+) -> UntilRun:
     if echo_status is None:
         echo_status = echo
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
@@ -831,6 +889,14 @@ def run_until(
                     )
                     echo_status(status_mod.msg_until_check_blocked(blocked))
                 run.append("check", status, handoff=check_output, results=results)
+                from . import usage
+
+                usage.record(
+                    "check.cycle",
+                    status=status,
+                    checks=len(planned),
+                    blocked=sum(1 for row in results if row["status"] == "blocked"),
+                )
                 continue
             if role == "eval":
                 echo_status(status_mod.msg_until_step("eval", makers_this_call, max_steps))
