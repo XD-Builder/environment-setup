@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import agent, memory, server, skills, status as status_mod, tools
 from .config import project_dir, utc_now
+from . import snapshot as snapshot_mod
 from .tools import run_shell, shell_confirm_flags
 
 STATUS_LINE_PREFIX = "STATUS:"
@@ -261,16 +262,20 @@ class UntilRun:
         self.events.append(row)
 
     def append(self, role: str, status: str, handoff: str = "",
-               session: str = "") -> None:
+               session: str = "", **extra: object) -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
-        self._write({
+        row = {
             "ts": utc_now(),
             "step": step,
             "role": role,
             "status": status,
             "handoff": handoff,
             "session": session,
-        })
+        }
+        for key, val in extra.items():
+            if val is not None and val != "" and val != ():
+                row[key] = val
+        self._write(row)
 
     def last_work(self) -> "dict | None":
         for ev in reversed(self.events):
@@ -472,6 +477,7 @@ def run_until(
     gate = tools.autonomous_gate(cfg, confirm_gate, echo_status)
     if isinstance(gate, tools.GatePolicy):
         gate.approve(run.approved_commands())  # resumed right after a yes
+    snapshot_mod.prune_old_refs(root, cfg)
 
     try:
         while True:
@@ -488,6 +494,9 @@ def run_until(
                     echo_status(status_mod.msg_until_max_steps())
                     return run
                 makers_this_call += 1
+                snap = snapshot_mod.take_snapshot(
+                    root, cfg, run.path.stem, makers_this_call,
+                )
                 echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
                 prompt = MAKER_PROMPT.format(
                     goal=run.goal,
@@ -509,6 +518,7 @@ def run_until(
                     "maker", "next",
                     handoff=last_assistant(messages),
                     session=str(session_log),
+                    **snapshot_mod.log_fields(snap),
                 )
                 approved = boundary_approval(gate, ask_gate, echo_status)
                 if approved:

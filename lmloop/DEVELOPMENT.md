@@ -99,6 +99,7 @@ find yourself updating two lists, you have already added debt.
 | JSONL memory (learnings, decisions, sessions, checkpoints) | `memory.py` |
 | Knowledge-graph nodes/edges (`use_graph`) | `knowledge_graph.py` |
 | Goal loop (`until` maker/check/eval) | `loop.py` |
+| Git snapshots before maker steps (`refs/lmloop/*`) | `snapshot.py` (leaf) |
 | Authored workflow graphs | `graph.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |

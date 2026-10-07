@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import knowledge_graph, memory, skills, status as status_mod, tools
+from . import knowledge_graph, memory, skills, snapshot as snapshot_mod, status as status_mod, tools
 from .config import STATE_ROOT, project_dir, utc_now
 from .loop import (
     DONE_ROLES,
@@ -284,9 +284,9 @@ class GraphRun:
 
     def append(self, role: str, status: str, node: str = "",
                handoff: str = "", session: str = "",
-               until_run: str = "") -> None:
+               until_run: str = "", **extra: object) -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
-        self._write({
+        row = {
             "ts": utc_now(),
             "step": step,
             "role": role,
@@ -295,7 +295,11 @@ class GraphRun:
             "handoff": handoff,
             "session": session,
             "until_run": until_run,
-        })
+        }
+        for key, val in extra.items():
+            if val is not None and val != "" and val != ():
+                row[key] = val
+        self._write(row)
 
     def last_work(self) -> "dict | None":
         for ev in reversed(self.events):
@@ -551,6 +555,7 @@ def run_graph(
     clock_now = datetime.now(timezone.utc)
     # One policy for the whole graph run; nested run_until reuses it as-is.
     confirm_gate = tools.autonomous_gate(cfg, confirm_gate, echo_status)
+    snapshot_mod.prune_old_refs(root, cfg)
 
     try:
         while True:
@@ -590,10 +595,14 @@ def run_graph(
                 echo_status(status_mod.msg_graph_max_steps())
                 return run
             steps_this_call += 1
+            snap = snapshot_mod.take_snapshot(
+                root, cfg, run.path.stem, steps_this_call,
+            )
             echo_status(status_mod.msg_graph_step(
                 node.name, steps_this_call, max_steps,
             ))
             handoff = run.last_handoff()
+            snap_fields = snapshot_mod.log_fields(snap)
             if node.kind == "skill":
                 status, summary, session = _run_skill_node(
                     cfg, model, node, handoff,
@@ -610,6 +619,7 @@ def run_graph(
                 run.append(
                     "node", status, node=node.name,
                     handoff=summary, session=session,
+                    **snap_fields,
                 )
                 continue
             if node.kind == "until":
@@ -636,6 +646,7 @@ def run_graph(
                 run.append(
                     "node", status, node=node.name,
                     handoff=summary, session=session, until_run=until_path,
+                    **snap_fields,
                 )
                 continue
             raise RuntimeError(f"unknown graph node kind {node.kind!r}")

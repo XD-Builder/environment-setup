@@ -54,6 +54,7 @@ DEFAULTS = {
     # (backed up to trash/), ask once per cycle for the rest; none = ask for
     # everything; all = never ask (unattended runs only)
     "autonomous_gates": "files",
+    "autonomous_snapshot": "git",  # git | off — temp-index refs under refs/lmloop/
     "shell_timeout_s": 120,
     "web_timeout_s": 30,
     "max_tool_output": 12000,
@@ -82,6 +83,12 @@ def coerce_config_value(key: str, value):
     back to DEFAULTS). Unknown keys return None.
     """
     if key not in DEFAULTS:
+        return None
+    if key == "autonomous_snapshot":
+        if isinstance(value, str):
+            low = value.strip().lower()
+            if low in ("git", "off"):
+                return low
         return None
     if key == "vision":
         if isinstance(value, bool):

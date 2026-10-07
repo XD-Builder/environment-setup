@@ -322,6 +322,7 @@ until goal:
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
 - Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role.
+- When `autonomous_snapshot` is `git` (default) and the workspace is a git repo, each maker step takes a temp-index snapshot before work: `refs/lmloop/<run-ts>/<step>` via `snapshot.py`. Untracked files are included; files over 20 MB are skipped and listed on the row. A clean tree records `snapshot_ref: HEAD` without creating a ref. Refs older than 14 days are pruned on run start.
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
 This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
