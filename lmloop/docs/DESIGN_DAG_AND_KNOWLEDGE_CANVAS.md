@@ -1,6 +1,6 @@
 # Design: DAG workflows, flow mining, and the terminal knowledge canvas
 
-**Status:** proposed (nothing here is implemented)
+**Status:** partial — Phases K, D, and W shipped; Phase C shipped as **text** canvas (`canvas_view` + `memory canvas`); full-screen TUI (C2–C3) and W6 KG run nodes remain proposed.
 **Date:** 2026-09-19 · **Revised:** 2026-09-26 (round 5: parallel agents deferred)
 **Depends on:** `graph.py`, `server.py`, `chat.py`, `memory.py`, `knowledge_graph.py`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
@@ -20,6 +20,18 @@ Four features, all running **one agent at a time**:
 **Parallel agents are deferred** (Part 5). On a laptop serving one model they deliver no
 speedup, and the review rounds showed how much machinery a correct version needs. The
 constraints that work uncovered are recorded so a future design starts from them.
+
+### What shipped (2026-10)
+
+| Phase | Shipped in |
+|---|---|
+| K1–K3 `model_concurrency`, `ModelSlots`, `run_token_budget`, `eval_model` | `server.py`, `chat.py`, `loop.py`, `graph.py` |
+| D1–D3 fan-out, `needs`, join handoffs, frontier replay | `graph.py` |
+| W1–W5 run-log fields, `FlowStats`, `lmloop flow`, `graph propose` | `workflow.py`, `loop.py`, `graph.py`, `cli.py` |
+| C1 + C4 (text) `canvas_view`, `memory canvas` | `knowledge_graph.py`, `cli.py`, `repl.py` |
+
+**Not shipped yet:** W6 run/goal nodes in the knowledge graph, C2–C3 `canvas_tui.py`
+(full-screen TUI), parallel agents (Part 5, still deferred).
 
 ## Revision history
 
