@@ -1,6 +1,6 @@
 # Design: Fast, ranked memory retrieval
 
-**Status:** proposed (nothing here is implemented)
+**Status:** partial — Layers A–C shipped; Layer D shipped as a **minimal** FTS5 index (learnings/decisions only); Layer E deferred. See task IDs below.
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: single process; config budget; embeddings deferred)
 **Depends on:** `memory.py`, `knowledge_graph.py`, `skills.system_prompt`, `loop.isolated_act`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
@@ -21,6 +21,20 @@ none of them changes the source of truth.
 | **C. Prompt-stable injection** | Memory block changes between `until` cycles and defeats prefix caching | none | none |
 | **D. FTS5 derived index** | Linear scans; sessions and run handoffs are not searchable at all | `index.sqlite3` (deletable) | none (stdlib `sqlite3`) |
 | **E. Semantic rerank (deferred)** | Paraphrases: "flaky test" vs "intermittent failure" | vectors table in the same index | none (pure-Python cosine) |
+
+### What shipped (2026-10)
+
+| Layer / task | Shipped in |
+|---|---|
+| A2–A4 `GraphView`, backfill fingerprint, linear `stats` | `knowledge_graph.py` |
+| B1–B3 tokenizer, IDF ranking, full decision search | `memory.py` |
+| C1 frozen `memory_block` per `until` run | `loop.py`, `skills.py` |
+| D (minimal) FTS5/scan index, `memory index` / `reindex`, `/stats` line | `memory_index.py`, `cli.py`, `repl.py` |
+| Canvas layout helper (cross-doc) | `knowledge_graph.canvas_view`, text via `format_canvas_text` |
+
+**Not shipped yet:** A1 perf harness, A5 `read_jsonl` parse cache, D3 incremental sync,
+session ingest, D5–D8 (session snippets, `command_candidates`, multi-process writers), E1–E3,
+`canvas_tui.py` full-screen UI.
 
 ---
 

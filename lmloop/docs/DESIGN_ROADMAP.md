@@ -1,6 +1,6 @@
 # Design roadmap: final review of the proposals
 
-**Status:** proposed order. R1 snapshots and step 2 derived checks (V1–V6) have shipped. The sandbox (Phase S) and V7–V9 remain proposed. This file still adds no feature of its own.
+**Status:** living build order — steps 0–4 and most of 5–7 shipped on the host path; Phase S (Docker sandbox), memory Layer E (embeddings rerank), parallel agents, and eval doc V1–V4 remain open. This file still adds no feature of its own.
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: cuts applied to the design docs)
 **Covers:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
@@ -29,14 +29,14 @@ What remains is a small, high-value core:
    and a prompt that defeats caching every cycle.
 4. **Four shipped defects**, each a small, independent fix.
 
-Build those first, ship them, and let `lmloop flow` data decide how much of the rest is worth
-building.
+Steps 0–4 and the host-path pieces of 5–7 have landed; `lmloop flow` data should decide
+whether to invest in Docker (Phase S), semantic rerank, or parallel agents.
 
 ---
 
-## 1. Fix what is broken today (before any proposal)
+## 1. Fix what is broken today (shipped — step 0)
 
-Each was reproduced against the current code during review.
+Each was reproduced against the current code during review; all four fixes shipped.
 
 | # | Defect | Evidence | Fix | Doc |
 |---|---|---|---|---|
@@ -145,16 +145,16 @@ flowchart TD
   classDef later fill:#f5f5f5,stroke:#999
   classDef defer fill:#ffffff,stroke:#999,stroke-dasharray:5 3
 
-  s0["0 · Shipped defects<br/>V0 env errors → blocked · until_max_steps in DEFAULTS<br/>memory A2–A4 GraphView · company.md"]:::now
-  s1["1 · Snapshots<br/>R1–R2"]:::core
-  s2["2 · Derived checks<br/>V1–V6 · V9 shell evidence · V10 docs"]:::core
-  s3["3 · Frozen memory block + matching<br/>memory C1 · B1–B3 · A5"]:::core
-  s4["4 · Faster inner loop<br/>V7 targeted tests · V8 model proposals"]:::core
-  s5["5 · Concurrency lock + spend<br/>K1–K3"]:::later
-  s6["6 · Fan-out + joins, flow mining<br/>D1–D4 · W1–W4 · W6"]:::later
-  s7["7 · FTS5 index + canvas<br/>memory D1–D8 · canvas C1–C5"]:::later
+  s0["0 · Shipped defects<br/>V0 · until_max_steps · GraphView · company.md"]:::now
+  s1["1 · Snapshots ✓<br/>R1–R2"]:::now
+  s2["2 · Derived checks ✓<br/>V0–V10"]:::now
+  s3["3 · Frozen block + matching ✓<br/>C1 · B1–B3 · A2–A4"]:::now
+  s4["4 · Faster inner loop ✓<br/>V7–V8"]:::now
+  s5["5 · Concurrency lock + spend ✓<br/>K1–K3"]:::now
+  s6["6 · Fan-out + flow ✓<br/>D1–D3 · W1–W5 · W6 open"]:::core
+  s7["7 · Index + canvas (partial)<br/>memory D minimal · canvas text · D8/E open"]:::core
   s8["8 · Sandbox, for 24/7<br/>S1–S10"]:::later
-  s9["9 · graph propose<br/>W5"]:::later
+  s9["9 · graph propose ✓<br/>W5"]:::now
   x1["Deferred: parallel agents"]:::defer
   x2["Deferred: per-cycle probe"]:::defer
   x3["Deferred: embeddings rerank"]:::defer
@@ -174,18 +174,18 @@ flowchart TD
 
 Dotted edges point at deferred work and name what it would build on.
 
-| Step | Why here |
-|---|---|
-| 0 · Shipped defects | Live bugs; each is a small diff with a regression test |
-| 1 · Snapshots | The default mode is the host; this is its only undo for shell damage |
-| 2 · Derived checks | The UX change users feel, and the honesty upgrade for plain-language goals; depends on 0's error classification |
-| 3 · Frozen block + matching | Pure latency and quality wins with no new artifact |
-| 4 · Faster inner loop | Targeted tests shrink cycle time; model proposals cover goals no project command can prove |
-| 5 · Concurrency lock + spend | Two terminals stop colliding on a laptop; remote runs get a token ceiling |
-| 6 · Fan-out + joins, flow mining | Independent branches with independent outcomes; flow produces the data for every later decision |
-| 7 · FTS5 + canvas | Past sessions become searchable; the canvas reads through the same accessor |
-| 8 · Sandbox | Build when an unattended 24/7 run is actually wanted |
-| 9 · `graph propose` | The only model-in-the-loop authoring feature; best built on statistics a human has already read |
+| Step | Status | Notes |
+|---|---|---|
+| 0 · Shipped defects | **Shipped** | V0 blocked classification, `until_max_steps`, GraphView hot path, `company` graph |
+| 1 · Snapshots | **Shipped** | R1–R2 |
+| 2 · Derived checks | **Shipped** | V0–V10 including V7–V9 |
+| 3 · Frozen block + matching | **Shipped** | C1, B1–B3, A2–A4; A5 parse cache still open |
+| 4 · Faster inner loop | **Shipped** | V7 targeted tests, V8 proposals |
+| 5 · Concurrency lock + spend | **Shipped** | K1–K3 |
+| 6 · Fan-out + joins, flow mining | **Mostly shipped** | D1–D3, W1–W5; **W6** KG run nodes open |
+| 7 · FTS5 + canvas | **Partial** | Minimal index + text canvas; full D spec + TUI open |
+| 8 · Sandbox | **Open** | Phase S; `exec.py` has LocalBackend only |
+| 9 · `graph propose` | **Shipped** | W5 |
 
 **Deferred work and its revisit trigger:**
 

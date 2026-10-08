@@ -1,6 +1,6 @@
 # Design: Execution sandbox and verification hardening
 
-**Status:** R1 snapshots and derived checks have shipped (Phase V, tasks V1–V6 and the `company` graph half of V10). The sandbox (Phase S) and V7–V9 remain proposed.
+**Status:** partial — Phase R (R1–R2), Phase V (V0–V10), and `exec.LocalBackend` seam shipped. Phase S (`--docker`, `DockerBackend`) remains proposed.
 **Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 4)
 **Depends on:** `tools.run_shell`, `tools.GatePolicy`, `loop.run_until`, `graph.run_graph`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
@@ -15,6 +15,17 @@ Two questions drive this file:
    commands?** lmloop **derives** a check plan from the goal, the project, and memory,
    baselines it, and lets exit codes decide. Typed `--check` / `--keep` remain the exact
    override. An LLM checker decides only when no command can prove the goal.
+
+### What shipped (2026-10)
+
+| Phase | Shipped in |
+|---|---|
+| R1 git temp-index snapshots, `snapshot_ref` on maker rows | `snapshot.py`, `loop.py`, `graph.py` |
+| R2 recovery copy beside `trash/` | `README.md` troubleshooting |
+| V0–V10 derived checks, baseline, targeted tests (V7), model proposal (V8), shell evidence (V9), docs + `company` graph | `checks.py`, `loop.py`, `graphs/company.md` |
+| Local backend seam (no Docker yet) | `exec.py` → `LocalBackend` only |
+
+**Not shipped yet:** Phase S (`--docker`, `DockerBackend`, preflight, shadow volumes).
 
 ## Review log (round 4)
 
