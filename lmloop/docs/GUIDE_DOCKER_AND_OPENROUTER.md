@@ -89,6 +89,10 @@ in lmloop yet; they document intent for OpenRouter-heavy workflows:
 tier list lives in [`../company/openrouter_autonomous.yaml`](../company/openrouter_autonomous.yaml)
 (illustrative IDs — validate against OpenRouter before autonomous use).
 
+**Multi-day runs:** [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md)
+defines **campaigns** (durable plan + board + daily reflection) resumed by an OS supervisor
+with `lmloop campaign resume … --docker-persist`, optionally bound to `company run --campaign`.
+
 ---
 
 ## Docker sandbox

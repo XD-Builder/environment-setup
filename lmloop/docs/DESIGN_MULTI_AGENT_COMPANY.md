@@ -2,7 +2,7 @@
 
 **Status:** proposed — for review and critique before implementation  
 **Date:** 2026-10-05  
-**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md), [ARCHITECTURE.md](ARCHITECTURE.md)  
+**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md), [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md), [ARCHITECTURE.md](ARCHITECTURE.md)  
 **Supersedes (when built):** “Parallel agents — deferred” in DAG Part 5 for the **Docker + remote allowlist** path only; sequential local LM Studio stays the default.
 
 ---
@@ -310,6 +310,8 @@ Reuse **`ModelSlots`** with `model_concurrency: auto` → **4** on OpenRouter ([
 
 ## 9. Milestones and company-level reflection
 
+**Multi-day campaigns:** When `--campaign <id>` is set (see [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md)), milestone ids align with **plan phases**, daily/end-of-day ticks update `plan.jsonl`, and disjoint company invocations append to the same campaign `runs.jsonl`. Reflection cadence is **milestone + daily + blocked-node**, not only terminal graph pass.
+
 **Milestone** = manifest-declared checkpoint with **deterministic gates** + optional **retro**.
 
 ```mermaid
@@ -450,6 +452,7 @@ Existing keys reused: `run_token_budget`, `eval_model`, `model_concurrency`, `sa
 | [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Add one-container-per-worker naming; loopback publish unchanged |
 | [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) | New build track “Company multi-agent” after sandbox + DAG fan-out |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Trust boundary diagram for orchestrator/worker |
+| [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | `--campaign`, plan store, board, supervisor multi-day flow |
 
 ---
 
