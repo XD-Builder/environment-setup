@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "docket": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "docket-agent",
+        "mcp"
+      ]
+    }
+  }
+}

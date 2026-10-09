@@ -451,6 +451,7 @@ Docs are part of the diff, not a follow-up.
 | Internals | `docs/ARCHITECTURE.md` | Component map, loop, memory layout, design choices |
 | Next-step proposals | `docs/DESIGN_*.md` | Shipped files keep `Status: shipped`. Leftover ideas stay in Non-goals / Open questions. |
 | Contributors | `DEVELOPMENT.md` | Module ownership, contracts, conventions |
+| Agent warrant | `.docket/loops/*.loop.md` | When an allow, ask, or never rule changes. Recompile; do not hand-edit the generated block. |
 | Skills | `lmloop/skills/*.md` | Opt-in playbooks the model follows when that job is named |
 | Steering | `lmloop/steer/*.md` | Always-on iron laws injected into the system prompt |
 
@@ -475,6 +476,30 @@ Rules:
 
 If you are unsure whether a sentence is still true, check the code. Stale docs
 are bugs.
+
+### Agent warrant (docket)
+
+[Docket](https://github.com/shahcolate/docket) turns the bar above into a
+warrant an agent can check before it acts. The loops under `.docket/loops/`
+are the source of truth. `lmloop-baseline` is abstract and holds the floor
+(`extends` is a union; a child cannot drop an `ask` or a `never`).
+`implement-design` is the job of building one roadmap slice.
+`lmloop-change` is every other change.
+
+Generated context is a build artifact. Edit a loop, then recompile. Do not
+edit between the `docket:begin` and `docket:end` markers.
+
+```bash
+npx -y docket-agent install
+npx -y docket-agent check implement-design change "lmloop/lmloop/loop.py on the feature branch"
+npx -y docket-agent record verify
+```
+
+`install` refreshes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and
+`.cursor/rules/docket.mdc`, and wires the Claude Code hook plus `.mcp.json`.
+Verdicts are allow (exit 0), ask (exit 2), and deny (exit 3). Unlisted means
+ask. Checks land in `.docket/record.jsonl`; `record.jsonl.lock` is transient
+and gitignored.
 
 ---
 
