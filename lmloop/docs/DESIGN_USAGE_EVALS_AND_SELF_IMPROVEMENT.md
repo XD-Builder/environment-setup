@@ -1,10 +1,12 @@
 # Design: Usage evals and the self-improvement loop
 
 **Status:** partial — V0 shipped (`usage.jsonl` instrumentation, `evals.py`, `lmloop eval`)
-**Date:** 2026-10-07
+**Date:** 2026-10-07 · **Revised:** 2026-10-09 (HERA co-evolution + abstention metrics)
 **Depends on:** `usage.py`, `evals.py`, `loop.py`, `agent.py`, `tools.py`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) (`lmloop flow`) ·
-[DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) · [DEVELOPMENT.md](../DEVELOPMENT.md)
+[DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
+[DEVELOPMENT.md](../DEVELOPMENT.md)
 
 ## Problem
 
@@ -156,6 +158,45 @@ For each closed gap, add a **fixture replay test**:
 - Assert: gap **absent** after code change, or metric below threshold.
 
 This mirrors BDK defineEval without adding pytest or network.
+
+### V5 — Harness–environment co-evolution (HERA-inspired)
+
+Full methodology:
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
+Reference: [HERA (arxiv 2610.06563)](https://arxiv.org/html/2610.06563v1).
+
+**Problem HERA names:** agents continue acting when a task is **infeasible** (missing
+prerequisite, wrong environment, impossible goal). lmloop today often maps that to repeated
+maker cycles or `until_max_steps` exhaustion — costly and sometimes destructive on the host.
+
+**lmloop translation:**
+
+| HERA | Here |
+|------|------|
+| Feasible / infeasible task pairs | Fixture repos under `tests/fixtures/abstention/` with shared `goal.txt` |
+| Environment mutation | Deterministic scripts (`M-net-none-empty-venv`, `M-check-missing-runner`, …) |
+| Abstain / Act / Pair metrics | Computed by `lmloop eval --abstention` from until outcomes on pairs |
+| Harness-only baseline | Gap rules + prompt tweaks without new fixtures — expect saturation |
+| Co-evolution | New fixtures from failure tags + harness patches with **validation-set selection** |
+
+**Selection rule (adopt any harness change only if):** on held-out validation fixtures,
+Act and Abstain do not decrease vs the previous harness, and at least one increases. Validation
+metrics are **not** fed into the optimizer — only training fixtures and usage gaps are.
+
+**CLI (proposed):**
+
+```bash
+lmloop eval --abstention              # Act / Abstain / Pair summary
+lmloop eval --abstention --json       # CI gate on thresholds
+```
+
+**Relationship to V1–V4:** V1 joins until logs; V4 locks regressions; V5 adds **paired**
+feasible/infeasible worlds so “stop when impossible” is measurable, not anecdotal. Docker
+governance events (`gate.denied`, `sandbox.policy`) land in the same JSONL for SIEM-shaped
+export without cloud telemetry.
+
+**Anti-pattern (from HERA baselines):** a static abstention-only prompt can raise Abstain
+while **lowering** Act — always gate releases on **Pair**, not Abstain alone.
 
 ---
 

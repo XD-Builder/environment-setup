@@ -1,10 +1,11 @@
 # Design: Execution sandbox and verification hardening
 
 **Status:** partial — Phase R (R1–R2), Phase V (V0–V10), and `exec.LocalBackend` seam shipped. Phase S (`--docker`, `DockerBackend`) remains proposed.
-**Date:** 2026-09-19 · **Revised:** 2026-09-26 (review round 4)
+**Date:** 2026-09-19 · **Revised:** 2026-10-09 (governance + co-evolution alignment)
 **Depends on:** `tools.run_shell`, `tools.GatePolicy`, `loop.run_until`, `graph.run_graph`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
-[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md)
+[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
 
 Two questions drive this file:
 
@@ -803,3 +804,79 @@ the style of `test_tools.py`'s existing `Popen` patching. No test needs a daemon
   check fail→pass → done without eval; no check left → eval + keeps; advisory nonzero →
   maker; advisory zero alone never finishes; typed `--check` passing at baseline → warning
   + eval.
+
+---
+
+## Part 7 — Runtime governance and sandbox evolution
+
+This section records how Phase S fits enterprise **AI governance** expectations and how the
+sandbox **co-evolves** with the harness. Full loop design:
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
+Primary external reference:
+[Docker AI Governance](https://www.docker.com/blog/docker-ai-governance-unlock-agent-autonomy-safely/).
+
+### 7.1 Two agent harm paths (lmloop mapping)
+
+| Path | What the agent does | lmloop enforcement today | Phase S + proposed |
+|------|---------------------|--------------------------|-------------------|
+| **Execute code** | Shell, writes, local servers | Host: `GatePolicy` + snapshots | Container hard boundary: caps, pids, memory, network mode, loopback publish |
+| **Call tools on external systems** | `fetch_url`, future MCP | Gate + timeouts; no org tool catalog | Same gate; optional external MCP Gateway documented as enterprise chokepoint |
+
+Governance that lives only in the system prompt **fails** the enterprise test from the Docker
+article: a clever agent routes around advisory text. lmloop already pushes authority to
+`GatePolicy`, check exit codes, and (with `--docker`) the container runtime. Prompts may
+*explain* limits; they must not be the only enforcement.
+
+### 7.2 Control surfaces vs Docker AI Governance
+
+| Control surface | Phase S v1 | Proposed (S11–S13 in co-evolution doc) |
+|-----------------|------------|----------------------------------------|
+| Network | `sandbox_network`: `bridge` / `none` / `host`; loopback port publish | Optional egress allowlist; default-deny egress profile for untrusted runs |
+| Filesystem | Workspace bind + shadow volumes; no extra mounts | Same; log mount set on run rows |
+| Credentials | R-SECRET: no env passthrough | Scoped one-shot secret files mounted read-only per approved command |
+| Tools / MCP | Local `ToolDef` registry | Policy bundle may disable tool names; MCP Gateway sits outside lmloop |
+| Audit | `backend` on run rows; usage events | `sandbox.preflight`, `sandbox.policy`, `gate.denied` usage features |
+
+**Honest gap:** Docker’s product sandboxes use **microVM** isolation. Phase S uses
+**Linux containers** with `--cap-drop ALL` and digest-pinned images. Stronger than host
+subprocess, weaker than microVM. Do not market Phase S as microVM-equivalent; treat an
+alternate `ExecBackend` as a future spike if customers require it.
+
+### 7.3 Same policy, three places
+
+Docker’s durability argument applies directly to lmloop’s flag model:
+
+| Where the agent runs | lmloop invocation | Policy must match |
+|----------------------|-------------------|-------------------|
+| Developer laptop | `lmloop --docker …` | Image digest, network, caps, shadow dirs |
+| Long-lived supervisor | `lmloop --docker-persist …` | Same + R-DRIFT labels refuse stale containers |
+| CI (future) | Same flags in job | Same digest + `sandbox_network`; no silent `bridge` if prod secrets on runner |
+
+Automatic propagation in lmloop v1 is **pull on preflight** (config + optional signed
+`sandbox_policy_bundle`), not a hosted console. Enterprises that standardize on Docker AI
+Governance can still run lmloop inside Docker-managed sandboxes; this doc defines what
+lmloop owns vs what the outer runtime owns.
+
+### 7.4 Co-evolving the sandbox with the harness
+
+[HERA](https://arxiv.org/html/2610.06563v1) shows that optimizing the harness against a
+**fixed** environment pool stops improving **abstention** (knowing when not to act). lmloop
+mutations are operational, not LLM-generated worlds:
+
+- Toggle `sandbox_network` and shadow volume state in **fixture repos** (training pairs).
+- Keep **validation** fixtures disjoint — never tune against them in automated loops.
+- Admit new mutation batches only when the current harness fails abstention on ≥40% of
+  new infeasible cases (τ=0.4), matching HERA’s batch admission rule.
+
+Sandbox constants (`SANDBOX_*`) change rarely; when they do, R-DRIFT already forces
+`sandbox reset`. Co-evolution should prefer **new fixtures and network profiles** over
+widening default egress.
+
+### 7.5 Phase S extensions (governance)
+
+| ID | Task | Done when |
+|----|------|-----------|
+| S11 | Optional egress allowlist for `bridge` | Documented default-deny path; tests use fake iptables or skip integration |
+| S12 | Scoped secret mount helper (host gate → one ro mount) | No general env passthrough |
+| S13 | Optional `sandbox_policy_bundle` hash on container label | Preflight refuses mismatch |
+| S14 | Usage + run log fields for policy decisions | Correlates with `lmloop eval --abstention` (co-evolution doc E4) |
