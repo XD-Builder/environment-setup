@@ -1,6 +1,6 @@
 # Design: DAG workflows, flow mining, and the terminal knowledge canvas
 
-**Status:** partial — Phases K, D, and W shipped; Phase C shipped as **text** canvas (`canvas_view` + `memory canvas`); full-screen TUI (C2–C3) and W6 KG run nodes remain proposed.
+**Status:** partial — Phases K, D, and W shipped (including W6 run/goal nodes); Phase C shipped as **text** canvas. Full-screen TUI (C2–C3) remains proposed.
 **Date:** 2026-09-19 · **Revised:** 2026-09-26 (round 5: parallel agents deferred)
 **Depends on:** `graph.py`, `server.py`, `chat.py`, `memory.py`, `knowledge_graph.py`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
@@ -30,7 +30,7 @@ constraints that work uncovered are recorded so a future design starts from them
 | W1–W5 run-log fields, `FlowStats`, `lmloop flow`, `graph propose` | `workflow.py`, `loop.py`, `graph.py`, `cli.py` |
 | C1 + C4 (text) `canvas_view`, `memory canvas` | `knowledge_graph.py`, `cli.py`, `repl.py` |
 
-**Not shipped yet:** W6 run/goal nodes in the knowledge graph, C2–C3 `canvas_tui.py`
+**Not shipped yet:** C2–C3 `canvas_tui.py`. W6 run/goal/command-concept nodes ship via `record_workflow_run`.
 (full-screen TUI), parallel agents (Part 5, still deferred).
 
 ## Revision history

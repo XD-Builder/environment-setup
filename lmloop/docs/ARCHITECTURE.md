@@ -47,7 +47,7 @@ lmloop/
 │   ├── tools.py                # tool registry: specs + Python impls
 │   ├── web.py                  # web_search / fetch_url + HTML parsers
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
-│   ├── memory_index.py         # derived FTS5/scan index (memory_index config)
+│   ├── memory_index.py         # derived FTS5/scan index (incremental sync)
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
 │   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
 │   ├── exec.py                 # shell backend seam (LocalBackend; Docker proposed)
@@ -486,7 +486,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 
 Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `knowledge_graph.py`. When off, no graph files are created, auto-edges do not write (even if files already exist), and `recall_memory` is unchanged.
 
-- Nodes are typed (`learning`, `decision`, `session`, `file`, `skill`, `concept`). Latest row per `(type, key)` wins. Learning/concept nodes reuse confidence decay; others stay live.
+- Nodes are typed (`learning`, `decision`, `session`, `file`, `skill`, `concept`, `run`, `goal`). Latest row per `(type, key)` wins. Learning/concept nodes reuse confidence decay; others stay live. A finished until or graph run records one `run` node, a `goal` node, and hashed check-command `concept` nodes when `use_graph` is on (`record_workflow_run`).
 - Edges are typed (`leads_to`, `contradicts`, `in_session`, `references`, `uses_skill`, `related_to`, `supersedes`). Endpoints that decayed away are dropped at read time.
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
 - `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.

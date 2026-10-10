@@ -885,6 +885,16 @@ def run_graph(
         return _pause_interrupted(
             run, echo_status, node=current_node, until_run=current_until,
         )
+    finally:
+        from .knowledge_graph import record_workflow_run
+        cmds = []
+        for node in defn.nodes:
+            cmds.extend(list(node.checks or ()))
+            cmds.extend(list(node.keeps or ()))
+        record_workflow_run(
+            cfg, run_key=f"{run.name}:{run.path.stem}",
+            goal=run.name, commands=cmds,
+        )
 
 
 def is_packaged_graph(name: str) -> bool:

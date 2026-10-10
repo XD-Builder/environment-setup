@@ -1,5 +1,6 @@
 """Interactive REPL for lmloop."""
 
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ from .commands import (
     slash_command_metas,
 )
 from .config import cfg_bool, cfg_int, project_slug
+
+_MINE_LAST = re.compile(r"(?i)^mine last (\d+) sessions?$")
 from .context import active_context_files, context_view_lines
 from .files_index import (
     AtRefExpansion,
@@ -220,7 +223,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
         )
         if footer:
             print(footer)
-        print(memory.memory_hud(state.cfg).line())
+        print(_hud_line(state))
         return True
     except server.ServerError as e:
         memory.log_event(state.session_log, "system", f"error: {e}")
@@ -279,6 +282,23 @@ def _cmd_model(state: SessionState, arg: str) -> bool:
 
 # --- memory ---
 
+def _hud_line(state: SessionState) -> str:
+    line = memory.memory_hud(state.cfg).line()
+    turns = sum(1 for msg in state.messages if msg.get("role") == "user")
+    if turns >= 8:
+        line += " · long session — /memory mine"
+    return line
+
+
+def _maybe_mine_on_exit(state: SessionState, confirm_gate) -> None:
+    if not cfg_bool(state.cfg, "mine_on_exit"):
+        return
+    if state.session_log is None or not state.messages:
+        return
+    state.console.hint("[mine_on_exit]")
+    _cmd_memory_mine(state, "", confirm_gate)
+
+
 def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
     parts = (arg or "").split(None, 1)
     verb = parts[0] if parts else "list"
@@ -309,6 +329,9 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
         q = parts[1] if len(parts) > 1 else ""
         state.console.info(knowledge_graph.format_canvas_text(state.cfg, query=q))
         return True
+    if verb == "audit":
+        rest = parts[1] if len(parts) > 1 else ""
+        return _run_named_skill(state, "learn", rest, confirm_gate)
     if verb == "reconcile":
         return _cmd_memory_reconcile(state, confirm_gate)
     state.console.write_lines(memory.learning_list_lines(query=arg, limit=30))
@@ -1199,8 +1222,13 @@ def run_repl(cfg: dict, console: "Console | None" = None,
                 line = input(console.prompt(state.model)).strip()
         except _exit_types:
             print()
+            _maybe_mine_on_exit(state, confirm_gate)
             return 0
         if not line:
+            continue
+        mined = _MINE_LAST.match(line.strip())
+        if mined:
+            _cmd_memory_mine(state, mined.group(1), confirm_gate)
             continue
         if line.startswith("/"):
             if not _is_known_slash(line):

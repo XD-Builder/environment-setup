@@ -26,12 +26,12 @@ class CommandMeta:
 # First-token verbs for ``/memory`` and ``lmloop memory`` (not search queries).
 MEMORY_ARG_CHOICES = (
     "list", "decisions", "dump", "mine", "kg", "graph", "reconcile",
-    "index", "reindex", "canvas",
+    "index", "reindex", "canvas", "audit",
 )
 # Subverbs offered in ``/`` completion (``graph`` kept as runtime alias only).
 MEMORY_ARG_COMPLETION = (
     "list", "decisions", "dump", "mine", "kg", "reconcile", "index", "reindex",
-    "canvas",
+    "canvas", "audit",
 )
 
 # Skill names that get ``/name`` but not default ``/`` completion.

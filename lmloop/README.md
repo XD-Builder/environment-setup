@@ -94,7 +94,8 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | `lmloop memory dump` | Readable view of the decisions, learnings, and checkpoint injected into the prompt. | Peek |
 | `lmloop memory kg` | Peek **knowledge graph** stats (`use_graph` must be true). `memory graph` is a deprecated alias. | Peek |
 | `lmloop memory index` | Show derived memory index backend, size, and doc counts (`memory_index` config). | Peek |
-| `lmloop memory reindex` | Delete and rebuild `index.sqlite3` from learnings/decisions JSONL. | Write |
+| `lmloop memory reindex` | Delete and rebuild `index.sqlite3` from JSONL (learnings, decisions, sessions, run handoffs). | Write |
+| `lmloop memory audit` | Run the `learn` skill over project memory. REPL `/learn` is the hidden alias. | Write |
 | `lmloop memory canvas` | Read-only knowledge canvas (text layout; full TUI when `prompt_toolkit` canvas ships). | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
 | `lmloop graph propose <name>` | One no-tools draft from `lmloop flow` stats; unified diff; save on `y` only. | Write |
@@ -289,6 +290,7 @@ zsh completion for `config set` is generated from these keys.
 | `context_reserve` | `2048` | Tokens reserved for the model reply on the fill bar |
 | `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` with no goal resumes) |
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
+| `mine_on_exit` | `false` | When true, leaving the REPL mines the current session |
 | `check_inference` | `auto` | `auto`: when `until` has no `--check` or `--keep`, derive a check plan from the goal, project files, repo docs, memory, and earlier runs. `off`: plain-language goals go straight to the evaluator |
 | `until_baseline` | `auto` | `auto`: run the plan once before any work, drop commands that cannot start, and turn already-passing checks into invariants. `off`: a passing check finishes the run immediately |
 | `model_concurrency` | `auto` | Host-wide lock slots per `base_url`. `auto`: 1 for local/LM Studio, 4 for remote endpoints; or set an integer 1–8 |

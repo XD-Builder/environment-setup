@@ -1,6 +1,6 @@
 # Design: Fast, ranked memory retrieval
 
-**Status:** partial — Layers A–C shipped; Layer D shipped as a **minimal** FTS5 index (learnings/decisions only); Layer E deferred. See task IDs below.
+**Status:** partial — Layers A–D shipped (A5 parse cache; D3–D8 incremental sync, quoted query, session recall, `command_candidates`). Layer E deferred. A1 perf harness still open.
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: single process; config budget; embeddings deferred)
 **Depends on:** `memory.py`, `knowledge_graph.py`, `skills.system_prompt`, `loop.isolated_act`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
@@ -32,8 +32,7 @@ none of them changes the source of truth.
 | D (minimal) FTS5/scan index, `memory index` / `reindex`, `/stats` line | `memory_index.py`, `cli.py`, `repl.py` |
 | Canvas layout helper (cross-doc) | `knowledge_graph.canvas_view`, text via `format_canvas_text` |
 
-**Not shipped yet:** A1 perf harness, A5 `read_jsonl` parse cache, D3 incremental sync,
-session ingest, D5–D8 (session snippets, `command_candidates`, multi-process writers), E1–E3,
+**Not shipped yet:** A1 perf harness, Layer E (E1–E3). A5 and D3–D8 are shipped.
 `canvas_tui.py` full-screen UI.
 
 ---

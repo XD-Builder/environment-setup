@@ -332,6 +332,9 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         q = " ".join(words[1:]) if len(words) > 1 else ""
         console.info(knowledge_graph.format_canvas_text(cfg, query=q))
         return 0
+    if verb == "audit":
+        console.hint("[memory audit · learn skill]")
+        return cmd_skill_cli(cfg, ["learn", *words[1:]], console)
     if verb == "reconcile":
         if not cfg_bool(cfg, "use_graph"):
             console.info(knowledge_graph.MSG_GRAPH_OFF)
@@ -625,15 +628,20 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     if rest:
         console.error("usage: lmloop eval [--json | --design]")
         return 1
+    from .workflow import collect_flow_stats
     stats = evals.load_stats()
     gaps = evals.find_gaps(stats)
+    flow = collect_flow_stats()
+    payload = evals.report_dict(stats, gaps)
+    payload["flow"] = flow.to_dict()
+    evals.write_last_report(payload)
     if as_json:
-        console.echo(json.dumps(evals.report_dict(stats, gaps), indent=2))
+        console.echo(json.dumps(payload, indent=2))
         return 0
     if as_design:
         console.echo(evals.design_doc_skeleton(gaps))
         return 0
-    console.echo(evals.format_report(stats, gaps))
+    console.echo(evals.format_report(stats, gaps, flow=flow))
     return 0
 
 

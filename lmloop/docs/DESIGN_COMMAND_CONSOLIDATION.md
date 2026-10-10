@@ -1,6 +1,6 @@
 # Design: Command consolidation (memory and neighbors)
 
-**Status:** partial — Phases A–B shipped; Phases C–D planned
+**Status:** partial — Phases A–C shipped (`mine_on_exit`, submit-line mine routes, `/memory audit`). Phase D not merged.
 **Date:** 2026-10-07
 **Companions:** [ARCHITECTURE.md](ARCHITECTURE.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md)
 
@@ -59,7 +59,7 @@ behavior that can evolve without new slash commands.
 - **Advanced skill shortcuts** (`/learn`, `/retro` if exposed as skill): omitted
   from default `/` completion (`ADVANCED_SKILL_SLASH` in `commands.py`).
 
-### Phase C — Orchestration (planned)
+### Phase C — Orchestration (shipped)
 
 - Config: `mine_on_exit`, stronger HUD nudges after long sessions.
 - Submit-line keyword routes: “mine last 3 sessions” → `_cmd_memory_mine` (tests in

@@ -96,10 +96,10 @@ Do these in parallel where convenient; suggested **serial** order for one contri
 
 | Order | Track | Tasks | Doc | Why here |
 |-------|--------|-------|-----|----------|
-| 1.1 | Memory index | **A5** parse cache; **D3–D8** incremental sync, query, wiring, `memory reindex`, check-inference candidates | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Unblocks faster recall, canvas, and richer `checks.py` history; minimal D is already shipped |
-| 1.2 | Flow / KG | **W6** run/goal nodes in knowledge graph | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Uses existing W1–W5 logs; improves `lmloop flow` evidence without containers |
-| 1.3 | UX vocabulary | **Phase C** — `mine_on_exit`, submit-line mine routes, `/memory audit` | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Small surface; reduces command sprawl before bigger modes land |
-| 1.4 | Self-improvement loop | **V1–V4** — join until logs, align `flow`, human-gated agent patches, locked regressions | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | V0 shipped; V1–V4 need no sandbox; informs what to build in S and company |
+| 1.1 | Memory index | **A5** parse cache; **D3–D8** incremental sync, query, wiring, `memory reindex`, check-inference candidates | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | **Shipped** |
+| 1.2 | Flow / KG | **W6** run/goal nodes in knowledge graph | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | **Shipped** (`record_workflow_run`) |
+| 1.3 | UX vocabulary | **Phase C** — `mine_on_exit`, submit-line mine routes, `/memory audit` | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | **Shipped** |
+| 1.4 | Self-improvement loop | **V1–V4** — join until logs, align `flow`, human-gated agent patches, locked regressions | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | **Shipped** (V5 still open) |
 
 Optional in Wave 1: **A1** perf harness (skipped-by-default tests) when touching memory hot paths.
 
