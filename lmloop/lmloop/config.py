@@ -66,6 +66,7 @@ DEFAULTS = {
     "eval_max_rounds": 8,  # gather rounds for until/graph eval act(); maker keeps max_rounds
     "until_max_steps": 12,  # maker cycles per until invocation before pause
     "until_mine": True,  # after until pass, mine learnings from the run
+    "mine_on_exit": False,  # REPL exit mines the current session when true
     "check_inference": "auto",  # auto: derive a check plan when no --check/--keep; off: eval only
     "until_baseline": "auto",  # auto: baseline and reclassify a non-empty plan; off: checks gate directly
     "model_concurrency": "auto",  # auto: 1 local / 4 remote; or int 1..8

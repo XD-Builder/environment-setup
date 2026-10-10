@@ -12,6 +12,7 @@ from .config import cfg_bool, utc_now
 
 GRAPH_NODE_TYPES = frozenset({
     "learning", "decision", "session", "file", "skill", "concept",
+    "run", "goal",
 })
 GRAPH_EDGE_TYPES = frozenset({
     "leads_to", "contradicts", "in_session", "references",
@@ -26,6 +27,8 @@ _TYPE_BAND = {
     "file": 3.0,
     "skill": 4.0,
     "concept": 5.0,
+    "run": 6.0,
+    "goal": 7.0,
 }
 
 # Per-project fingerprint: skip _backfill when learnings/decisions/sessions unchanged.
@@ -607,6 +610,45 @@ def get_graph_nodes(slug: "str | None" = None) -> dict:
 def get_graph_edges(slug: "str | None" = None) -> list:
     """Edges whose endpoints still exist after decay filtering. Latest-wins."""
     return KnowledgeGraph(slug).edges()
+
+
+def record_workflow_run(
+    cfg: dict, *, run_key: str, goal: str = "", commands: "list[str] | None" = None,
+    slug: "str | None" = None,
+) -> None:
+    """Record one run, its goal, and hashed check-command concepts.
+
+    No-op when ``use_graph`` is off. Calling twice with the same ``run_key``
+    updates that node (latest row wins) instead of creating a second run.
+    """
+    kg = KnowledgeGraph(slug)
+    if not kg.enabled(cfg):
+        return
+    kg.ensure(cfg)
+    label = (goal or run_key)[:200]
+    kg.add_node("run", run_key, label=label, source="observed")
+    live = kg.nodes()
+    if goal:
+        gkey = hashlib.sha1(goal.encode()).hexdigest()[:12]
+        kg.add_node("goal", gkey, label=goal[:200], source="observed")
+        live = kg.nodes()
+        kg.add_edge(
+            "run", run_key, "goal", gkey, "leads_to", note="run",
+            live_nodes=live,
+        )
+        live = kg.nodes()
+    for cmd in commands or []:
+        text = (cmd or "").strip()
+        if not text:
+            continue
+        ckey = hashlib.sha1(text.encode()).hexdigest()[:16]
+        if _node_id("concept", ckey) not in live:
+            kg.add_node("concept", ckey, label=text[:160], source="observed")
+            live = kg.nodes()
+        kg.add_edge(
+            "run", run_key, "concept", ckey, "related_to", note="check",
+            live_nodes=live,
+        )
 
 
 def ensure_graph(cfg: dict, slug: "str | None" = None) -> None:

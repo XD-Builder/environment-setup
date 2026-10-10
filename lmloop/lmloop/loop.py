@@ -743,6 +743,11 @@ def run_until(
             paused=run.is_paused(),
             done=run.is_done(),
         )
+        from .knowledge_graph import record_workflow_run
+        cmds = [item.cmd for item in run.current_checks()]
+        record_workflow_run(
+            cfg, run_key=run.path.stem, goal=run.goal or "", commands=cmds,
+        )
 
 
 def _run_until_body(

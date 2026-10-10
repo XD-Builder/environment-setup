@@ -56,7 +56,7 @@ class MemoryIndexCliTests(unittest.TestCase):
 
     def test_reindex_scan_backend_noop(self):
         with tempfile.TemporaryDirectory() as d:
-            with patch("lmloop.memory_index.project_dir", return_value=Path(d)):
+            with patch("lmloop.memory.project_dir", return_value=Path(d)):
                 idx = memory_index.MemoryIndex()
                 idx.reindex({"memory_index": "off"})
                 self.assertFalse(idx.path.exists())

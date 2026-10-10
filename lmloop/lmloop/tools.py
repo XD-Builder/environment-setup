@@ -1321,6 +1321,8 @@ def build_tools(cfg: dict, confirm_gate=None,
         ToolDef(
             "recall_memory",
             "Keyword-search past learnings and decisions for this project. "
+            "Also searches past session turns and run handoffs when session "
+            "recall is enabled. "
             "In the user-visible reply, cite each applied learning as "
             "`Prior learning applied: <key>` and each applied decision as "
             "`Decision referenced: [id]`.",

@@ -9,6 +9,7 @@ Design rules (borrowed from gstack):
 - Everything is human-readable JSONL/markdown under ~/.lmloop — no database.
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -89,30 +90,73 @@ def _parse_jsonl_lines(text: str, warn_path: "Path | None") -> "list[dict]":
     return rows
 
 
+_JSONL_PREFIX_BYTES = 4096
+
+
+def _jsonl_prefix_sha(path: Path) -> str:
+    digest = hashlib.sha1()
+    with path.open("rb") as handle:
+        digest.update(handle.read(_JSONL_PREFIX_BYTES))
+    return digest.hexdigest()
+
+
 def read_jsonl(path: Path) -> "list[dict]":
-    """Load JSONL with an append-aware cache (rewrite/truncate → full re-read)."""
+    """Load JSONL with an append-aware cache (rewrite/truncate → full re-read).
+
+    Cache key is inode, size of complete lines, mtime, and a hash of the first
+    4 KB. A pure append parses only the new tail. An unfinished trailing line
+    is left for the next read.
+    """
     if not path.exists():
         _JSONL_CACHE.pop(str(path), None)
         return []
     st = path.stat()
     key = str(path)
+    prefix = _jsonl_prefix_sha(path)
     prev = _JSONL_CACHE.get(key)
-    if prev and prev["mtime_ns"] == st.st_mtime_ns and prev["size"] == st.st_size:
+    if (
+        prev
+        and prev["mtime_ns"] == st.st_mtime_ns
+        and prev["size"] == st.st_size
+        and prev.get("prefix") == prefix
+    ):
         return list(prev["rows"])
-    if prev and prev.get("st_ino") == st.st_ino and st.st_size > prev["size"]:
-        with path.open("rb") as f:
-            f.seek(prev["size"])
-            tail = f.read().decode("utf-8", errors="replace")
-        if tail and not tail.endswith("\n"):
-            rows = list(prev["rows"])
+
+    rows = None
+    cached_size = st.st_size
+    grew = (
+        prev
+        and prev.get("st_ino") == st.st_ino
+        and st.st_size > int(prev["size"])
+        and prev.get("prefix") == prefix
+    )
+    if grew:
+        with path.open("rb") as handle:
+            handle.seek(int(prev["size"]))
+            tail = handle.read()
+        nl = tail.rfind(b"\n")
+        if nl < 0:
+            return list(prev["rows"])
+        complete = tail[: nl + 1]
+        rows = list(prev["rows"]) + _parse_jsonl_lines(
+            complete.decode("utf-8", errors="replace"), path,
+        )
+        cached_size = int(prev["size"]) + len(complete)
+    if rows is None:
+        raw = path.read_bytes()
+        nl = raw.rfind(b"\n")
+        if nl < 0:
+            text = ""
+            cached_size = 0
         else:
-            rows = list(prev["rows"]) + _parse_jsonl_lines(tail, path)
-    else:
-        rows = _parse_jsonl_lines(path.read_text(encoding="utf-8", errors="replace"), path)
+            text = raw[: nl + 1].decode("utf-8", errors="replace")
+            cached_size = nl + 1
+        rows = _parse_jsonl_lines(text, path)
     _JSONL_CACHE[key] = {
         "mtime_ns": st.st_mtime_ns,
-        "size": st.st_size,
+        "size": cached_size,
         "st_ino": st.st_ino,
+        "prefix": prefix,
         "rows": rows,
     }
     return list(rows)

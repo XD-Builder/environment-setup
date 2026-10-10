@@ -741,6 +741,21 @@ def _line_has_runner(line: str) -> bool:
 def _memory_checks(learnings) -> list:
     if learnings is None:
         try:
+            from .memory_index import MemoryIndex
+            candidates = MemoryIndex().command_candidates({"memory_index": "auto"})
+        except (OSError, RuntimeError):
+            candidates = None
+        if candidates is not None:
+            rows = []
+            for item in candidates:
+                source = item.get("source") or "observed"
+                tier = TIER_AUTHORITATIVE if source == "user-stated" else TIER_ADVISORY
+                rows.append(PlannedCheck(
+                    cmd=item["cmd"], role=ROLE_CHECK, source="memory", tier=tier,
+                    reason=f"from memory ({source})",
+                ))
+            return rows
+        try:
             learnings = memory.get_learnings(limit=None)
         except OSError:
             learnings = []

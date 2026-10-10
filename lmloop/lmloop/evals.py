@@ -63,6 +63,9 @@ class EvalStats:
     act_finished: int = 0
     first_ts: str = ""
     last_ts: str = ""
+    never_pass_checks: list[str] = field(default_factory=list)
+    always_pause_nodes: list[str] = field(default_factory=list)
+    shell_errors: int = 0
 
 
 @dataclass(frozen=True)
@@ -214,11 +217,102 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             design_hook="evals.KNOWN_FEATURES + DEVELOPMENT.md instrumentation",
         ))
 
+    if stats.never_pass_checks:
+        shown = ", ".join(stats.never_pass_checks[:5])
+        gaps.append(EvalGap(
+            id="check-never-passes",
+            severity="action",
+            title="Check commands on this project never pass",
+            evidence=f"commands with no pass: {shown}",
+            design_hook="DESIGN_SANDBOX_AND_VERIFICATION.md § derived checks",
+        ))
+    if stats.always_pause_nodes:
+        shown = ", ".join(stats.always_pause_nodes[:5])
+        gaps.append(EvalGap(
+            id="graph-node-always-pauses",
+            severity="action",
+            title="Graph nodes always pause",
+            evidence=f"nodes: {shown}",
+            design_hook="DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md § fan-out",
+        ))
+    shell_errs = stats.tool_errors.get("run_shell", 0) or stats.shell_errors
+    paused = stats.until_outcomes.get("paused", 0)
+    if shell_errs >= 3 and paused >= 1:
+        gaps.append(EvalGap(
+            id="shell-error-before-pause",
+            severity="watch",
+            title="run_shell errors coincide with paused until runs",
+            evidence=f"tool.error run_shell={shell_errs}; until paused={paused}",
+            design_hook="DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md § V1",
+        ))
+
     return gaps
 
 
-def load_stats(path: Path | None = None) -> EvalStats:
-    return aggregate(read_events(path or USAGE_PATH))
+_SECRET_CMD = re.compile(
+    r"(?i)(api[_-]?key|secret|token|password)\s*=",
+)
+
+
+def _safe_cmd(cmd: str) -> str:
+    text = (cmd or "").strip()
+    if not text or _SECRET_CMD.search(text):
+        return ""
+    return text[:180]
+
+
+def join_run_logs(stats: EvalStats, slug: "str | None" = None) -> EvalStats:
+    """Fold until/graph JSONL into gap inputs. Commands with secrets are dropped."""
+    from .config import project_dir
+    from .memory import read_jsonl
+
+    root = project_dir(slug)
+    seen: Counter = Counter()
+    passed: Counter = Counter()
+    until_dir = root / "until"
+    if until_dir.is_dir():
+        for path in sorted(until_dir.glob("*.jsonl")):
+            for row in read_jsonl(path):
+                if row.get("role") not in ("check", "baseline"):
+                    continue
+                for result in row.get("results") or []:
+                    cmd = _safe_cmd(str(result.get("cmd") or ""))
+                    if not cmd:
+                        continue
+                    seen[cmd] += 1
+                    if result.get("status") == "pass":
+                        passed[cmd] += 1
+    stats.never_pass_checks = sorted(
+        cmd for cmd, count in seen.items() if count >= 2 and passed[cmd] == 0
+    )
+    pauses: Counter = Counter()
+    oks: Counter = Counter()
+    graphs = root / "graphs"
+    if graphs.is_dir():
+        for path in sorted(graphs.glob("*/*.jsonl")):
+            for row in read_jsonl(path):
+                name = str(row.get("node") or "")
+                if not name:
+                    continue
+                status = str(row.get("status") or "")
+                role = str(row.get("role") or "")
+                if status in ("pause", "paused") or role == "pause":
+                    pauses[name] += 1
+                elif status == "pass":
+                    oks[name] += 1
+    stats.always_pause_nodes = sorted(
+        name for name, count in pauses.items() if count >= 2 and oks[name] == 0
+    )
+    return stats
+
+
+def load_stats(path: Path | None = None, *, slug: "str | None" = None) -> EvalStats:
+    stats = aggregate(read_events(path or USAGE_PATH))
+    try:
+        join_run_logs(stats, slug)
+    except OSError:
+        pass
+    return stats
 
 
 def report_dict(stats: EvalStats, gaps: list[EvalGap]) -> dict[str, Any]:
@@ -250,7 +344,9 @@ def report_dict(stats: EvalStats, gaps: list[EvalGap]) -> dict[str, Any]:
     }
 
 
-def format_report(stats: EvalStats, gaps: list[EvalGap]) -> str:
+def format_report(
+    stats: EvalStats, gaps: list[EvalGap], *, flow: "object | None" = None,
+) -> str:
     lines = [
         "lmloop eval report (local usage.jsonl)",
         f"  events: {stats.events}  invalid: {stats.invalid_rows}",
@@ -276,7 +372,25 @@ def format_report(stats: EvalStats, gaps: list[EvalGap]) -> str:
             lines.append(f"    [{g.severity}] {g.id}: {g.title}")
             lines.append(f"           {g.evidence}")
             lines.append(f"           → {g.design_hook}")
+    if flow is not None:
+        from .workflow import FlowStats, compact_flow_summary
+        if isinstance(flow, FlowStats):
+            lines.append("")
+            lines.append("  flow:")
+            for row in compact_flow_summary(flow, {"until_max_steps": 12}).splitlines():
+                lines.append(f"    {row}")
     return "\n".join(lines)
+
+
+def last_report_path() -> Path:
+    return USAGE_PATH.parent / "evals" / "last_report.json"
+
+
+def write_last_report(payload: dict) -> Path:
+    path = last_report_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def design_doc_skeleton(gaps: list[EvalGap], *, title: str = "Usage-driven improvement") -> str:

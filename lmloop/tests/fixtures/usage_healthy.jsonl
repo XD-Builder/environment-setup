@@ -1,0 +1,12 @@
+{"ts": "2026-02-01T00:00:00Z", "feature": "cli.command", "detail": {"name": "eval"}}
+{"ts": "2026-02-01T00:01:00Z", "feature": "repl.session", "detail": {}}
+{"ts": "2026-02-01T00:02:00Z", "feature": "tool", "detail": {"name": "read_file"}}
+{"ts": "2026-02-01T00:03:00Z", "feature": "tool", "detail": {"name": "read_file"}}
+{"ts": "2026-02-01T00:04:00Z", "feature": "tool", "detail": {"name": "list_dir"}}
+{"ts": "2026-02-01T00:05:00Z", "feature": "tool", "detail": {"name": "list_dir"}}
+{"ts": "2026-02-01T00:06:00Z", "feature": "tool", "detail": {"name": "read_file"}}
+{"ts": "2026-02-01T00:07:00Z", "feature": "tool", "detail": {"name": "read_file"}}
+{"ts": "2026-02-01T00:08:00Z", "feature": "tool", "detail": {"name": "read_file"}}
+{"ts": "2026-02-01T00:09:00Z", "feature": "tool", "detail": {"name": "read_file"}}
+{"ts": "2026-02-01T00:10:00Z", "feature": "until.finish", "detail": {"outcome": "pass"}}
+{"ts": "2026-02-01T00:11:00Z", "feature": "agent.act.finish", "detail": {"rounds": 2, "interrupted": false}}
