@@ -124,6 +124,10 @@ class SkillLibrary:
         steering = steer.steering_block(workspace_root)
         if steering:
             base += "\n\n" + steering
+        from .exec import DockerBackend, active_backend
+        backend = active_backend()
+        if isinstance(backend, DockerBackend) and backend.network == "bridge":
+            base += "\n\n" + steer.sandbox_port_hint()
         ctx = memory_block if memory_block is not None else memory.context_block(cfg)
         if ctx:
             base += "\n\n" + CONTEXT_HEADING + "\n\n" + ctx

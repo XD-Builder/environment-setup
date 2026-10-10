@@ -325,9 +325,11 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
         state.console.info(memory_index.format_index_report(state.cfg))
         return True
     if verb == "canvas":
-        from . import knowledge_graph
+        from .canvas_tui import open_memory_canvas
         q = parts[1] if len(parts) > 1 else ""
-        state.console.info(knowledge_graph.format_canvas_text(state.cfg, query=q))
+        text = open_memory_canvas(state.cfg, query=q)
+        if text:
+            state.console.info(text)
         return True
     if verb == "audit":
         rest = parts[1] if len(parts) > 1 else ""
@@ -930,6 +932,14 @@ def _cmd_flow(state: SessionState, arg: str) -> bool:
     return True
 
 
+def _cmd_sandbox(state: SessionState, arg: str) -> bool:
+    from .cli import cmd_sandbox
+
+    words = (arg or "").strip().split()
+    cmd_sandbox(state.cfg, words, state.console)
+    return True
+
+
 def _cmd_graph(state: SessionState, arg: str, confirm_gate) -> bool:
     name = (arg or "").strip().split()[0] if (arg or "").strip() else ""
     if not name:
@@ -1044,6 +1054,7 @@ def _build_slash_commands(confirm_gate) -> list:
         "until": lambda s, a: _cmd_until(s, a, confirm_gate),
         "graph": lambda s, a: _cmd_graph(s, a, confirm_gate),
         "flow": _cmd_flow,
+        "sandbox": _cmd_sandbox,
         "save": lambda s, a: _cmd_save(s, a, confirm_gate),
         "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
         "quit": lambda s, a: False,

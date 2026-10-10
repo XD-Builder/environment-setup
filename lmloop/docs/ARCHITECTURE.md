@@ -19,17 +19,17 @@ lmloop/
 │   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
 │   ├── archived/               # shipped design specs (see archived/README.md)
 │   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (partial)
-│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks shipped; --docker proposed
-│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, text canvas shipped; TUI partial
+│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker shipped
+│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, canvas TUI shipped; parallel agents deferred
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
-│   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps → design loop (partial)
+│   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
 │   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns, planning memory, multi-day reflect + coordination (proposed)
 │   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
-│   └── Dockerfile              # reference image for future lmloop sandbox build
+│   └── Dockerfile              # reference image; lmloop sandbox build records @sha256:
 ├── company/
 │   └── openrouter_autonomous.yaml  # illustrative allowlist tiers (company mode proposed)
 ├── lmloop/
@@ -50,11 +50,12 @@ lmloop/
 │   ├── memory_index.py         # derived FTS5/scan index (incremental sync)
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
 │   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
-│   ├── exec.py                 # shell backend seam (LocalBackend; Docker proposed)
+│   ├── exec.py                 # LocalBackend (default) and opt-in DockerBackend
 │   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
-│   ├── evals.py                # aggregate usage → gaps; lmloop eval (read-only)
+│   ├── evals.py                # usage gaps + abstention Act/Abstain/Pair
+│   ├── canvas_tui.py          # knowledge-canvas projection and full-screen keys
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
 │   ├── markdown_view.py        # render assistant markdown (no quote gutter)
@@ -326,8 +327,8 @@ until goal:
     plan     — flags, or checks.py derives commands (goal text, project files,
                repo docs, memory, proven history). Shown once on a TTY.
     baseline — run the plan once (until_baseline). Unrunnable inferred commands
-               are dropped; unrunnable typed ones block. An inferred check that
-               already passes becomes a keep. A failing keep blocks.
+               are dropped; unrunnable typed ones block (human gate). An inferred
+               check that already passes becomes a keep. A failing keep abstains.
     maker    — isolated act() with the goal + prior handoff
     check    — run the plan. A check that went fail → pass, with keeps and
                advisory commands green, is done (no eval). Otherwise a failing
@@ -342,7 +343,8 @@ until goal:
 - The plan is stored on the until log (`checks` on the meta row, then on the `baseline` or `plan` row). Resume reuses it and does not baseline again. A graph until-node copies the plan onto the node row's `verify` field.
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
 - Eval cannot `write_file`, `update_file`, `move_file`, `delete_file`, `remember`, `log_decision`, or `graph_add_edge` (`tools.READONLY_OMIT`). It may `run_shell` to verify; a destructive shell request there is simply `DENIED` under the until/graph `GatePolicy` and never re-asked.
-- A failing check goes straight back to the maker — no eval turn. `DENIED:`, spawn `ERROR:`, and exit 126/127 are `blocked` → gate.
+- A failing check goes straight back to the maker — no eval turn. `DENIED:`, spawn `ERROR:`, and exit 126/127 are `blocked` → gate. A keep that already fails at baseline appends role `abstain` / `infeasible` and does not start a maker step.
+- Shell commands and check-plan commands share one process backend (`exec.active_backend`). The default is `LocalBackend` on the host. `--docker` or `--docker-persist` installs a `DockerBackend` after preflight; there is no host fallback. `/stats` prints `exec: local (host)` unless that flag was passed. `bridge` publishes `127.0.0.1:3000-3010` and `127.0.0.1:8000-8010` and is not host isolation.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).

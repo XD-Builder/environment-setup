@@ -460,7 +460,7 @@ class ToolSafetyTests(unittest.TestCase):
     def test_run_shell_kills_on_keyboard_interrupt(self):
         proc = mock.Mock()
         proc.communicate.side_effect = KeyboardInterrupt()
-        with mock.patch("lmloop.tools.subprocess.Popen", return_value=proc):
+        with mock.patch("lmloop.exec.subprocess.Popen", return_value=proc):
             with self.assertRaises(KeyboardInterrupt):
                 run_shell("sleep 999", confirm_destructive=False)
         proc.kill.assert_called()

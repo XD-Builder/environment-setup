@@ -538,6 +538,19 @@ def format_tool_preview(name: str, args: str,
     return _file_tool_preview(parsed, path_args, resolved)
 
 
+def format_exec_result(result) -> str:
+    """Render an ``ExecResult`` the way ``run_shell`` always has."""
+    if result.timed_out:
+        return f"ERROR: command timed out after {result.timeout_s}s"
+    if result.spawn_error:
+        return result.stdout
+    out = result.stdout or ""
+    if result.stderr:
+        out += ("\n[stderr]\n" + result.stderr)
+    out += f"\n[exit code: {result.exit_code}]"
+    return _truncate(out.strip())
+
+
 def _workspace_root() -> Path:
     return Path.cwd().resolve()
 
@@ -595,47 +608,18 @@ def run_shell(
                 reason = "copy/extract"
             else:
                 reason = "destructive" if destructive else "shell-syntax"
+            from . import usage
+            usage.record("gate.denied", tool="run_shell", reason_class=reason)
             return f"DENIED: the user declined to run this {reason} command."
-    try:
-        argv = command if shell_syntax else shlex.split(command)
-    except ValueError as e:
-        return f"ERROR: {e}"
-    from .exec import build_backend
+    from .exec import active_backend
 
-    backend = build_backend({}, docker=False)
-    try:
-        argv = command if shell_syntax else shlex.split(command)
-    except ValueError as e:
-        return f"ERROR: {e}"
-    try:
-        proc = subprocess.Popen(
-            argv,
-            shell=shell_syntax,
-            cwd=str(root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except OSError as e:
-        return f"ERROR: {e}"
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
-        return f"ERROR: command timed out after {timeout_s}s"
-    except KeyboardInterrupt:
-        proc.kill()
-        try:
-            proc.communicate()
-        except KeyboardInterrupt:
-            pass
-        raise
-    out = stdout or ""
-    if stderr:
-        out += ("\n[stderr]\n" + stderr)
-    out += f"\n[exit code: {proc.returncode}]"
-    return _truncate(out.strip())
+    result = active_backend().run(
+        command,
+        timeout_s=timeout_s,
+        cwd=root,
+        shell_syntax=shell_syntax,
+    )
+    return format_exec_result(result)
 
 
 def _numbered_chunk(text: str, label: str, start_line: int, max_lines: int) -> str:

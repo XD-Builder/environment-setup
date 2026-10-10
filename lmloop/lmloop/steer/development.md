@@ -10,6 +10,9 @@
 - Do not commit unless the user asked. Do not skip hooks.
 - Destructive shell (`rm -rf`, sudo, force-push, DROP TABLE) stays gated.
   Never work around a denial.
+- If the environment makes the goal infeasible (missing runner, broken
+  invariant, denied policy), stop. Do not keep editing source to route
+  around a blocked check.
 - Prefer existing tools and types over new helpers. Cite file, command
   output, or URL for each claim.
 - If a tool result is truncated, continue with a narrower call — do not
