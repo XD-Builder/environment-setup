@@ -3,7 +3,10 @@
 **Date:** 2026-10-09  
 **Scope:** Top 30 popular open-source agentic AI projects (GitHub popularity + ecosystem influence, Oct 2026)  
 **Focus:** Harness design (especially **prompts**), **harness evolution** loops, and patterns that yield the highest **performance ROI** per token and per engineering hour  
-**Audience lenses:** CTO / Distinguished Engineer · Chief Scientist / AI Architect · General AGI resolution (deep reflection + output framework)
+**Audience lenses:** CTO / Distinguished Engineer · Chief Scientist / AI Architect · General AGI resolution (deep reflection + output framework)  
+**Companions:** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
+[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
+[DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md)
 
 ---
 
@@ -382,6 +385,19 @@ Add **persona-specific output schema** via skill, not by bloating L0.
 | P2 | **Path-triggered skill stubs** (OpenHands-style) on `read_file`/`update_file` | Inject repo conventions without fat L0 |
 | P2 | **Spirit pipeline** from `DESIGN_EVOLVING_SPIRIT.md` | Long-horizon harness evolution beyond facts |
 | P3 | **GEPA experiment** on `system.md` + `/ceo` against fixed transcript eval set | Quantify prompt evolution ROI |
+
+### 9.1 Mapping to lmloop continual harness design
+
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
+operationalizes the survey’s co-evolution diagram for this repo:
+
+| Survey concept (§1–2) | lmloop design anchor |
+|-------------------------|----------------------|
+| Failure diagnosis \(F_k\) | `usage.jsonl`, `/retro`, future trajectory export |
+| Paired feasible / infeasible tasks | Usage evals V5 Act / Abstain / Pair fixtures |
+| Harness optimizer (GEPA, layers) | Offline prompt/skill evolution; Life-Harness-style layers as future middleware |
+| Environment evolution | Derived checks + sandbox profiles (Docker governance Part 7) |
+| Runtime-bound controls vs prompt-only | `GatePolicy`, `--docker`, check authority in `loop.py` |
 
 ---
 

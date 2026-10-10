@@ -7,6 +7,7 @@
 [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
 [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) (partial) ·
 [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (proposed) ·
+[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (research) ·
 [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) (proposed) ·
 [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) (proposed)
 
@@ -39,6 +40,8 @@ merges enterprise runtime governance ([Docker AI Governance](https://www.docker.
 with harness–environment co-evolution for abstention ([HERA](https://arxiv.org/html/2610.06563v1)).
 Sandbox Part 7 maps Docker’s four control surfaces; usage evals V5 adds Act/Abstain/Pair on
 local fixture pairs. Host-path work can start at tasks E1–E2 without waiting for Phase S.
+Industry harness patterns and prompt-evolution ROI are cataloged in
+[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md).
 
 ---
 
