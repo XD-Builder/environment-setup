@@ -220,6 +220,8 @@ Dotted edges point at deferred work and name what it would build on.
 ## 6. Keeping the docs honest
 
 When a step ships, its section moves into `ARCHITECTURE.md` (behavior) and `README.md`
-(user-facing), and the design doc's status flips to `shipped`, per DEVELOPMENT.md. Deferred
-items stay in the design docs as non-goals with their reason and revisit trigger, so the
+(user-facing), and the design doc's status flips to `shipped`, per DEVELOPMENT.md. Fully
+shipped standalone specs move to `docs/archived/`; partial docs stay in `docs/` until their
+last task ships. Build order across all docs: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+Deferred items stay in the design docs as non-goals with their reason and revisit trigger, so the
 next reviewer does not re-propose them without the evidence that changed.

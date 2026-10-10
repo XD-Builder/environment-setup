@@ -3,7 +3,7 @@
 **Status:** proposed (nothing here is implemented)
 **Date:** 2026-10-07
 **Depends on:** `memory.py`, `knowledge_graph.py` (opt-in), `steer.py`, `skills/retro.md`, `skills/learn.md`, `loop.py` (`until_mine`)
-**Companions:** [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
+**Companions:** [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---
 
@@ -269,7 +269,7 @@ Proposed system prompt order (spirit sits with steer, not inside untrusted memor
 
 ## 8. Knowledge graph integration (opt-in)
 
-When `use_graph` is true, add node/edge types (compatible with [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md)):
+When `use_graph` is true, add node/edge types (compatible with [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md)):
 
 | Node type | Key |
 |-----------|-----|

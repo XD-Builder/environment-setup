@@ -2,7 +2,7 @@
 
 **Status:** partial — Phases A–B shipped; Phases C–D planned
 **Date:** 2026-10-07
-**Companions:** [ARCHITECTURE.md](ARCHITECTURE.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [DESIGN_LLM_CALLING.md](DESIGN_LLM_CALLING.md)
+**Companions:** [ARCHITECTURE.md](ARCHITECTURE.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md)
 
 ## Problem
 

@@ -16,10 +16,8 @@ lmloop/
 ├── DEVELOPMENT.md              # contribution practices
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
-│   ├── DESIGN_LOOP_AND_GRAPH.md  # knowledge-graph memory (shipped opt-in)
-│   ├── DESIGN_GRAPH_ENGINEERING.md  # control-flow graphs (shipped)
-│   ├── DESIGN_LLM_CALLING.md   # completions HTTP + act() budgets (shipped)
-│   ├── DESIGN_FILE_READING.md  # @path gift + read_file header (shipped)
+│   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
+│   ├── archived/               # shipped design specs (see archived/README.md)
 │   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (partial)
 │   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks shipped; --docker proposed
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, text canvas shipped; TUI partial
@@ -216,7 +214,7 @@ sequenceDiagram
 
 **Files:** `agent.py` (gather/answer), `chat.py` (HTTP)
 
-The heart of lmloop. A single function, `act()`, implements the multi-round tool loop. Every generated token comes from `chat._chat()` posting to `{base_url}/chat/completions`. Call inventory and budgets: [DESIGN_LLM_CALLING.md](DESIGN_LLM_CALLING.md).
+The heart of lmloop. A single function, `act()`, implements the multi-round tool loop. Every generated token comes from `chat._chat()` posting to `{base_url}/chat/completions`. Call inventory and budgets: [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md).
 
 ```
 gather (tools on, up to max_rounds):
@@ -351,7 +349,7 @@ until goal:
 - Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role. Maker rows may include `snapshot_ref` (`HEAD` or `refs/lmloop/…`) from `snapshot.take_snapshot` when `autonomous_snapshot` is `git` and the workspace is a git repo.
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
-This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md).
+This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md).
 
 ---
 

@@ -449,7 +449,7 @@ Docs are part of the diff, not a follow-up.
 |---|---|---|
 | Users | `README.md` | Flags, slash commands, tools, setup, troubleshooting |
 | Internals | `docs/ARCHITECTURE.md` | Component map, loop, memory layout, design choices |
-| Next-step proposals | `docs/DESIGN_*.md` | Shipped files keep `Status: shipped`. Leftover ideas stay in Non-goals / Open questions. |
+| Next-step proposals | `docs/DESIGN_*.md`, `docs/IMPLEMENTATION_PLAN.md` | Shipped standalone specs move to `docs/archived/`. Partial docs keep `Status: partial` until done. Leftover ideas stay in Non-goals / Open questions. |
 | Contributors | `DEVELOPMENT.md` | Module ownership, contracts, conventions |
 | Skills | `lmloop/skills/*.md` | Opt-in playbooks the model follows when that job is named |
 | Steering | `lmloop/steer/*.md` | Always-on iron laws injected into the system prompt |
