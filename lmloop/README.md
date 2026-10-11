@@ -31,6 +31,11 @@ Run tests:
 cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 ```
 
+GitHub Actions (`.github/workflows/ci.yaml`) runs that suite, a scripted-model
+baseline for each component, holistic flows (until, memory, graph, remote-shaped
+auth, `@path`), and the same agent suite inside the reference sandbox image.
+Nothing in CI calls LM Studio or OpenRouter. `lmloop --docker` is still proposed.
+
 Contribution practices (module layout, exceptions, where to patch tests) are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 LM Studio's `lms` CLI is optional but recommended: with it installed, lmloop

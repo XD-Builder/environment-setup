@@ -1,0 +1,185 @@
+# Regression gate for environment-setup and lmloop.
+#
+# unit                  stdlib unittest, plus leaf component contracts
+# component-baselines   scripted-model probe of each agent component
+# holistic-e2e          multi-component flows (until, memory, graph, auth, @path)
+# docker-local          reference sandbox image, then the same agent suite inside it
+# shell                 setup.sh / shell syntax (no package install)
+#
+# Agent scenarios talk to a localhost OpenAI-compatible stub. They do not call
+# LM Studio or OpenRouter. `--docker` is still not a CLI flag; docker-local
+# runs LocalBackend inside lmloop/sandbox/Dockerfile.
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: shell syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse shell entrypoints
+        run: |
+          bash -n setup.sh
+          bash -n lmloop/setup-lmloop.sh
+          bash -n lmloop/bin/lmloop
+          bash -n shell/.bashrc
+          bash setup.sh help
+      - name: Parse zshrc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+          zsh -n shell/.zshrc
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: lmloop/requirements.txt
+      - name: Install lmloop extras
+        run: python -m pip install -r lmloop/requirements.txt
+      - name: Unit suite and leaf contracts
+        working-directory: lmloop
+        env:
+          LMLOOP_SKIP_AGENT_E2E: "1"
+          NO_COLOR: "1"
+        run: python -m unittest discover -s tests -v
+
+  component-baselines:
+    name: component baselines
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: lmloop/requirements.txt
+      - name: Install lmloop extras
+        run: python -m pip install -r lmloop/requirements.txt
+      - name: Scripted component baselines
+        working-directory: lmloop
+        env:
+          NO_COLOR: "1"
+          LMLOOP_BASELINE_REPORT: ${{ github.workspace }}/ci-reports/components.jsonl
+        run: |
+          mkdir -p "${{ github.workspace }}/ci-reports"
+          python -m unittest discover -s tests -p 'test_baseline_components.py' -v
+      - name: Scorecard
+        working-directory: lmloop
+        run: python -c "import sys; sys.path.insert(0, 'tests'); from e2e_harness import summarize_report; raise SystemExit(summarize_report('${{ github.workspace }}/ci-reports/components.jsonl'))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: component-baselines
+          path: ci-reports/components.jsonl
+
+  holistic-e2e:
+    name: holistic e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: lmloop/requirements.txt
+      - name: Install lmloop extras
+        run: python -m pip install -r lmloop/requirements.txt
+      - name: Holistic agent flows
+        working-directory: lmloop
+        env:
+          NO_COLOR: "1"
+          LMLOOP_BASELINE_REPORT: ${{ github.workspace }}/ci-reports/holistic.jsonl
+        run: |
+          mkdir -p "${{ github.workspace }}/ci-reports"
+          python -m unittest discover -s tests -p 'test_holistic_e2e.py' -v
+      - name: Scorecard
+        working-directory: lmloop
+        run: python -c "import sys; sys.path.insert(0, 'tests'); from e2e_harness import summarize_report; raise SystemExit(summarize_report('${{ github.workspace }}/ci-reports/holistic.jsonl'))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: holistic-e2e
+          path: ci-reports/holistic.jsonl
+
+  docker-local:
+    name: docker local
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: lmloop/requirements.txt
+      - name: Install lmloop extras
+        run: python -m pip install -r lmloop/requirements.txt
+      - name: Build reference sandbox image
+        run: docker build -f lmloop/sandbox/Dockerfile -t lmloop-sandbox:ci lmloop/sandbox
+      - name: Build CI image with REPL extras
+        run: docker build -f .github/ci/sandbox.Dockerfile -t lmloop-ci:local .
+      - name: Image contract
+        working-directory: lmloop
+        env:
+          NO_COLOR: "1"
+          LMLOOP_DOCKER_E2E: "1"
+          LMLOOP_SANDBOX_IMAGE: lmloop-sandbox:ci
+          LMLOOP_BASELINE_REPORT: ${{ github.workspace }}/ci-reports/docker-image.jsonl
+        run: |
+          mkdir -p "${{ github.workspace }}/ci-reports"
+          python -m unittest discover -s tests -p 'test_docker_sandbox.py' -v
+      - name: Agentic suite inside the sandbox
+        env:
+          NO_COLOR: "1"
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src/lmloop \
+            -e PYTHONPATH=/src/lmloop \
+            -e NO_COLOR=1 \
+            -e LMLOOP_DOCKER_LOCAL=1 \
+            -e LMLOOP_BASELINE_REPORT=/src/ci-reports/docker-local.jsonl \
+            lmloop-ci:local \
+            python -m unittest discover -s tests -p 'test_baseline_components.py' -v
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src/lmloop \
+            -e PYTHONPATH=/src/lmloop \
+            -e NO_COLOR=1 \
+            -e LMLOOP_DOCKER_LOCAL=1 \
+            -e LMLOOP_BASELINE_REPORT=/src/ci-reports/docker-local.jsonl \
+            lmloop-ci:local \
+            python -m unittest discover -s tests -p 'test_holistic_e2e.py' -v
+      - name: Scorecard
+        working-directory: lmloop
+        run: |
+          python -c "import sys; sys.path.insert(0, 'tests'); from e2e_harness import summarize_report; raise SystemExit(summarize_report('${{ github.workspace }}/ci-reports/docker-image.jsonl'))"
+          python -c "import sys; sys.path.insert(0, 'tests'); from e2e_harness import summarize_report; raise SystemExit(summarize_report('${{ github.workspace }}/ci-reports/docker-local.jsonl'))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-local
+          path: ci-reports/docker-*.jsonl

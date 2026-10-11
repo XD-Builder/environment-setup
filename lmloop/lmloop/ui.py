@@ -560,6 +560,10 @@ class Console:
     def info(self, msg: str) -> None:
         print(msg)
 
+    def echo(self, msg: str) -> None:
+        """Plain stdout. Used for machine-readable reports such as ``eval --json``."""
+        print(msg)
+
     def prompt(self, model: str = "") -> str:
         """Plain readline-safe prompt — decorative only, never sent to the model."""
         return format_input_prompt(model)

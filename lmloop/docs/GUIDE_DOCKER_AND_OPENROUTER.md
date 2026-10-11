@@ -103,6 +103,11 @@ with `lmloop campaign resume … --docker-persist`, optionally bound to `company
 this repository revision. Default behavior is unchanged: `run_shell` and checks run on the
 **host** via `subprocess`.
 
+CI still builds this image. The `docker-local` job checks that it contains Python 3.14,
+git, ripgrep, and curl, then runs the scripted agent baselines **inside** the container.
+That is local execution (`LocalBackend`) on the sandbox's Linux userland, not the
+`--docker` flag.
+
 When shipped, the UX will match the design:
 
 | Invocation | Behavior |

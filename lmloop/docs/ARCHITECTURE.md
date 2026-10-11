@@ -85,7 +85,7 @@ lmloop/
 │   │   └── development.md      # model-facing coding bar
 │   └── graphs/                 # packaged workflow graphs
 │       └── company.md          # ceo → build → qa → mine
-├── tests/                      # stdlib unittest; named test_<area>.py
+├── tests/                      # unittest test_*.py; e2e_harness.py drives scripted-model baselines
 ```
 
 ---
