@@ -67,6 +67,9 @@ lmloop config show|get|set              # settings (~/.lmloop/config.json)
 lmloop eval [--json | --design | --abstention]
 lmloop --docker until make the tests pass   # opt-in ephemeral sandbox (host is the default)
 lmloop sandbox status                   # local (host) unless this process passed --docker
+lmloop --docker company run --goal "…"  # opt-in company: remote allowlist, worktrees, gates
+lmloop campaign start --goal "…"        # multi-day plan store (host); resume runs the daily tick
+lmloop spirit log                       # actions, thoughts, traits for this repo
 lmloop completion zsh                   # print zsh completion script
 ```
 
@@ -306,6 +309,15 @@ zsh completion for `config set` is generated from these keys.
 | `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
 | `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |
 | `vision` | `auto` | Attach images to chat when the loaded model is a VLM. `auto` uses LM Studio’s native models API (not the model name). `true` / `false` override. |
+| `company_remote` | `false` | Allow `lmloop company run` against loopback or a non-OpenRouter host. Default company mode requires a remote OpenRouter `base_url` |
+| `company_models_allowlist` | *(empty)* | Comma-separated model ids added to `company/openrouter_autonomous.yaml`. Company chat calls outside that union fail before HTTP |
+| `use_spirit` | `true` | Inject the project spirit charter (and `self.md` when it exists) ahead of fenced memory |
+| `spirit_actions` | `true` | Append `spirit/actions.jsonl` after tool calls. Turn off on a shared machine |
+| `spirit_distill_after_mine` | `false` | After an until mine, write `spirit/pending_distill.json` for `/spirit distill` |
+| `spirit_remote` | `false` | When true, a remote `base_url` also receives `self.md`. Otherwise only the seed charter is sent |
+| `campaign_daily_reflect` | `true` | On `campaign resume`, append a daily tick when the UTC date changed |
+| `campaign_end_of_day_utc` | *(empty)* | Hour 0–23 UTC. When set, resume pauses after that hour until the next UTC date |
+| `campaign_max_days` | `30` | Resume refuses after this many days until `lmloop campaign extend` |
 
 ## Troubleshooting
 
@@ -359,5 +371,15 @@ client stay on the host. `sandbox_network: bridge` publishes test ports on
 reachability of host services bound to `0.0.0.0`. `none` drops the network.
 `host` is an explicit Linux/WSL2 opt-in that shares the host network
 namespace. No config key turns the sandbox on. HTTPS fetches verify TLS certificates.
+`lmloop company run` is a second opt-in on top of `--docker`: an orchestrator
+on the host and up to two workers, each on a git worktree under
+`.lmloop/worktrees/`. It requires an OpenRouter `base_url` (or
+`company_remote`) and refuses model ids outside the packaged allowlist plus
+`company_models_allowlist`. Workers do not write learnings; milestone gates
+run on the integration worktree first. `ceo`, `retro`, `plan`, and `mine`
+stay on the host. Campaigns (`lmloop campaign`) keep a separate plan and
+board from learnings. Spirit (`use_spirit`) injects the seed charter and an
+optional `self.md` before fenced memory; `/spirit distill --patch` promotes
+thoughts. Parallel local agents stay off.
 `remember` appends to `~/.lmloop/projects/<slug>/learnings.jsonl` (slug = git remote
 or directory name).

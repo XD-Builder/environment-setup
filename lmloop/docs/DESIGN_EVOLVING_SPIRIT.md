@@ -1,6 +1,6 @@
 # Design: Evolving agent spirit (actions → thoughts → knowledge → self)
 
-**Status:** proposed (nothing here is implemented)
+**Status:** shipped — seed, actions, thoughts, traits, self, distill patch, FTS kinds. `spirit_self_max_chars` is a constant (4000). Open questions in §14 remain.
 **Date:** 2026-10-07
 **Depends on:** `memory.py`, `knowledge_graph.py` (opt-in), `steer.py`, `skills/retro.md`, `skills/learn.md`, `loop.py` (`until_mine`)
 **Companions:** [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [ARCHITECTURE.md](ARCHITECTURE.md)

@@ -495,6 +495,10 @@ def _search_memory_scan(query: str, learning_limit: int, decision_limit: int,
         out.append("Learnings:\n" + "\n".join(format_learning_line(r) for r in learnings))
     if decisions:
         out.append("Decisions:\n" + "\n".join(format_decision_line(d) for d in decisions))
+    from .spirit import search_lines
+    spirit_hits = search_lines(query, slug)
+    if spirit_hits:
+        out.append("Spirit:\n" + "\n".join(spirit_hits))
     return "\n\n".join(out) or "(no memory matches)"
 
 

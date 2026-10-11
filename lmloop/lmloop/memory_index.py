@@ -312,7 +312,10 @@ class MemoryIndex:
 
     def _list_sources(self, conn: sqlite3.Connection, root: Path, *, full: bool) -> list[Path]:
         found: list[Path] = []
-        for name in ("learnings.jsonl", "decisions.jsonl"):
+        for name in (
+            "learnings.jsonl", "decisions.jsonl",
+            "spirit/actions.jsonl", "spirit/thoughts.jsonl", "spirit/traits.jsonl",
+        ):
             path = root / name
             if path.is_file():
                 found.append(path)
@@ -411,6 +414,35 @@ class MemoryIndex:
                     title=str(row.get("key") or ""),
                     body=str(row.get("insight") or ""),
                     subtype=str(row.get("type") or ""),
+                )
+            elif name == "actions.jsonl":
+                self._insert_doc(
+                    conn, kind="action", key=str(row.get("id") or ""),
+                    source=str(path), line=idx, ts=str(row.get("ts") or ""),
+                    confidence=0, src=str(row.get("tool") or ""), active=1,
+                    title=str(row.get("tool") or "action"),
+                    body=str(row.get("summary_line") or ""), subtype="action",
+                )
+            elif name == "thoughts.jsonl":
+                if row.get("status") not in (None, "open", "promoted"):
+                    continue
+                self._insert_doc(
+                    conn, kind="thought", key=str(row.get("id") or ""),
+                    source=str(path), line=idx, ts=str(row.get("ts") or ""),
+                    confidence=0, src=str(row.get("kind") or ""), active=1,
+                    title=str(row.get("id") or "thought"),
+                    body=str(row.get("text") or ""), subtype="thought",
+                )
+            elif name == "traits.jsonl":
+                if row.get("event") == "supersede":
+                    continue
+                self._insert_doc(
+                    conn, kind="trait", key=str(row.get("id") or ""),
+                    source=str(path), line=idx, ts=str(row.get("ts") or ""),
+                    confidence=float(row.get("strength") or 0),
+                    src=str(row.get("source") or ""), active=1,
+                    title=str(row.get("id") or "trait"),
+                    body=str(row.get("text") or ""), subtype="trait",
                 )
             elif name == "decisions.jsonl":
                 if row.get("kind") == "supersede" and not row.get("decision"):
@@ -547,6 +579,7 @@ class MemoryIndex:
         learnings = []
         decisions = []
         snippets = []
+        spirit_lines = []
         learning_rows = {
             r.get("key"): r
             for r in memory.get_learnings(limit=None, slug=self.slug)
@@ -568,6 +601,9 @@ class MemoryIndex:
                 item = decision_rows.get(row["key"])
                 if item is not None:
                     decisions.append(item)
+            elif kind in ("thought", "action", "trait") and len(spirit_lines) < _SNIPPET_MAX:
+                body = (row["body"] or "").replace("\n", " ")
+                spirit_lines.append(f"- [{kind} {row['key']}] {body[:_SNIPPET_CAP]}")
             elif kind in ("turn", "handoff", "checkpoint") and sessions_enabled(cfg):
                 if len(snippets) < _SNIPPET_MAX:
                     body = (row["body"] or "").replace("\n", " ")
@@ -604,6 +640,8 @@ class MemoryIndex:
             out.append("Decisions:\n" + "\n".join(lines))
         if snippets:
             out.append("Past sessions:\n" + "\n".join(snippets))
+        if spirit_lines:
+            out.append("Spirit:\n" + "\n".join(spirit_lines))
         return "\n\n".join(out) or "(no memory matches)"
 
     def reindex(self, cfg: dict) -> None:

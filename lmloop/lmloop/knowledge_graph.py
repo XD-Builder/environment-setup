@@ -13,10 +13,12 @@ from .config import cfg_bool, utc_now
 GRAPH_NODE_TYPES = frozenset({
     "learning", "decision", "session", "file", "skill", "concept",
     "run", "goal",
+    "action", "thought", "trait", "self_snapshot",
 })
 GRAPH_EDGE_TYPES = frozenset({
     "leads_to", "contradicts", "in_session", "references",
     "uses_skill", "related_to", "supersedes",
+    "evidence_for", "supports", "expresses", "grounded_in",
 })
 MSG_GRAPH_OFF = "knowledge graph is off — `lmloop config set use_graph true`"
 CANVAS_NODE_CAP = 2000
@@ -29,6 +31,10 @@ _TYPE_BAND = {
     "concept": 5.0,
     "run": 6.0,
     "goal": 7.0,
+    "action": 8.0,
+    "thought": 9.0,
+    "trait": 10.0,
+    "self_snapshot": 11.0,
 }
 
 # Per-project fingerprint: skip _backfill when learnings/decisions/sessions unchanged.

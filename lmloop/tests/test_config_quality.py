@@ -25,6 +25,9 @@ README_CONFIG_KEYS = frozenset({
     "model_concurrency", "run_token_budget", "eval_model",
     "memory_index", "recall_sessions",
     "graph_max_steps", "graph_mine", "use_graph", "vision",
+    "company_remote", "company_models_allowlist",
+    "use_spirit", "spirit_actions", "spirit_distill_after_mine", "spirit_remote",
+    "campaign_daily_reflect", "campaign_end_of_day_utc", "campaign_max_days",
 })
 
 
@@ -43,6 +46,10 @@ class ConfigQualityTests(unittest.TestCase):
                 sample = "local@sha256:" + ("ab" * 32)
             elif key == "sandbox_network":
                 sample = "none"
+            elif key == "campaign_end_of_day_utc":
+                sample = "18"
+            elif key == "company_models_allowlist":
+                sample = "openai/gpt-4o-mini"
             else:
                 sample = default or "http://127.0.0.1:9999/v1"
             coerced = coerce_config_value(key, sample)

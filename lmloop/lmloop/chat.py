@@ -127,6 +127,10 @@ def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None",
           on_delta=None, on_activity=None, on_reasoning=None,
           on_tools=None) -> "tuple[dict, dict]":
     """Chat completion. Streams when cfg['stream'] is true (default)."""
+    from .company.allowlist import rejection
+    reason = rejection(cfg, model)
+    if reason:
+        raise server.ServerError(reason)
     if cfg_bool(cfg, "stream"):
         return _chat_stream(
             cfg, model, messages, tool_specs,

@@ -24,14 +24,14 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
-│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
-│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns, planning memory, multi-day reflect + coordination (proposed)
-│   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
+│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
+│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
+│   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
 │   └── Dockerfile              # reference image; lmloop sandbox build records @sha256:
 ├── company/
-│   └── openrouter_autonomous.yaml  # illustrative allowlist tiers (company mode proposed)
+│   └── openrouter_autonomous.yaml  # company allowlist; config may add ids, not remove the check
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -55,6 +55,9 @@ lmloop/
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── evals.py                # usage gaps + abstention Act/Abstain/Pair
+│   ├── campaign.py             # multi-day plan, board, reflect ticks (host writer)
+│   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator
+│   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
 │   ├── canvas_tui.py          # knowledge-canvas projection and full-screen keys
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)

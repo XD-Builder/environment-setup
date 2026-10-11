@@ -548,6 +548,36 @@ class GraphRun:
             return pause.get("until_run") or None
         return None
 
+    def frontier_state(self, defn: GraphDef) -> "tuple[list[str], str]":
+        """Runnable node names and a phase: run, done, blocked, paused, or stopped."""
+        if self.is_paused():
+            return [], "paused"
+        if self.is_done():
+            return [], "done"
+        last = self.last_work()
+        if last is None:
+            return [defn.start], "run"
+        if last.get("role") == "gate":
+            if last.get("status") == "yes" and last.get("node"):
+                return [last["node"]], "run"
+            return [], "stopped"
+        frontier, unrouted, latest = self._replay_frontier(defn)
+        if unrouted:
+            return [], "blocked"
+        names = [
+            name for name in (node.name for node in defn.nodes)
+            if name in frontier and self._needs_satisfied(defn.node(name), latest)
+        ]
+        if names:
+            return names, "run"
+        if frontier:
+            return [], "blocked"
+        return [], "done"
+
+    def runnable_names(self, defn: GraphDef) -> list[str]:
+        names, _phase = self.frontier_state(defn)
+        return names
+
     def next_step(self, defn: GraphDef) -> "tuple[str | None, str | None]":
         """Return (kind, node_name). kind is run, gate, or None if done."""
         last = self.last_work()
@@ -751,6 +781,46 @@ def _run_until_node(
     if last and last.get("role") == "gate" and last.get("status") == "no":
         return "blocked", summary, session, until_path, verify
     return "pass", summary, session, until_path, verify
+
+
+def run_named_node(
+    cfg: dict, model: str, defn: GraphDef, node_name: str, handoff: str, *,
+    workspace_root: "Path | None" = None,
+    confirm_gate=None,
+) -> dict:
+    """Run one graph node. A mine node does not write memory."""
+    node = defn.node(node_name)
+    if node.kind == "mine":
+        return {
+            "status": "pass",
+            "summary": "mine stays on the orchestrator",
+            "session": "",
+        }
+    quiet = lambda *_args, **_kwargs: None
+    root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
+    clock_now = datetime.now(timezone.utc)
+    if node.kind == "skill":
+        status, summary, session = _run_skill_node(
+            cfg, model, node, handoff,
+            confirm_gate=confirm_gate, echo=quiet, echo_status=quiet,
+            echo_error=quiet, echo_tool=quiet, echo_round=quiet,
+            context_limit=0, context_reserve=DEFAULTS["context_reserve"],
+            workspace_root=root, clock_now=clock_now,
+        )
+        return {"status": status, "summary": summary, "session": session}
+    if node.kind == "until":
+        status, summary, session, until_path, _verify = _run_until_node(
+            cfg, model, node, handoff, resume_until=None,
+            confirm_gate=confirm_gate, echo=quiet, echo_status=quiet,
+            echo_error=quiet, echo_tool=quiet, echo_round=quiet,
+            context_limit=0, context_reserve=DEFAULTS["context_reserve"],
+            workspace_root=root, ask_gate=None, clock_now=clock_now,
+        )
+        return {
+            "status": status, "summary": summary, "session": session,
+            "until_run": until_path,
+        }
+    raise RuntimeError(f"unknown graph node kind {node.kind!r}")
 
 
 def run_graph(

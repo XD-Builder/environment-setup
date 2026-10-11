@@ -128,6 +128,10 @@ class SkillLibrary:
         backend = active_backend()
         if isinstance(backend, DockerBackend) and backend.network == "bridge":
             base += "\n\n" + steer.sandbox_port_hint()
+        from .spirit import spirit_block
+        spirit = spirit_block(cfg, workspace=workspace_root)
+        if spirit:
+            base += "\n\n" + spirit
         ctx = memory_block if memory_block is not None else memory.context_block(cfg)
         if ctx:
             base += "\n\n" + CONTEXT_HEADING + "\n\n" + ctx
