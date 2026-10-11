@@ -69,6 +69,8 @@ DEFAULTS = {
     "mine_on_exit": False,  # REPL exit mines the current session when true
     "check_inference": "auto",  # auto: derive a check plan when no --check/--keep; off: eval only
     "until_baseline": "auto",  # auto: baseline and reclassify a non-empty plan; off: checks gate directly
+    "sandbox_image": "",  # digest-pinned image; inert unless --docker
+    "sandbox_network": "bridge",  # bridge | none | host — inert unless --docker
     "model_concurrency": "auto",  # auto: 1 local / 4 remote; or int 1..8
     "run_token_budget": 0,  # pause run after this many tokens; 0 = off
     "eval_model": "",  # checker / proposals / mining; empty = main model
@@ -131,6 +133,17 @@ def coerce_config_value(key: str, value):
             if low in ("git", "off"):
                 return low
         return None
+    if key == "sandbox_network":
+        if isinstance(value, str) and value.strip().lower() in ("bridge", "none", "host"):
+            return value.strip().lower()
+        return None
+    if key == "sandbox_image":
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if text and "@sha256:" not in text:
+            return None
+        return text
     if key == "vision":
         if isinstance(value, bool):
             return "true" if value else "false"

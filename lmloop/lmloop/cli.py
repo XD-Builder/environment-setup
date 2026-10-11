@@ -22,7 +22,10 @@
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
-    lmloop eval [--json | --design] local usage evals and improvement gaps
+    lmloop eval [--json | --design | --abstention] local usage evals and improvement gaps
+    lmloop sandbox [status|build|shell|reset|rm]  Docker sandbox (opt-in; default is host)
+    lmloop --docker …                         ephemeral container for this process
+    lmloop --docker-persist …                 long-lived container (implies --docker)
 
 Project memory commands:
 
@@ -37,6 +40,7 @@ Project memory commands:
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -214,6 +218,9 @@ __SUBS__
   local curcontext="$curcontext" state
   _arguments -C \
     '--model[override model for this run]:model:' \
+    '--docker[run shell commands in an ephemeral container]' \
+    '--docker-persist[reattach a long-lived sandbox container]' \
+    '--docker-image[digest-pinned image override]:image:' \
     '--help[show help]' \
     '1: :->cmd' \
     '*:: :->args' && return
@@ -330,7 +337,10 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         return 0
     if verb == "canvas":
         q = " ".join(words[1:]) if len(words) > 1 else ""
-        console.info(knowledge_graph.format_canvas_text(cfg, query=q))
+        from .canvas_tui import open_memory_canvas
+        text = open_memory_canvas(cfg, query=q)
+        if text:
+            console.info(text)
         return 0
     if verb == "audit":
         console.hint("[memory audit · learn skill]")
@@ -617,17 +627,29 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
 
     as_json = False
     as_design = False
+    as_abstention = False
     rest: list[str] = []
     for w in words:
         if w == "--json":
             as_json = True
         elif w in ("--design", "--design-doc"):
             as_design = True
+        elif w == "--abstention":
+            as_abstention = True
         else:
             rest.append(w)
     if rest:
-        console.error("usage: lmloop eval [--json | --design]")
+        console.error("usage: lmloop eval [--json | --design | --abstention]")
         return 1
+    if as_abstention:
+        payload = evals.abstention_report()
+        if as_json:
+            console.info(json.dumps(payload, indent=2))
+            return 0
+        train = evals.load_abstention_pairs(split="train")
+        validation = evals.load_abstention_pairs(split="validation")
+        console.info(evals.format_abstention(train, validation))
+        return 0
     from .workflow import collect_flow_stats
     stats = evals.load_stats()
     gaps = evals.find_gaps(stats)
@@ -636,12 +658,89 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     payload["flow"] = flow.to_dict()
     evals.write_last_report(payload)
     if as_json:
-        console.echo(json.dumps(payload, indent=2))
+        console.info(json.dumps(payload, indent=2))
         return 0
     if as_design:
-        console.echo(evals.design_doc_skeleton(gaps))
+        console.info(evals.design_doc_skeleton(gaps))
         return 0
-    console.echo(evals.format_report(stats, gaps, flow=flow))
+    console.info(evals.format_report(stats, gaps, flow=flow))
+    return 0
+
+
+def cmd_sandbox(cfg: dict, words: list, console: Console) -> int:
+    """``lmloop sandbox`` — status by default. Build persists a digest, never a tag."""
+    from . import exec as exec_mod
+
+    verb = words[0] if words else "status"
+    if verb not in ("", "status", "build", "shell", "reset", "rm"):
+        console.error("usage: lmloop sandbox [status | build | shell | reset [--deps] | rm]")
+        return 1
+    if verb in ("", "status"):
+        backend = exec_mod.active_backend()
+        if isinstance(backend, exec_mod.DockerBackend):
+            console.info(backend.status_text())
+        else:
+            console.info(exec_mod.local_status_text())
+        return 0
+    if verb == "build":
+        return _sandbox_build(cfg, console)
+    root = Path.cwd().resolve()
+    backend = exec_mod.active_backend()
+    if not isinstance(backend, exec_mod.DockerBackend):
+        backend = exec_mod.DockerBackend(cfg, root, persist=True)
+    if verb == "reset":
+        deps = "--deps" in words[1:]
+        backend.reset(deps=deps)
+        console.info("sandbox reset" + (" --deps" if deps else ""))
+        return 0
+    if verb == "rm":
+        backend.runner(  # type: ignore[operator]
+            [backend.bin, "rm", "-f", backend.persist_name], timeout=30,
+        )
+        console.info(f"removed {backend.persist_name}")
+        return 0
+    if verb == "shell":
+        if not isinstance(exec_mod.active_backend(), exec_mod.DockerBackend):
+            console.error("sandbox shell needs --docker or --docker-persist on this process")
+            return 1
+        argv = backend.shell_argv()
+        if not sys.stdin.isatty():
+            console.error("sandbox shell needs a TTY")
+            console.info(" ".join(argv))
+            return 1
+        proc = subprocess.run(argv)
+        return int(proc.returncode or 0)
+    return 1
+
+
+def _sandbox_build(cfg: dict, console: Console) -> int:
+    from . import exec as exec_mod
+
+    dockerfile = Path(__file__).resolve().parent.parent / "sandbox" / "Dockerfile"
+    if not dockerfile.is_file():
+        console.error(f"missing {dockerfile}")
+        return 1
+    tag = "lmloop-sandbox:local"
+    bin_name = exec_mod.docker_binary()
+    runner = exec_mod.subprocess_runner
+    built = runner(
+        [bin_name, "build", "-f", str(dockerfile), "-t", tag, str(dockerfile.parent)],
+        timeout=600,
+    )
+    if built.returncode != 0:
+        console.error((built.stderr or built.stdout or "docker build failed").strip())
+        return 1
+    inspected = runner(
+        [bin_name, "image", "inspect", tag, "--format", "{{json .RepoDigests}}"],
+        timeout=30,
+    )
+    digest = exec_mod.sandbox_build_digest(inspected.stdout)
+    if not digest or not exec_mod.image_has_digest(digest):
+        console.error("refusing to persist a tag; image inspect did not yield @sha256:")
+        return 1
+    cfg["sandbox_image"] = digest
+    save_config(cfg)
+    console.info(f"sandbox_image = {digest}")
     return 0
 
 
@@ -669,7 +768,41 @@ def cli_handlers() -> dict:
         "skill": cmd_skill_cli,
         "completion": cmd_completion_cli,
         "eval": cmd_eval_cli,
+        "sandbox": cmd_sandbox,
     }
+
+
+def activate_sandbox(cfg: dict, args, console: Console) -> int:
+    """Start a sandbox when the flag asked for one. No flag: do not probe Docker.
+
+    Returns 0 to continue, or an exit code that stops the process before any
+    model call. A config key cannot turn this on.
+    """
+    from . import exec as exec_mod
+
+    image = (getattr(args, "docker_image", "") or "").strip()
+    if image and not exec_mod.image_has_digest(image):
+        console.error("image reference must contain @sha256:")
+        return 2
+    enabled = bool(getattr(args, "docker", False) or getattr(args, "docker_persist", False))
+    if not enabled:
+        return 0
+    backend = exec_mod.build_backend(
+        cfg,
+        Path.cwd(),
+        docker=True,
+        persist=bool(args.docker_persist),
+        image=image,
+    )
+    report = backend.start()
+    if not report.ok:
+        for line in report.errors:
+            console.error(line)
+        return 1
+    for line in report.warnings:
+        console.hint(line)
+    exec_mod.install_backend(backend)
+    return 0
 
 
 def main(argv=None) -> int:
@@ -680,6 +813,18 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model", help="override model for this run")
+    parser.add_argument(
+        "--docker", action="store_true",
+        help="run shell commands inside an ephemeral container (removed on exit)",
+    )
+    parser.add_argument(
+        "--docker-persist", action="store_true",
+        help="reattach a long-lived sandbox container (implies --docker)",
+    )
+    parser.add_argument(
+        "--docker-image", default="",
+        help="one-run image override; must contain @sha256:",
+    )
     parser.add_argument("cmd", nargs="?", default="", help="task / subcommand")
     # REMAINDER keeps flags like until --check from being eaten as argparse options.
     parser.add_argument("args", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
@@ -689,6 +834,9 @@ def main(argv=None) -> int:
     if args.model:
         cfg["model"] = args.model
     console = Console(cfg_bool(cfg, "color"))
+    code = activate_sandbox(cfg, args, console)
+    if code:
+        return code
 
     words = ([args.cmd] if args.cmd else []) + list(args.args)
     sub = words[0] if words else ""

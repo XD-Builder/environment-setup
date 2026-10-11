@@ -50,6 +50,8 @@ def _until_outcome_label(events: list) -> str:
     status = last.get("status")
     if role == "pause":
         return "paused"
+    if role == "abstain":
+        return "abstain"
     if role == "done" and status == "pass":
         return "pass"
     if role == "mine":
@@ -416,6 +418,8 @@ class UntilRun:
             return False
         if last.get("role") in DONE_ROLES:
             return True
+        if last.get("role") == "abstain":
+            return True
         return last.get("role") == "gate" and last.get("status") == "no"
 
     def last_handoff(self) -> str:
@@ -470,6 +474,7 @@ class UntilRun:
             ("check", "fail"): "maker",
             ("check", "blocked"): "gate",
             ("baseline", "blocked"): "gate",
+            ("abstain", "infeasible"): None,
             ("eval", "pass"): after_pass,
             ("eval", "fail"): "maker",
             ("eval", "blocked"): "gate",
@@ -502,6 +507,20 @@ def superseded_until_hint(slug: "str | None" = None) -> "str | None":
         f"[until · previous run {prior.path.name} still open; "
         "resume uses the latest run]"
     )
+
+
+def abstain_reason(outcome) -> "str | None":
+    """Structural infeasibility that must not start a maker step.
+
+    A missing typed binary still goes to the human gate (it may be fixable).
+    A keep that is already failing cannot be repaired by more edits of the goal.
+    """
+    if getattr(outcome, "status", "") != "blocked":
+        return None
+    text = " ".join(getattr(outcome, "notes", ()) or ())
+    if "invariant already broken" in text:
+        return "keep-prebroken"
+    return None
 
 
 def run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> str:
@@ -649,12 +668,25 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
             echo_status(row["output"])
         results = list(results) + extra_results
     stored = tuple(stored_list)
+    from .exec import backend_label
     run.append(
         "baseline", outcome.status,
         handoff="\n".join(outcome.notes),
         checks=[item.as_dict() for item in stored],
         results=results,
+        backend=backend_label(),
     )
+    reason = abstain_reason(outcome)
+    if reason:
+        run.append(
+            "abstain", "infeasible",
+            handoff="\n".join(outcome.notes),
+            reason=reason,
+            backend=backend_label(),
+        )
+        echo_status(status_mod.msg_until_abstain(reason))
+        from . import usage
+        usage.record("until.abstain", reason=reason)
 
 
 def boundary_approval(policy, ask_gate, echo_status, label: str = "until") -> "tuple[list[str], list[str]]":
@@ -855,6 +887,7 @@ def _run_until_body(
                 except OSError:
                     pass
                 denied_log = list(gate.denied) if isinstance(gate, tools.GatePolicy) else []
+                from .exec import backend_label
                 run.append(
                     "maker", "next",
                     handoff=last_assistant(messages),
@@ -862,6 +895,7 @@ def _run_until_body(
                     snapshot_ref=snap.ref,
                     usage=dict(step_stats),
                     denied=denied_log or None,
+                    backend=backend_label(),
                 )
                 approved, _unused = boundary_approval(gate, ask_gate, echo_status)
                 if approved:
@@ -893,15 +927,29 @@ def _run_until_body(
                         "",
                     )
                     echo_status(status_mod.msg_until_check_blocked(blocked))
-                run.append("check", status, handoff=check_output, results=results)
+                from .exec import backend_label
+                run.append(
+                    "check", status, handoff=check_output, results=results,
+                    backend=backend_label(),
+                )
                 from . import usage
 
+                blocked_n = sum(1 for row in results if row["status"] == "blocked")
                 usage.record(
                     "check.cycle",
                     status=status,
                     checks=len(planned),
-                    blocked=sum(1 for row in results if row["status"] == "blocked"),
+                    blocked=blocked_n,
                 )
+                if status == "blocked":
+                    usage.record(
+                        "check.blocked",
+                        cmd=next(
+                            (row["cmd"] for row in results if row["status"] == "blocked"),
+                            "",
+                        ),
+                        exit_class="spawn",
+                    )
                 continue
             if role == "eval":
                 echo_status(status_mod.msg_until_step("eval", makers_this_call, max_steps))

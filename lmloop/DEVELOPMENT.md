@@ -104,7 +104,8 @@ find yourself updating two lists, you have already added debt.
 | Git snapshots before autonomous maker steps | `snapshot.py` |
 | Derived check plans | `checks.py` |
 | Model slots + concurrency | `server.py` |
-| Shell backend seam | `exec.py` |
+| Shell backend seam (host default, opt-in Docker) | `exec.py` |
+| Knowledge canvas projection and keys | `canvas_tui.py` |
 | Memory FTS5/scan index | `memory_index.py` |
 | Flow stats (`lmloop flow`) | `workflow.py` |
 | Authored workflow graphs | `graph.py` |
