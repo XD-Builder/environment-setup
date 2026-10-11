@@ -60,6 +60,7 @@ class NodeDef:
     check_cmd: "str | None" = None
     checks: tuple = ()
     keeps: tuple = ()
+    control: "str | None" = None
     needs: tuple = ()
 
 
@@ -176,6 +177,7 @@ def _parse_node(tokens: list) -> NodeDef:
         return NodeDef(
             name=name, kind=kind, goal=parsed.goal,
             check_cmd=parsed.check_cmd, checks=parsed.checks, keeps=parsed.keeps,
+            control=parsed.control,
             needs=needs,
         )
     skill, task, checks, keeps = _parse_skill_rest(rest)
@@ -187,7 +189,7 @@ def _parse_node(tokens: list) -> NodeDef:
 
 
 def _parse_skill_rest(words: list) -> "tuple[str, str, tuple, tuple]":
-    checks, keeps, rest, err = split_check_flags(words)
+    checks, keeps, _control, rest, err = split_check_flags(words)
     if err:
         raise GraphError("skill node --check/--keep needs a command")
     if not rest:
@@ -702,6 +704,7 @@ def _run_skill_node(
         handoff=summary or "(none)",
         check_output="(none)",
         shell_evidence="(none)",
+        budget_block="(not an until run)",
     )
     ev = isolated_act(
         cfg, model, eval_prompt,
@@ -760,6 +763,7 @@ def _run_until_node(
     else:
         urun = UntilRun.create(
             node.goal, checks=node.checks, keeps=node.keeps,
+            until_control=node.control or cfg.get("until_control"),
         )
     result = run_until(
         cfg, model, run=urun,

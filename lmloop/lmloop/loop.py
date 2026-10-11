@@ -28,6 +28,13 @@ from .checks import (
     shell_evidence_table,
 )
 from .config import DEFAULTS, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
+from .run_artifacts import (
+    UntilArtifactStore,
+    control_steering,
+    format_budget_block,
+    host_assess_state,
+    normalize_until_control,
+)
 from .server import eval_model_name
 from .tools import run_shell, shell_confirm_flags
 
@@ -72,8 +79,34 @@ You do not get to declare the overall goal complete.
 Goal:
 {goal}
 
+Budget (this until run):
+{budget_block}
+
 Prior handoff (empty on the first cycle):
 {handoff}
+
+Do the next checkable increment. Use tools. When you stop, summarize what
+changed and what remains. Cite files, commands, or URLs. Do not end with a
+STATUS line — a separate checker decides pass/fail.
+"""
+
+MAKER_PROMPT_CONTROL = """You are working toward this goal until an external checker says it is done.
+You do not get to declare the overall goal complete.
+
+Goal:
+{goal}
+
+Budget (this until run):
+{budget_block}
+
+Run state (compact):
+{run_state}
+
+Your assignment this cycle:
+{assignment}
+
+Artifact detail (only if needed — prefer tools):
+{artifact_excerpts}
 
 Do the next checkable increment. Use tools. When you stop, summarize what
 changed and what remains. Cite files, commands, or URLs. Do not end with a
@@ -104,6 +137,9 @@ STATUS: blocked
 pass — the goal is met with cited evidence.
 fail — more work is needed.
 blocked — you cannot tell, or a human must decide.
+
+Budget (this until run):
+{budget_block}
 """
 
 
@@ -157,7 +193,9 @@ def check_status_from_output(output: str) -> str:
     return "fail"
 
 
-_UNTIL_USAGE = "usage: until [--check <cmd>] [--keep <cmd>] <goal>"
+_UNTIL_USAGE = (
+    "usage: until [--check <cmd>] [--keep <cmd>] [--control off|budget|meta] <goal>"
+)
 
 
 @dataclass(frozen=True)
@@ -167,6 +205,7 @@ class UntilArgs:
     goal: str = ""
     checks: tuple = ()
     keeps: tuple = ()
+    control: "str | None" = None
     err: "str | None" = None
 
     @property
@@ -174,37 +213,44 @@ class UntilArgs:
         return self.checks[0] if self.checks else None
 
 
-def split_check_flags(words: list) -> "tuple[tuple, tuple, list, str | None]":
-    """Pull repeatable ``--check`` / ``--keep`` off ``words``. Fail closed."""
+def split_check_flags(words: list) -> "tuple[tuple, tuple, str | None, list, str | None]":
+    """Pull ``--check`` / ``--keep`` / ``--control`` off ``words``. Fail closed."""
     checks: list[str] = []
     keeps: list[str] = []
+    control: "str | None" = None
     rest: list[str] = []
     i = 0
     while i < len(words):
         word = words[i]
+        if word == "--control":
+            if i + 1 >= len(words) or str(words[i + 1]).startswith("--"):
+                return (), (), None, [], _UNTIL_USAGE
+            control = normalize_until_control(str(words[i + 1]))
+            i += 2
+            continue
         if word in ("--check", "--keep"):
             if i + 1 >= len(words) or str(words[i + 1]).startswith("--"):
-                return (), (), [], _UNTIL_USAGE
+                return (), (), None, [], _UNTIL_USAGE
             cmd = str(words[i + 1]).strip()
             if not cmd:
-                return (), (), [], _UNTIL_USAGE
+                return (), (), None, [], _UNTIL_USAGE
             (checks if word == "--check" else keeps).append(cmd)
             i += 2
             continue
         rest.append(word)
         i += 1
-    return tuple(checks), tuple(keeps), rest, None
+    return tuple(checks), tuple(keeps), control, rest, None
 
 
 def parse_until_args(words: list) -> UntilArgs:
     """Parse an until goal. ``err`` is set when the line is invalid."""
-    checks, keeps, rest, err = split_check_flags(words)
+    checks, keeps, control, rest, err = split_check_flags(words)
     if err:
         return UntilArgs(err=err)
     goal = " ".join(rest).strip()
     if not goal:
-        return UntilArgs(checks=checks, keeps=keeps, err=_UNTIL_USAGE)
-    return UntilArgs(goal=goal, checks=checks, keeps=keeps)
+        return UntilArgs(checks=checks, keeps=keeps, control=control, err=_UNTIL_USAGE)
+    return UntilArgs(goal=goal, checks=checks, keeps=keeps, control=control)
 
 
 def parse_until_arg_line(arg: str) -> UntilArgs:
@@ -310,7 +356,8 @@ class UntilRun:
     @classmethod
     def create(cls, goal: str, check_cmd: "str | None" = None,
                slug: "str | None" = None, checks: "tuple | None" = None,
-               keeps: "tuple | None" = None) -> "UntilRun":
+               keeps: "tuple | None" = None,
+               until_control: "str | None" = None) -> "UntilRun":
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         d = until_dir(slug)
         path = d / f"{ts}.jsonl"
@@ -324,15 +371,26 @@ class UntilRun:
         planned = flags_plan(tuple(check_list), tuple(keeps or ()))
         first = next((item.cmd for item in planned if item.role == "check"), "")
         run = cls(path=path, goal=goal, check_cmd=first or None, events=[])
-        run._write({
+        meta = {
             "ts": utc_now(),
             "role": META_ROLE,
             "goal": goal,
             "check_cmd": first,
             "checks": [item.as_dict() for item in planned],
             "explicit": bool(planned),
-        })
+        }
+        if until_control:
+            meta["until_control"] = normalize_until_control(until_control)
+        run._write(meta)
         return run
+
+    def until_control(self, cfg: dict) -> str:
+        """Resolved control mode for this run (meta row, else config)."""
+        if self.events and self.events[0].get("role") == META_ROLE:
+            raw = self.events[0].get("until_control")
+            if raw:
+                return normalize_until_control(str(raw))
+        return normalize_until_control(cfg_str(cfg, "until_control"))
 
     @classmethod
     def load(cls, path: Path) -> "UntilRun":
@@ -726,6 +784,158 @@ def approved_note(commands: "list[str]") -> str:
     )
 
 
+def _maker_event_count(events: list) -> int:
+    return sum(1 for ev in events if ev.get("role") == "maker")
+
+
+def _budget_block_for_run(
+    run: UntilRun, cfg: dict, *, run_tokens: int, makers_this_call: int,
+) -> str:
+    return format_budget_block(
+        run_tokens=run_tokens,
+        token_budget=cfg_int(cfg, "run_token_budget"),
+        makers_this_call=makers_this_call,
+        until_max_steps=max(1, cfg_int(cfg, "until_max_steps")),
+        maker_count=_maker_event_count(run.events),
+    )
+
+
+def _maker_prompt(
+    run: UntilRun,
+    cfg: dict,
+    store: UntilArtifactStore,
+    *,
+    control_mode: str,
+    budget_block: str,
+    seed_handoff: str,
+    run_tokens: int,
+    makers_this_call: int,
+) -> str:
+    approved = approved_note(run.approved_commands())
+    prior = run.last_handoff() or seed_handoff or "(none)"
+    mode = normalize_until_control(control_mode)
+    if mode == "off":
+        return MAKER_PROMPT.format(
+            goal=run.goal,
+            budget_block=budget_block,
+            handoff=approved + prior,
+        )
+    assignment = store.assignment_from_state()
+    if not assignment:
+        assignment = (
+            "Start from the goal and any failing checks; make one checkable increment."
+        )
+    steer = control_steering(mode)
+    if steer:
+        assignment = f"{assignment}\n\n{steer}"
+    run_state = store.read_state()
+    if not run_state:
+        host_assess_state(
+            store,
+            goal=run.goal,
+            run_tokens=run_tokens,
+            token_budget=cfg_int(cfg, "run_token_budget"),
+            makers_this_call=makers_this_call,
+            until_max_steps=max(1, cfg_int(cfg, "until_max_steps")),
+            maker_count=_maker_event_count(run.events),
+            check_results=None,
+            changed_files=None,
+        )
+        run_state = store.read_state() or "(initial cycle)"
+    return MAKER_PROMPT_CONTROL.format(
+        goal=run.goal,
+        budget_block=budget_block,
+        run_state=run_state,
+        assignment=assignment,
+        artifact_excerpts="(none — use tools to inspect prior sessions)",
+    )
+
+
+def _register_until_artifact(
+    store: UntilArtifactStore,
+    run: UntilRun,
+    role: str,
+    *,
+    step: int,
+    summary: str,
+    session: str = "",
+    snapshot_ref: str = "",
+    check_cmds: "list[str] | None" = None,
+) -> None:
+    pointers: dict = {}
+    if session:
+        pointers["session"] = session
+    if snapshot_ref:
+        pointers["snapshot_ref"] = snapshot_ref
+    if check_cmds:
+        pointers["check_cmds"] = check_cmds
+    store.append_artifact(
+        kind=role,
+        step=step,
+        summary=summary,
+        pointers=pointers or None,
+    )
+
+
+def _host_assess_after_fail(
+    store: UntilArtifactStore,
+    run: UntilRun,
+    cfg: dict,
+    *,
+    control_mode: str,
+    run_tokens: int,
+    makers_this_call: int,
+    check_results: "list | None",
+    eval_status: str = "",
+    eval_handoff: str = "",
+    changed_files: "list[str] | None",
+) -> None:
+    if normalize_until_control(control_mode) == "off":
+        return
+    failing = ""
+    if check_results:
+        for row in check_results:
+            if row.get("status") == "fail":
+                failing = str(row.get("cmd") or "")
+                break
+    host_assess_state(
+        store,
+        goal=run.goal,
+        run_tokens=run_tokens,
+        token_budget=cfg_int(cfg, "run_token_budget"),
+        makers_this_call=makers_this_call,
+        until_max_steps=max(1, cfg_int(cfg, "until_max_steps")),
+        maker_count=_maker_event_count(run.events),
+        check_results=check_results,
+        eval_status=eval_status,
+        eval_handoff=eval_handoff,
+        changed_files=changed_files,
+        failing_cmd=failing,
+    )
+
+
+def _record_until_budget_usage(run: UntilRun, cfg: dict) -> None:
+    from . import usage
+
+    run_tokens = sum(
+        int((ev.get("usage") or {}).get("total_tokens") or 0)
+        for ev in run.events
+    )
+    token_budget = cfg_int(cfg, "run_token_budget")
+    max_steps = max(1, cfg_int(cfg, "until_max_steps"))
+    maker_count = _maker_event_count(run.events)
+    util_tok = (run_tokens / token_budget) if token_budget > 0 else 0.0
+    util_steps = maker_count / max_steps if max_steps else 0.0
+    usage.record(
+        "until.budget",
+        utilization_tok=round(util_tok, 4),
+        utilization_steps=round(util_steps, 4),
+        control_mode=run.until_control(cfg),
+        paused=run.is_paused(),
+        done=run.is_done(),
+    )
+
+
 def _pause_interrupted(run: UntilRun, echo_status) -> UntilRun:
     if not run.is_paused() and not run.is_done():
         run.append(PAUSE_ROLE, "paused")
@@ -776,6 +986,8 @@ def run_until(
             paused=run.is_paused(),
             done=run.is_done(),
         )
+        if run.is_paused() or run.is_done():
+            _record_until_budget_usage(run, cfg)
         from .knowledge_graph import record_workflow_run
         cmds = [item.cmd for item in run.current_checks()]
         record_workflow_run(
@@ -826,6 +1038,8 @@ def _run_until_body(
         for ev in run.events
     )
     changed_files: list[str] = []
+    control_mode = run.until_control(cfg)
+    artifact_store = UntilArtifactStore(run.path)
 
     try:
         _prepare_plan(
@@ -856,10 +1070,17 @@ def _run_until_body(
                     step=makers_this_call,
                 )
                 echo_status(status_mod.msg_until_step("maker", makers_this_call, max_steps))
-                prompt = MAKER_PROMPT.format(
-                    goal=run.goal,
-                    handoff=approved_note(run.approved_commands())
-                    + (run.last_handoff() or seed_handoff or "(none)"),
+                budget_block = _budget_block_for_run(
+                    run, cfg, run_tokens=run_tokens,
+                    makers_this_call=makers_this_call,
+                )
+                prompt = _maker_prompt(
+                    run, cfg, artifact_store,
+                    control_mode=control_mode,
+                    budget_block=budget_block,
+                    seed_handoff=seed_handoff,
+                    run_tokens=run_tokens,
+                    makers_this_call=makers_this_call,
                 )
                 step_stats: dict = {}
                 result = isolated_act(
@@ -889,14 +1110,22 @@ def _run_until_body(
                     pass
                 denied_log = list(gate.denied) if isinstance(gate, tools.GatePolicy) else []
                 from .exec import backend_label
+                handoff_text = last_assistant(messages)
                 run.append(
                     "maker", "next",
-                    handoff=last_assistant(messages),
+                    handoff=handoff_text,
                     session=str(session_log),
                     snapshot_ref=snap.ref,
                     usage=dict(step_stats),
                     denied=denied_log or None,
                     backend=backend_label(),
+                )
+                _register_until_artifact(
+                    artifact_store, run, "maker",
+                    step=run.events[-1].get("step", 0),
+                    summary=handoff_text,
+                    session=str(session_log),
+                    snapshot_ref=snap.ref or "",
                 )
                 approved, _unused = boundary_approval(gate, ask_gate, echo_status)
                 if approved:
@@ -933,6 +1162,21 @@ def _run_until_body(
                     "check", status, handoff=check_output, results=results,
                     backend=backend_label(),
                 )
+                _register_until_artifact(
+                    artifact_store, run, "check",
+                    step=run.events[-1].get("step", 0),
+                    summary=f"check {status}: {check_output[:400]}",
+                    check_cmds=[item.cmd for item in planned],
+                )
+                if status == "fail":
+                    _host_assess_after_fail(
+                        artifact_store, run, cfg,
+                        control_mode=control_mode,
+                        run_tokens=run_tokens,
+                        makers_this_call=makers_this_call,
+                        check_results=results,
+                        changed_files=changed_files,
+                    )
                 from . import usage
 
                 blocked_n = sum(1 for row in results if row["status"] == "blocked")
@@ -958,11 +1202,16 @@ def _run_until_body(
                 shell_ev = shell_evidence_table(
                     last_session[-1] if last_session else Path(),
                 )
+                eval_budget = _budget_block_for_run(
+                    run, cfg, run_tokens=run_tokens,
+                    makers_this_call=makers_this_call,
+                )
                 prompt = EVAL_PROMPT.format(
                     goal=run.goal,
                     handoff=run.last_maker_handoff() or "(none)",
                     check_output=check_output or "(none)",
                     shell_evidence=shell_ev,
+                    budget_block=eval_budget,
                 )
                 step_stats = {}
                 result = isolated_act(
@@ -991,6 +1240,23 @@ def _run_until_body(
                     session=str(session_log),
                     usage=dict(step_stats),
                 )
+                _register_until_artifact(
+                    artifact_store, run, "eval",
+                    step=run.events[-1].get("step", 0),
+                    summary=text,
+                    session=str(session_log),
+                )
+                if status == "fail":
+                    _host_assess_after_fail(
+                        artifact_store, run, cfg,
+                        control_mode=control_mode,
+                        run_tokens=run_tokens,
+                        makers_this_call=makers_this_call,
+                        check_results=None,
+                        eval_status=status,
+                        eval_handoff=text,
+                        changed_files=changed_files,
+                    )
                 continue
             if role == "gate":
                 echo_status(status_mod.msg_until_blocked())

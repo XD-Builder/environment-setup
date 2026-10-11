@@ -69,6 +69,7 @@ DEFAULTS = {
     "context_reserve": 2048,  # tokens reserved for model reply when showing fill bar
     "eval_max_rounds": 8,  # gather rounds for until/graph eval act(); maker keeps max_rounds
     "until_max_steps": 12,  # maker cycles per until invocation before pause
+    "until_control": "off",  # off | budget | meta — Meta-style budget + run state
     "until_mine": True,  # after until pass, mine learnings from the run
     "mine_on_exit": False,  # REPL exit mines the current session when true
     "check_inference": "auto",  # auto: derive a check plan when no --check/--keep; off: eval only
@@ -111,6 +112,10 @@ def coerce_config_value(key: str, value):
         return None
     if key in ("check_inference", "until_baseline"):
         if isinstance(value, str) and value.strip().lower() in ("auto", "off"):
+            return value.strip().lower()
+        return None
+    if key == "until_control":
+        if isinstance(value, str) and value.strip().lower() in ("off", "budget", "meta"):
             return value.strip().lower()
         return None
     if key in ("memory_index", "recall_sessions"):

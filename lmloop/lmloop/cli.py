@@ -2,7 +2,7 @@
 
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
-    lmloop until [--check cmd] [--keep cmd] goal  work until checks or an evaluator pass; REPL on a TTY
+    lmloop until [--check cmd] [--keep cmd] [--control off|budget|meta] goal  until checks/eval pass; REPL on a TTY
     lmloop until                    resume latest open until-run
     lmloop graph <name>             run an authored workflow graph; REPL on a TTY
     lmloop graph                    resume latest open graph-run
@@ -82,6 +82,7 @@ from .config import (
     DEFAULTS,
     cfg_bool,
     cfg_int,
+    cfg_str,
     coerce_config_value,
     load_config,
     save_config,
@@ -434,7 +435,10 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
     if not words:
         run = loop_mod.latest_open_until_run()
         if run is None:
-            console.error("usage: lmloop until [--check <cmd>] [--keep <cmd>] <goal>")
+            console.error(
+                "usage: lmloop until [--check <cmd>] [--keep <cmd>] "
+                "[--control off|budget|meta] <goal>"
+            )
             console.info("  no open until-run to resume")
             return 1
         return _cli_run_until(cfg, console, run)
@@ -446,8 +450,10 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
     if model is None:
         return 1
     hint = loop_mod.superseded_until_hint()
+    control = parsed.control or cfg_str(cfg, "until_control")
     run = loop_mod.UntilRun.create(
         parsed.goal, checks=parsed.checks, keeps=parsed.keeps,
+        until_control=control,
     )
     console.hint(f"[until · {parsed.goal}]")
     if hint:
