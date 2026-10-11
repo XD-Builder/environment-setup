@@ -28,6 +28,7 @@ lmloop/
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
 │   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
 │   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
+│   ├── DESIGN_CLAUDE_CODE_PARITY.md  # proposed: MCP + Claude Code–class harness parity
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
 │   └── Dockerfile              # reference image; lmloop sandbox build records @sha256:
