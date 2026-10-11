@@ -119,7 +119,14 @@ find yourself updating two lists, you have already added debt.
 | Status / resume / nudge copy | `status.py` |
 | JSONL memory (learnings, decisions, sessions, checkpoints) | `memory.py` |
 | Knowledge-graph nodes/edges (`use_graph`) | `knowledge_graph.py` |
-| Goal loop (`until` maker/check/eval) | `loop.py` |
+| Until run JSONL (shared roles, append-only rows) | `run_log.py` (leaf: `memory`, `config`) |
+| Until flag parsing (`--check` / `--keep`) | `until_parse.py` (leaf) |
+| Until state machine (`run_until`, `isolated_act`) | `until_runner.py` |
+| Until public facade (tests patch `lmloop.loop.*`) | `loop.py` |
+| Graph DSL parse/load | `graph_dsl.py` (leaf; uses `until_parse`) |
+| Graph frontier + `run_graph` | `graph_runner.py` |
+| Graph public facade | `graph.py` |
+| Workflow terminal hooks (usage finish, KG run row) | `workflow_finish.py` |
 | Derived check plans (no model calls) | `checks.py` |
 | Git snapshots before autonomous maker steps | `snapshot.py` |
 | Model slots + concurrency | `server.py` |
@@ -127,7 +134,6 @@ find yourself updating two lists, you have already added debt.
 | Knowledge canvas projection and keys | `canvas_tui.py` |
 | Memory FTS5/scan index | `memory_index.py` |
 | Flow stats (`lmloop flow`) | `workflow.py` |
-| Authored workflow graphs | `graph.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
 | Paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, project slug, `utc_now()` | `config.py` |
@@ -163,9 +169,14 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
   `tools`, `loop`, or `graph`.
 - `ui.py` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
-- `checks.py` may import `tools.ShellCommand` and `memory` (learnings, until logs). It must not import `agent`, `loop`, or `graph`.
-- `loop.py` may import `agent.act`, `skills.system_prompt`, `memory`, `status`, `checks`, `snapshot`, and `tools.run_shell` for the check command.
-- `graph.py` may import `loop` (`isolated_act`, `run_until`, `parse_eval_status`, `run_plan_commands`, `eval_max_rounds`), `skills.load_skill`, `memory`, `knowledge_graph.record_skill_use`, `status`, and `snapshot`.
+- `checks.py` may import `tools.ShellCommand` and `memory` (learnings, until logs). It must not import `agent`, `loop`, `graph`, or `until_runner`.
+- `run_log.py` and `until_parse.py` are leaves (`memory` / `config` only for run logs). They must not import `agent`, `checks`, `loop`, or `graph`.
+- `graph_dsl.py` is a leaf (stdlib, `config` paths, `until_parse`). It must not import `agent`, `loop`, `graph_runner`, or `knowledge_graph`.
+- `workflow_finish.py` may import `knowledge_graph` and `usage`. It must not import `agent`, `loop`, or `graph`.
+- `until_runner.py` may import `run_log`, `checks`, `agent`, `snapshot`, `tools`, and `workflow_finish`. It must not import `graph_runner` or `graph_dsl`.
+- `graph_runner.py` may import `run_log`, `graph_dsl`, `until_runner`, `skills`, `workflow`, and `workflow_finish`. It must not import `repl` or `cli`.
+- `loop.py` is a facade over `until_runner` (re-exports for harnesses and tests). It must not import `graph`.
+- `graph.py` is a facade over `graph_dsl` + `graph_runner` + `until_runner` entry points. It must not be imported by `until_runner` at module load (runtime import for patched paths is OK).
 - `snapshot.py` is a leaf: git via subprocess. It must not import `agent`, `loop`, or `graph`.
 - `knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.
 - `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
@@ -177,9 +188,8 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
 - `agent.py` may import `server` (`ServerError`, `model_has_vision`) and `chat` (`_chat`).
 - `tools.py` may import `web` (`web_search`, `fetch_url`). `web.py` must not
   import `tools` at module load (lazy `ToolResult` only for image attachments).
-- `loop.py` must not import `graph`.
-- `agent.py` / `stream.py` / `display.py` / `chat.py` must not import `loop` or `graph`.
-- `contracts.py` stays a stdlib import. Grammar and tool-arg checkers may lazy-import `graph` and `tools`. It must not import `agent` at module load.
+- `agent.py` / `stream.py` / `display.py` / `chat.py` must not import `loop`, `graph`, `until_runner`, or `graph_runner`.
+- `contracts.py` stays a stdlib import. Grammar checkers lazy-import `graph_dsl` and `tools`. It must not import `agent` at module load.
 - `traces.py` may import `contracts`, `usage`, `config`, and `memory`. It must not import `agent`, `loop`, or `graph`.
 - `agent.py` may import `traces` lazily inside `act` / `_dispatch_tools`.
 - `company/` may import `graph`, `loop`, and `exec`. `graph` and `loop` must not import `company`.

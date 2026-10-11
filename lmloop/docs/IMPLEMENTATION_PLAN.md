@@ -30,6 +30,7 @@ and what to move to `archived/` when done.
 | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | **Phases A–C shipped**; Phase D cut | `docs/` (Phase D in Non-goals) |
 | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | **V0–V5 shipped** | `archived/` |
 | [DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md) | Spec | **Shipped** — deterministic pyramid, local traces, CI gates | `archived/` |
+| [DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md](archived/DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md) | Spec | **Shipped** — BL-1–BL-6 | `archived/` |
 | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | **S11–S13 + V5 shipped**; optimizer not built | Stay in `docs/` (human-gated) |
 | [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | `archived/` |
 | [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | `archived/` |
@@ -89,6 +90,10 @@ flowchart TD
   mem -.-> emb
   dag -.-> par
 ```
+
+### Wave 4a — Business / workflow separation (**shipped**)
+
+See [archived/DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md](archived/DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md). Modules: `run_log.py`, `until_parse.py`, `until_runner.py`, `loop.py` (facade), `graph_dsl.py`, `graph_runner.py`, `graph.py` (facade), `workflow_finish.py`.
 
 ### Wave 4 — MCP and Claude Code–class harness (proposed)
 

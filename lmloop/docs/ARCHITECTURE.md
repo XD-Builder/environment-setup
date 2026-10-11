@@ -17,7 +17,7 @@ lmloop/
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
 │   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
-│   ├── archived/               # shipped design specs (usage evals, company, campaigns, spirit, assertion pyramid, meta control, … — see archived/README.md)
+│   ├── archived/               # shipped design specs (usage evals, assertion pyramid, business/workflow split, meta control, company, campaigns, spirit, … — see archived/README.md)
 │   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (Phases A–C shipped)
 │   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker shipped
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, canvas TUI shipped; parallel agents deferred
@@ -46,6 +46,15 @@ lmloop/
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── memory_index.py         # derived FTS5/scan index (incremental sync)
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
+│   ├── run_log.py              # until/graph JSONL run logs (leaf)
+│   ├── until_parse.py          # --check/--keep parsing (leaf)
+│   ├── until_runner.py         # until state machine
+│   ├── loop.py                 # until facade (CLI/REPL + test patches)
+│   ├── graph_dsl.py            # authored graph parse/load (leaf)
+│   ├── graph_runner.py         # graph frontier + run_graph
+│   ├── graph.py                # graph facade
+│   ├── workflow_finish.py      # terminal usage + KG hooks
+│   ├── run_artifacts.py        # until sidecar state + artifact index (budget control)
 │   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
 │   ├── exec.py                 # LocalBackend (default) and opt-in DockerBackend
 │   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
@@ -64,11 +73,8 @@ lmloop/
 │   ├── ui.py                   # Console: ANSI theming, status bars, clipboard
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
 │   ├── status.py               # status / resume / until-graph follow-up copy
-│   ├── loop.py                 # until goal loop: isolated maker + check/eval
-│   ├── run_artifacts.py        # until sidecar state + artifact index (budget control)
 │   ├── checks.py               # derived check plans (no model calls)
 │   ├── snapshot.py             # git temp-index refs before autonomous maker steps
-│   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
 │   │   ├── system.md           # standing harness: curiosity, learning, growth, safety floor
@@ -599,7 +605,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 - **pr** — layers 1–3 (invariants, ROUGE-1 / BLEU-1 / bag-of-words cosine, rubric citation, tool order, redundant calls, rollback, abstention). A pass-rate drop greater than 2% fails.
 - **nightly** — layers 1–4 (distractors and schema mutations). A miss fails the scheduled job as an alert and does not set `blocks_merge`.
 
-`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md).
+`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [archived/DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md).
 
 ---
 

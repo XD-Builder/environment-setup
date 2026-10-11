@@ -12,6 +12,7 @@ and [README.md](../../README.md).
 | [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md) | Opt-in knowledge graph (`use_graph`) |
 | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | `usage.jsonl` gaps, abstention pairs, human-gated improve loop |
 | [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) | Four-layer contracts, golden cases, CI gates, local traces |
+| [DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md](DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md) | Business vs workflow module split (`run_log`, DSL, runners) |
 | [DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md) | `until_control` off/budget/meta, artifacts, `until analyze` |
 | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Docker company mode, manifest, worktrees, allowlist |
 | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Campaigns: plan, board, daily tick, supervisors |

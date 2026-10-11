@@ -409,6 +409,16 @@ class CanvasTuiTests(unittest.TestCase):
         text = open_memory_canvas({"use_graph": False}, query="")
         self.assertIn("use_graph", text)
 
+    def test_workflow_leaf_modules_avoid_agent_and_loop(self):
+        root = Path(__file__).resolve().parents[1] / "lmloop"
+        for name in ("run_log.py", "graph_dsl.py", "until_parse.py"):
+            text = (root / name).read_text(encoding="utf-8")
+            for banned in (
+                "from .agent", "from .loop", "from .graph",
+                "import agent", "import loop", "import graph",
+            ):
+                self.assertNotIn(banned, text, msg=name)
+
 
 class AbstentionTests(unittest.TestCase):
     def test_fixture_metrics_and_selection_rule(self):
