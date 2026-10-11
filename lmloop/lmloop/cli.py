@@ -3,6 +3,7 @@
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
     lmloop until [--check cmd] [--keep cmd] [--control off|budget|meta] goal  until checks/eval pass; REPL on a TTY
+    lmloop until analyze [run] [--json]   offline metrics for one until run
     lmloop until                    resume latest open until-run
     lmloop graph <name>             run an authored workflow graph; REPL on a TTY
     lmloop graph                    resume latest open graph-run
@@ -431,7 +432,41 @@ def cmd_models(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
+def cmd_until_analyze(cfg: dict, words: list, console: Console) -> int:
+    from .run_artifacts import analyze_until_run, format_until_analyze
+
+    as_json = False
+    rest: list[str] = []
+    for word in words:
+        if word == "--json":
+            as_json = True
+        else:
+            rest.append(word)
+    run_key = rest[0] if rest else ""
+    until_dir = loop_mod.until_dir()
+    if run_key:
+        candidate = until_dir / run_key
+        if not candidate.suffix:
+            candidate = until_dir / f"{run_key}.jsonl"
+        path = candidate
+    else:
+        runs = loop_mod.all_until_runs()
+        if not runs:
+            console.error("no until runs to analyze")
+            return 1
+        path = runs[-1]
+    try:
+        metrics = analyze_until_run(path, cfg)
+    except (OSError, FileNotFoundError) as exc:
+        console.error(str(exc))
+        return 1
+    console.info(format_until_analyze(metrics, as_json=as_json))
+    return 0
+
+
 def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
+    if words and words[0] == "analyze":
+        return cmd_until_analyze(cfg, words[1:], console)
     if not words:
         run = loop_mod.latest_open_until_run()
         if run is None:

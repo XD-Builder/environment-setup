@@ -1,6 +1,6 @@
 # Design: Meta-style control and budget-aware `until`
 
-**Status:** partial — **M0–M2** shipped (L1 budget + L2 host assess); **M3–M5** proposed  
+**Status:** partial — **M0–M5** shipped except **M4.2** (eval gap rules); **M3** APED for ``until_control: meta``  
 **Date:** 2026-10-11  
 **Sources:** [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) · Meta arXiv [2609.38147](https://arxiv.org/abs/2609.38147) · BATS [2511.17006](https://arxiv.org/abs/2511.17006)  
 **Depends on:** [ARCHITECTURE.md](ARCHITECTURE.md) · `loop.py` · `graph.py` · `checks.py` · `traces.py` · `campaign.py` · `company/orchestrator.py`  

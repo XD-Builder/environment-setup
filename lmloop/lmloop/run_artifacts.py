@@ -20,6 +20,7 @@ def _clip(text: str, limit: int) -> str:
 
 RUN_STATE_MAX = 4000
 ARTIFACT_SUMMARY_MAX = 800
+CONTROL_PROPOSAL_MIN = 3
 _CONTROL_STEER = (
     "You may use remaining budget. Prefer verifying failures before large "
     "rewrites. Cite check output and files changed."
@@ -245,3 +246,192 @@ def control_steering(control_mode: str) -> str:
     if normalize_until_control(control_mode) == "off":
         return ""
     return _CONTROL_STEER
+
+
+def extract_json_object(text: str) -> "dict | None":
+    """Best-effort JSON object parse from an eval-model reply."""
+    body = (text or "").strip()
+    if not body:
+        return None
+    try:
+        row = json.loads(body)
+        return row if isinstance(row, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start = body.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for idx in range(start, len(body)):
+        ch = body[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    row = json.loads(body[start:idx + 1])
+                except json.JSONDecodeError:
+                    return None
+                return row if isinstance(row, dict) else None
+    return None
+
+
+def single_action_instruction(check_results: "list | None") -> "str | None":
+    """Host shortcut when exactly one check failed and none are blocked."""
+    if not check_results:
+        return None
+    failing = [row for row in check_results if row.get("status") == "fail"]
+    blocked = [row for row in check_results if row.get("status") == "blocked"]
+    if blocked or len(failing) != 1:
+        return None
+    cmd = str(failing[0].get("cmd") or "").strip()
+    if not cmd:
+        return None
+    return f"Fix failing check: {cmd}"
+
+
+def apply_dispatch_to_state(store: UntilArtifactStore, *, instruction: str) -> None:
+    """Rewrite **Next focus** in ``state.md`` from a controller dispatch."""
+    state = store.read_state()
+    if not state:
+        return
+    lines = state.splitlines()
+    out: list[str] = []
+    replaced = False
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        out.append(line)
+        if line.strip().lower() == "## next focus":
+            out.append(instruction.strip() or "Make the next checkable increment.")
+            replaced = True
+            idx += 1
+            while idx < len(lines) and not lines[idx].startswith("## "):
+                idx += 1
+            continue
+        idx += 1
+    if not replaced:
+        out.extend(["", "## Next focus", instruction.strip() or "Make the next checkable increment."])
+    store.write_state("\n".join(out))
+
+
+def artifact_excerpts(store: UntilArtifactStore, ids: "list[str]") -> str:
+    """Clip summaries for artifact ids referenced by dispatch."""
+    if not ids:
+        return "(none — use tools to inspect prior sessions)"
+    by_id = {str(row.get("id")): row for row in store.load_artifacts()}
+    chunks: list[str] = []
+    for art_id in ids:
+        row = by_id.get(str(art_id))
+        if not row:
+            continue
+        chunks.append(f"- {art_id} ({row.get('kind')}): {row.get('summary')}")
+    return "\n".join(chunks) if chunks else "(none — use tools to inspect prior sessions)"
+
+
+def analyze_until_run(run_path: Path, cfg: dict) -> dict:
+    """Offline metrics from one until log + artifact sidecar (M4.1)."""
+    from . import memory
+    from .config import cfg_int, cfg_str
+
+    path = Path(run_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"until run not found: {path}")
+    rows = memory.read_jsonl(path)
+    store = UntilArtifactStore(path)
+    artifacts = store.load_artifacts()
+    run_tokens = sum(
+        int((ev.get("usage") or {}).get("total_tokens") or 0)
+        for ev in rows
+    )
+    token_budget = cfg_int(cfg, "run_token_budget")
+    max_steps = max(1, cfg_int(cfg, "until_max_steps"))
+    makers = sum(1 for ev in rows if ev.get("role") == "maker")
+    reuse_edges = sum(1 for row in artifacts if row.get("refs"))
+    pass_depth = None
+    makers_seen = 0
+    for ev in rows:
+        if ev.get("role") == "maker":
+            makers_seen += 1
+        if ev.get("role") == "check" and ev.get("status") == "pass":
+            pass_depth = makers_seen
+            break
+    maker_indices_after_fail: list[int] = []
+    for idx, ev in enumerate(rows):
+        if ev.get("role") == "check" and ev.get("status") == "fail":
+            later = sum(
+                1 for j in range(idx + 1, len(rows))
+                if rows[j].get("role") == "maker"
+            )
+            if later:
+                maker_indices_after_fail.append(later)
+    raw_control = ""
+    if rows and rows[0].get("role") == "meta":
+        raw_control = str(rows[0].get("until_control") or "")
+    control_mode = normalize_until_control(raw_control or cfg_str(cfg, "until_control"))
+    return {
+        "run": path.name,
+        "control_mode": control_mode,
+        "budget_utilization_tokens": (
+            round(run_tokens / token_budget, 4) if token_budget > 0 else None
+        ),
+        "budget_utilization_makers": round(makers / max_steps, 4) if max_steps else None,
+        "maker_cycles": makers,
+        "run_tokens": run_tokens,
+        "reuse_edges": reuse_edges,
+        "artifact_count": len(artifacts),
+        "pass_depth_makers": pass_depth,
+        "check_fail_followup_makers": maker_indices_after_fail,
+        "control_stages": sum(
+            1 for ev in rows if ev.get("role") == "control"
+        ),
+    }
+
+
+def format_until_analyze(metrics: dict, *, as_json: bool = False) -> str:
+    if as_json:
+        return json.dumps(metrics, indent=2)
+    lines = [
+        f"until analyze · {metrics.get('run')}",
+        f"  control_mode: {metrics.get('control_mode')}",
+        f"  maker_cycles: {metrics.get('maker_cycles')}",
+        f"  run_tokens: {metrics.get('run_tokens')}",
+        f"  budget_utilization_tokens: {metrics.get('budget_utilization_tokens')}",
+        f"  budget_utilization_makers: {metrics.get('budget_utilization_makers')}",
+        f"  reuse_edges: {metrics.get('reuse_edges')} (artifacts: {metrics.get('artifact_count')})",
+        f"  control_stages: {metrics.get('control_stages')}",
+        f"  pass_depth_makers: {metrics.get('pass_depth_makers')}",
+    ]
+    follow = metrics.get("check_fail_followup_makers") or []
+    if follow:
+        lines.append(f"  makers_after_check_fail: {follow}")
+    return "\n".join(lines)
+
+
+def worker_packet_extras(worktree: Path) -> dict:
+    """Optional company packet fields from the latest until sidecar in a worktree."""
+    from .config import project_slug
+    from .loop import all_until_runs
+
+    root = Path(worktree).resolve()
+    slug = project_slug(root)
+    runs = all_until_runs(slug)
+    if not runs:
+        return {}
+    latest = runs[-1]
+    store = UntilArtifactStore(latest)
+    assignment = store.assignment_from_state()
+    artifacts = store.load_artifacts()
+    ids = [str(row["id"]) for row in artifacts[-4:] if row.get("id")]
+    if not assignment and not ids:
+        return {}
+    uri = store.artifacts_path.as_uri() if store.artifacts_path.exists() else ""
+    out: dict = {}
+    if assignment:
+        out["assignment"] = assignment
+    if ids:
+        out["artifact_ids"] = ids
+    if uri:
+        out["artifacts_uri"] = uri
+    return out
