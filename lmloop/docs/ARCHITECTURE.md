@@ -70,6 +70,7 @@ lmloop/
 │   ├── commands.py             # slash/CLI command names + reserved skill stems
 │   ├── status.py               # status / resume / until-graph follow-up copy
 │   ├── loop.py                 # until goal loop: isolated maker + check/eval
+│   ├── run_artifacts.py        # until sidecar state + artifact index (budget control)
 │   ├── checks.py               # derived check plans (no model calls)
 │   ├── snapshot.py             # git temp-index refs before autonomous maker steps
 │   ├── graph.py                # authored workflow graphs: parser + runner
@@ -356,9 +357,10 @@ until goal:
 - A failing check goes straight back to the maker — no eval turn. `DENIED:`, spawn `ERROR:`, and exit 126/127 are `blocked` → gate. A keep that already fails at baseline appends role `abstain` / `infeasible` and does not start a maker step.
 - Shell commands and check-plan commands share one process backend (`exec.active_backend`). The default is `LocalBackend` on the host. `--docker` or `--docker-persist` installs a `DockerBackend` after preflight; there is no host fallback. `/stats` prints `exec: local (host)` unless that flag was passed. `bridge` publishes `127.0.0.1:3000-3010` and `127.0.0.1:8000-8010` and is not host isolation.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
+- `until_control` (`off` | `budget` | `meta`, default `off`) or `--control` on a run: injects token/cycle budget into maker and eval prompts. `budget` adds host-maintained `until/<ts>.meta/state.md` and an artifact index after failed checks; `meta` uses the same host state today (APED controller stages are planned). Maker/eval prompts always show budget usage when control is off too (L1 visibility).
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
-- Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role. Maker rows may include `snapshot_ref` (`HEAD` or `refs/lmloop/…`) from `snapshot.take_snapshot` when `autonomous_snapshot` is `git` and the workspace is a git repo.
+- Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role. Maker rows may include `snapshot_ref` (`HEAD` or `refs/lmloop/…`) from `snapshot.take_snapshot` when `autonomous_snapshot` is `git` and the workspace is a git repo. With `until_control` ≠ `off`, sidecar files live in `until/<ts>.meta/` (`state.md`, `artifacts.jsonl`).
 - `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
 
 This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md).

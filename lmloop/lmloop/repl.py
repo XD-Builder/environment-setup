@@ -864,12 +864,17 @@ def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
     parsed = loop_mod.parse_until_arg_line(arg)
     if parsed.err:
         state.console.info(parsed.err)
-        state.console.info("  /until [--check <cmd>] [--keep <cmd>] <goal>")
+        state.console.info(
+            "  /until [--check <cmd>] [--keep <cmd>] [--control off|budget|meta] <goal>"
+        )
         state.console.info("  /continue resumes a paused until-run")
         return True
     hint = loop_mod.superseded_until_hint()
+    from .config import cfg_str
+    control = parsed.control or cfg_str(state.cfg, "until_control")
     run = loop_mod.UntilRun.create(
         parsed.goal, checks=parsed.checks, keeps=parsed.keeps,
+        until_control=control,
     )
     state.console.hint(f"[until · {parsed.goal}]")
     if hint:

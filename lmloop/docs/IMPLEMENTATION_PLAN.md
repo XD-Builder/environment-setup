@@ -19,7 +19,7 @@ and what to move to `archived/` when done.
 | [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md) | User guide | Update with Phase S / company | Always `docs/` |
 | [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) | Research input | Not a build track | `docs/` (reference) |
 | [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) | Meta APED research | Reference | `docs/` (reference) |
-| [DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md) | Budget + artifact control for `until`/graph/company | **Proposed** M0–M5 | Stay in `docs/` until M0–M2 ship |
+| [DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md) | Budget + artifact control for `until`/graph/company | **M0–M2 shipped**; M3–M5 open | Stay in `docs/` until M3–M5 ship or defer |
 | [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_FILE_READING.md](archived/DESIGN_FILE_READING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_GRAPH_ENGINEERING.md](archived/DESIGN_GRAPH_ENGINEERING.md) | Spec | **Shipped** | `archived/` |

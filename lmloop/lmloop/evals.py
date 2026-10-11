@@ -32,6 +32,7 @@ KNOWN_FEATURES = frozenset({
     "tool",
     "tool.error",
     "until.abstain",
+    "until.budget",
     "until.finish",
     "until.run",
 })
