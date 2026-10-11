@@ -133,6 +133,118 @@ def parse_flow_words(words: list[str], *, invocation: str) -> FlowRequest:
     return FlowRequest(error=flow_usage(invocation))
 
 
+# Window sizes when ``history`` / ``checkpoints`` are given no count.
+HISTORY_DEFAULT_CLI = 15
+HISTORY_DEFAULT_REPL = 10
+CHECKPOINT_DEFAULT = 10
+
+
+def count_usage(invocation: str) -> str:
+    """Usage line for a command that takes an optional positive count."""
+    return f"usage: {invocation} [n]"
+
+
+@dataclass(frozen=True)
+class CountRequest:
+    """Parsed optional positive count. ``error`` means do not list."""
+
+    count: int = 0
+    error: str = ""
+
+
+def parse_count_words(
+    words: list[str],
+    *,
+    default: int,
+    usage: str,
+) -> CountRequest:
+    """No tokens → ``default``. One positive integer → that count. Else ``error``."""
+    tokens = [word for word in words if word]
+    if not tokens:
+        return CountRequest(count=default)
+    if len(tokens) == 1:
+        count = parse_positive_count(tokens[0])
+        if count is not None:
+            return CountRequest(count=count)
+    return CountRequest(error=usage)
+
+
+EvalMode = Literal["text", "json", "design"]
+EVAL_JSON_FLAG = "--json"
+EVAL_DESIGN_FLAGS = ("--design", "--design-doc")
+EVAL_FLAGS = (EVAL_JSON_FLAG, *EVAL_DESIGN_FLAGS)
+
+
+def eval_usage(invocation: str = "lmloop eval") -> str:
+    """Usage line for ``lmloop eval``. ``--design-doc`` is an alias, not a third mode."""
+    return f"usage: {invocation} [--json | --design]"
+
+
+@dataclass(frozen=True)
+class EvalRequest:
+    """Parsed ``lmloop eval`` invocation. Modes are mutually exclusive."""
+
+    mode: EvalMode = "text"
+    error: str = ""
+
+
+def parse_eval_words(
+    words: list[str],
+    *,
+    invocation: str = "lmloop eval",
+) -> EvalRequest:
+    """One of text (no flags), ``--json``, or ``--design`` / ``--design-doc``."""
+    mode: "EvalMode | None" = None
+    for word in words:
+        if word == EVAL_JSON_FLAG:
+            chosen: EvalMode = "json"
+        elif word in EVAL_DESIGN_FLAGS:
+            chosen = "design"
+        else:
+            return EvalRequest(error=eval_usage(invocation))
+        if mode is not None:
+            return EvalRequest(error=eval_usage(invocation))
+        mode = chosen
+    return EvalRequest(mode=mode or "text")
+
+
+GRAPH_PROPOSE_VERB = "propose"
+GraphAction = Literal["resume", "run", "propose"]
+
+MSG_RECONCILE_INCOMPLETE = "memory reconcile did not finish"
+
+
+@dataclass(frozen=True)
+class GraphRequest:
+    """Parsed ``graph`` / ``/graph`` invocation.
+
+    Empty words are ``resume``. The CLI resumes the latest open run; the REPL
+    prints usage and leaves resume to ``/continue``.
+    """
+
+    action: GraphAction
+    name: str = ""
+    error: str = ""
+
+
+def parse_graph_words(
+    words: list[str],
+    *,
+    run_usage: str,
+    propose_usage: str,
+) -> GraphRequest:
+    """``propose <name>``, a single graph name, or no words (resume)."""
+    if not words:
+        return GraphRequest(action="resume")
+    if words[0] == GRAPH_PROPOSE_VERB:
+        if len(words) != 2 or not words[1].strip():
+            return GraphRequest(action="propose", error=propose_usage)
+        return GraphRequest(action="propose", name=words[1])
+    if len(words) != 1 or not words[0].strip():
+        return GraphRequest(action="run", error=run_usage)
+    return GraphRequest(action="run", name=words[0])
+
+
 # Core commands. Skill shortcuts (/investigate, …) are added dynamically in repl.
 COMMANDS: tuple = (
     CommandMeta("help", "show core commands (/help all for restore, compact, …)",

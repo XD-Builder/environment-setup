@@ -592,6 +592,30 @@ class RestoreCommandTests(unittest.TestCase):
             self.assertNotIn("run_shell", buf.getvalue())
             self.assertIn("Found the codebase.", buf.getvalue())
 
+    def test_history_index_matches_restore_and_rejects_bad_counts(self):
+        from lmloop.repl import _cmd_history
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sessions = root / "sessions"
+            s1 = sessions / "20250814-010000.jsonl"
+            s2 = sessions / "20250814-020000.jsonl"
+            current = sessions / "20250814-030000.jsonl"
+            self._write_session(s1, [{"role": "user", "content": "session one"}])
+            self._write_session(s2, [{"role": "user", "content": "find lmloop"}])
+            current.write_text("")
+            state = self._state(root, current)
+            with patch("lmloop.memory.project_dir", return_value=root), \
+                 redirect_stdout(io.StringIO()) as buf:
+                _cmd_history(state, "2")
+            text = buf.getvalue()
+            self.assertIn("2.", text)
+            self.assertIn("find lmloop", text)
+            self.assertNotIn("session one", text)
+            with redirect_stdout(io.StringIO()) as bad:
+                _cmd_history(state, "0")
+            self.assertIn("usage: /history [n]", bad.getvalue())
+
     def test_restore_fresh_copies_into_new_log(self):
         from lmloop.repl import _cmd_restore
 
@@ -1118,6 +1142,51 @@ class MemoryMineAndUntilTests(unittest.TestCase):
         self.assertIn("name: demo", text)
         self.assertIn("non-interactive", text)
 
+    def test_graph_propose_saves_only_on_yes(self):
+        from lmloop.cli import offer_proposed_graph
+
+        console = Console(color=False)
+        with patch("lmloop.cli.graph_mod.propose_graph_draft", return_value="name: demo\n"), \
+             patch("lmloop.cli.graph_mod.diff_proposed_graph", return_value="--- diff"), \
+             patch("lmloop.cli.ask_yes_no", return_value=False), \
+             patch("lmloop.cli.graph_mod.save_proposed_graph") as save, \
+             patch("sys.stdin.isatty", return_value=True), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = offer_proposed_graph({}, "m", "demo", console)
+        self.assertEqual(code, 0)
+        save.assert_not_called()
+
+        with patch("lmloop.cli.graph_mod.propose_graph_draft", return_value="name: demo\n"), \
+             patch("lmloop.cli.graph_mod.diff_proposed_graph", return_value="--- diff"), \
+             patch("lmloop.cli.ask_yes_no", return_value=True), \
+             patch("lmloop.cli.graph_mod.save_proposed_graph", return_value=Path("/tmp/demo.md")) as save, \
+             patch("sys.stdin.isatty", return_value=True), \
+             redirect_stdout(io.StringIO()):
+            code = offer_proposed_graph({}, "m", "demo", console)
+        self.assertEqual(code, 0)
+        save.assert_called_once()
+
+    def test_graph_rejects_extra_name_tokens(self):
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["graph", "company", "extra"])
+        self.assertEqual(code, 1)
+        self.assertIn("usage: lmloop graph <name>", err.getvalue())
+
+    def test_repl_graph_propose_uses_shared_offer(self):
+        from lmloop.repl import _cmd_graph
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            state = self._state(root, log)
+            with patch("lmloop.cli.offer_proposed_graph", return_value=0) as offer, \
+                 redirect_stdout(io.StringIO()):
+                self.assertTrue(_cmd_graph(state, "propose demo", lambda _: False))
+            offer.assert_called_once()
+            self.assertEqual(offer.call_args[0][2], "demo")
+
     def test_graph_cli_requires_name_or_open_run(self):
         err = io.StringIO()
         with patch("lmloop.cli.graph_mod.latest_open_graph_run", return_value=None), \
@@ -1238,6 +1307,13 @@ class EvalCliTests(unittest.TestCase):
             code = main(["eval", "--nope"])
         self.assertEqual(code, 1)
         self.assertIn("usage:", err.getvalue())
+
+    def test_eval_rejects_combined_modes(self):
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["eval", "--json", "--design"])
+        self.assertEqual(code, 1)
+        self.assertIn("usage: lmloop eval [--json | --design]", err.getvalue())
 
     def test_flow_json_and_text(self):
         import json
@@ -1511,6 +1587,76 @@ class MemoryInspectTests(unittest.TestCase):
                 "[Mem: 0 learnings | 0 decisions | graph: off | checkpoint: no]",
                 out.getvalue(),
             )
+
+
+class SharedSurfaceTests(unittest.TestCase):
+    def test_history_cli_honors_count(self):
+        from lmloop.commands import HISTORY_DEFAULT_CLI
+
+        with patch("lmloop.cli.memory.list_sessions", return_value=[]) as listed, \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["history"]), 0)
+        listed.assert_called_once_with(limit=HISTORY_DEFAULT_CLI)
+
+        with patch("lmloop.cli.memory.list_sessions", return_value=[]) as listed, \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["history", "2"]), 0)
+        listed.assert_called_once_with(limit=2)
+
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["history", "foo"]), 1)
+        self.assertIn("usage: lmloop history [n]", err.getvalue())
+
+    def test_repl_skill_start_uses_skill_prompt(self):
+        from lmloop.repl import run_repl
+
+        with patch("lmloop.repl.server.require_model", return_value="m"), \
+             patch("lmloop.repl.project_slug", return_value="demo"), \
+             patch("lmloop.repl._fresh_messages", return_value=[{"role": "system", "content": "sys"}]), \
+             patch("lmloop.repl.memory.new_session_log", return_value=Path("/tmp/s.jsonl")), \
+             patch("lmloop.repl.usage.record"), \
+             patch("lmloop.repl.skills.skill_prompt", return_value="BODY\n\nTask: tidy") as prompt, \
+             patch("lmloop.repl._run_turn") as turn, \
+             patch("sys.stdin.isatty", return_value=False), \
+             redirect_stdout(io.StringIO()):
+            code = run_repl({"color": False}, skill="review", first_task="tidy")
+        self.assertEqual(code, 0)
+        prompt.assert_called_once_with("review", "tidy", public_only=True)
+        self.assertIn("Task: tidy", turn.call_args[0][1])
+
+    def test_reconcile_reports_incomplete_on_both_surfaces(self):
+        from lmloop.commands import MSG_RECONCILE_INCOMPLETE
+        from lmloop.repl import SessionState, _cmd_memory
+        from lmloop.ui import fresh_stats
+
+        err = io.StringIO()
+        plan = Mock(notice="", error="", prompt="reconcile this")
+        with patch("lmloop.cli.knowledge_graph.prepare_reconcile", return_value=plan), \
+             patch("lmloop.cli.server.ensure_server", return_value="m"), \
+             patch("lmloop.cli.loop_mod.isolated_act", return_value=None), \
+             redirect_stderr(err), redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["memory", "reconcile"]), 1)
+        self.assertIn(MSG_RECONCILE_INCOMPLETE, err.getvalue())
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "s.jsonl"
+            log.write_text("")
+            state = SessionState(
+                cfg={},
+                model="m",
+                messages=[{"role": "system", "content": "sys"}],
+                session_log=log,
+                stats=fresh_stats(),
+                console=Console(color=False),
+            )
+            err = io.StringIO()
+            with patch("lmloop.repl.knowledge_graph.prepare_reconcile", return_value=plan), \
+                 patch("lmloop.repl._isolated_act", return_value=None), \
+                 redirect_stderr(err), redirect_stdout(io.StringIO()):
+                _cmd_memory(state, "reconcile", lambda _: False)
+            self.assertIn(MSG_RECONCILE_INCOMPLETE, err.getvalue())
+            self.assertEqual(len(state.messages), 1)
 
 
 if __name__ == "__main__":

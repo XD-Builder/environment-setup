@@ -98,9 +98,9 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | `lmloop memory audit` | Run the `learn` skill. In the REPL, `/memory audit` and `/learn` use a side session so the live thread stays unchanged. | Write |
 | `lmloop memory canvas` | Read-only knowledge canvas (text layout; full TUI when `prompt_toolkit` canvas ships). | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
-| `lmloop graph propose <name>` | One no-tools draft from `lmloop flow` stats; unified diff; save on `y` only. | Write |
+| `lmloop graph propose <name>` | One no-tools draft from `lmloop flow` stats; unified diff; save on `y` only. `/graph propose <name>` is the same review. | Write |
 | `lmloop decisions` | Deprecated alias for `memory decisions` (shows up to 30 rows). | Peek |
-| `lmloop history` | List **session transcript** files under `sessions/*.jsonl` (raw logs, not summarized). | Peek |
+| `lmloop history [n]` | List **session transcript** files under `sessions/*.jsonl` (raw logs, not summarized). `n` is a positive count (default 15); a bad token is an error. | Peek |
 | `lmloop memory mine [N]` | Mine the last N **session files** (default 3) and **write new learnings**. CLI never mines “this conversation.” REPL `/memory mine` can mine **this** session. `retro` / `/retro` are deprecated aliases. | Write |
 
 In the REPL:
@@ -110,7 +110,7 @@ In the REPL:
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
 
-`/history` + `/checkpoints` show global `#` indices that match `/restore`. CLI `lmloop history` prints bare paths (no indices).
+`/history` + `/checkpoints` show global `#` indices that match `/restore`. A bad count is an error (it does not fall back to the default). CLI `lmloop history [n]` prints bare paths (no indices; default 15).
 
 Inside the REPL:
 
@@ -125,13 +125,13 @@ Inside the REPL:
 | `/compact [focus]` | summarize thread in a side session; optional replace |
 | `/undo` | drop the last user turn from the in-memory thread |
 | `/skill <name> [task]` | run any skill prompt by name |
-| `/history [n]` | list recent session logs (global `#` matches `/restore`) |
-| `/checkpoints [n]` | list saved checkpoints (global `#` matches `/restore`) |
+| `/history [n]` | list recent session logs (global `#` matches `/restore`; default 10; bad `n` errors) |
+| `/checkpoints [n]` | list saved checkpoints (global `#` matches `/restore`; default 10; bad `n` errors) |
 | `/restore [session\|checkpoint] <query> [fresh]` | reload a prior session (shows last result) or checkpoint; `fresh` copies a session into a new log |
 | `/context` | files held in this conversation (full path on its own line), then injected memory (`/memory dump` is that memory view alone) |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] [--keep cmd] <goal>` | isolated maker/checker loop. With no flags, lmloop derives a check plan from the goal and the project, shows it (`Enter` run, `e` edit, `s` checker only; no prompt when stdin is not a TTY), and baselines it once. A check that goes fail → pass finishes the run; an already-passing check becomes an invariant and the evaluator decides. `--check` / `--keep` skip inference. Then type to continue from a handoff |
-| `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
+| `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/graph propose <name>` drafts one (save on `y` only); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
 | `/memory [list \| decisions \| dump \| query \| mine [n] \| kg \| index \| reindex \| canvas \| audit \| reconcile]` | dashboard or search; injected memory; mine this session (or last n prior files); knowledge-graph stats (`kg`); index status; text canvas; audit learnings in a side session; reconcile contradictions when `use_graph` |
 | `/model <name>` | switch model, or list models with no argument |

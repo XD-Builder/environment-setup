@@ -181,6 +181,15 @@ class SessionRestoreTests(unittest.TestCase):
                 self.assertEqual(list_sessions(limit=0), [])
                 self.assertEqual(len(list_sessions(limit=1)), 1)
 
+    def test_indexed_tail_uses_global_index(self):
+        from lmloop.memory import indexed_tail
+
+        rows = ["a", "b", "c", "d"]
+        self.assertEqual(indexed_tail(rows, 2), (3, ["c", "d"]))
+        self.assertEqual(indexed_tail(rows, 10), (1, rows))
+        self.assertEqual(indexed_tail([], 10), (1, []))
+        self.assertEqual(indexed_tail(rows, 0), (1, []))
+
 
 class JsonlAndContextTests(unittest.TestCase):
     def test_corrupt_jsonl_skips_bad_lines(self):

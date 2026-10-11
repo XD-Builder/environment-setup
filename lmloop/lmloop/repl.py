@@ -13,11 +13,17 @@ from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
 from .commands import (
     ADVANCED_SKILL_SLASH,
+    CHECKPOINT_DEFAULT,
+    HISTORY_DEFAULT_REPL,
     MEMORY_ARG_COMPLETION,
     MSG_DEPRECATE_DECISIONS,
     MSG_DEPRECATE_RETRO,
+    MSG_RECONCILE_INCOMPLETE,
     MemoryRequest,
+    count_usage,
+    parse_count_words,
     parse_flow_words,
+    parse_graph_words,
     parse_memory_words,
     parse_positive_count,
     slash_command_metas,
@@ -126,6 +132,14 @@ class SessionState:
     def prior_thinking_count(self) -> int:
         return max(0, self.thinking_count() - 1)
 
+    def act_display(self):
+        """Display bundle for a model run on this live session."""
+        return self.console.act_display(
+            context_limit=self.context_limit,
+            context_reserve=self.context_reserve,
+            workspace_root=self.workspace_root,
+        )
+
 
 def _refresh_context_limit(state: SessionState) -> None:
     state.context_limit = server.get_context_limit(state.model, state.cfg)
@@ -203,11 +217,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
             session_log=state.session_log,
             confirm_gate=confirm_gate,
             stats=state.stats,
-            **state.console.act_display(
-                context_limit=state.context_limit,
-                context_reserve=state.context_reserve,
-                workspace_root=state.workspace_root,
-            ).for_act(),
+            **state.act_display().for_act(),
             on_thinking=state.push_thinking,
             extra_readable=extra_readable,
         )
@@ -362,7 +372,9 @@ def _cmd_memory_reconcile(state: SessionState, confirm_gate) -> bool:
         state.console.error(plan.error)
         return True
     state.console.hint("[memory reconcile · current conversation unchanged]")
-    _isolated_act(state, plan.prompt, confirm_gate, log_label="/memory reconcile")
+    result = _isolated_act(state, plan.prompt, confirm_gate, log_label="/memory reconcile")
+    if result is None:
+        state.console.error(MSG_RECONCILE_INCOMPLETE)
     return True
 
 
@@ -394,7 +406,7 @@ def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
 
 
 def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
-                  transcript: "str | None" = None) -> int:
+                  transcript: "str | None" = None, display=None) -> int:
     """Run the retro skill without touching a live REPL thread."""
     if transcript is None:
         if not paths:
@@ -418,20 +430,32 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
             task += "\n\n" + skills.load_skill("_graph_mine")
         except FileNotFoundError:
             pass
-    result = loop_mod.isolated_act(
-        cfg, model, task,
-        confirm_gate=confirm_gate,
-        **console.act_display(
+    if display is None:
+        display = console.act_display(
             context_limit=server.get_context_limit(model, cfg),
             context_reserve=cfg_int(cfg, "context_reserve"),
             workspace_root=Path.cwd().resolve(),
-        ).for_isolated(),
+        )
+    result = loop_mod.isolated_act(
+        cfg, model, task,
+        confirm_gate=confirm_gate,
+        **display.for_isolated(),
         log_label=label,
     )
     if result is None:
         return 1
     console.hint(f"[learnings → {memory.learnings_file()}]")
     return 0
+
+
+def make_session_miner(cfg: dict, model: str, console: Console, confirm_gate,
+                       display=None):
+    """Mine callback for until/graph. Empty path lists are a no-op."""
+    def mine(paths):
+        if not paths:
+            return
+        mine_sessions(cfg, model, paths, console, confirm_gate, display=display)
+    return mine
 
 
 def _finish_mine(state: SessionState, rc: int) -> None:
@@ -455,7 +479,10 @@ def _cmd_memory_mine(state: SessionState, count: "int | None", confirm_gate) -> 
         label = f"last {len(paths)} session(s)"
         state.console.hint(f"[memory mine · {label} · current conversation unchanged]")
         try:
-            rc = mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
+            rc = mine_sessions(
+            state.cfg, state.model, paths, state.console, confirm_gate,
+            display=state.act_display(),
+        )
         except KeyboardInterrupt:
             state.console.hint(
                 f"\n[interrupted — current conversation unchanged; {MSG_RESUME}]"
@@ -472,6 +499,7 @@ def _cmd_memory_mine(state: SessionState, count: "int | None", confirm_gate) -> 
         rc = mine_sessions(
             state.cfg, state.model, None, state.console, confirm_gate,
             transcript=transcript,
+            display=state.act_display(),
         )
     except KeyboardInterrupt:
         state.console.hint(
@@ -569,11 +597,7 @@ def _isolated_act(state: SessionState, user_text: str, confirm_gate,
         result = loop_mod.isolated_act(
             state.cfg, state.model, user_text,
             confirm_gate=confirm_gate,
-            **state.console.act_display(
-                context_limit=state.context_limit,
-                context_reserve=state.context_reserve,
-                workspace_root=state.workspace_root,
-            ).for_isolated(),
+            **state.act_display().for_isolated(),
             log_label=log_label,
             extra_readable=extra_readable,
             no_tools=no_tools,
@@ -634,14 +658,20 @@ def _cmd_skills(state: SessionState, arg: str, confirm_gate) -> bool:
 # --- session ---
 
 def _cmd_history(state: SessionState, arg: str) -> bool:
-    limit = parse_positive_count(arg) or 10
+    request = parse_count_words(
+        (arg or "").split(),
+        default=HISTORY_DEFAULT_REPL,
+        usage=count_usage("/history"),
+    )
+    if request.error:
+        state.console.info(request.error)
+        return True
     all_rows = memory.all_sessions()
-    sessions = all_rows[-limit:]
+    base, sessions = memory.indexed_tail(all_rows, request.count)
     if not sessions:
         state.console.info("(no sessions yet)")
         return True
     current = state.session_log.resolve()
-    base = len(all_rows) - len(sessions) + 1
     for i, path in enumerate(sessions, base):
         tag = " (current)" if path.resolve() == current else ""
         preview = memory.session_preview(path)
@@ -651,13 +681,19 @@ def _cmd_history(state: SessionState, arg: str) -> bool:
 
 
 def _cmd_checkpoints(state: SessionState, arg: str) -> bool:
-    limit = parse_positive_count(arg) or 10
+    request = parse_count_words(
+        (arg or "").split(),
+        default=CHECKPOINT_DEFAULT,
+        usage=count_usage("/checkpoints"),
+    )
+    if request.error:
+        state.console.info(request.error)
+        return True
     all_rows = memory.all_checkpoints()
-    cps = all_rows[-limit:]
+    base, cps = memory.indexed_tail(all_rows, request.count)
     if not cps:
         state.console.info("(no checkpoints — use /save [title])")
         return True
-    base = len(all_rows) - len(cps) + 1
     for i, path in enumerate(cps, base):
         state.console.info(f"  {i:2}. {path.stem}")
     state.console.hint("  restore with: /restore checkpoint <#|stem|latest>")
@@ -772,22 +808,21 @@ def _cmd_restore(state: SessionState, arg: str) -> bool:
 
 # --- until / graph ---
 
-def _until_callbacks(state: SessionState, confirm_gate):
-    def mine(paths):
-        if not paths:
-            return
-        mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
-
+def _autonomous_callbacks(state: SessionState, confirm_gate, *, mine_setting: str):
+    """Shared until/graph kwargs. ``mine_setting`` is the config flag that arms mine."""
+    display = state.act_display()
     return dict(
         confirm_gate=confirm_gate,
-        **state.console.act_display(
-            context_limit=state.context_limit,
-            context_reserve=state.context_reserve,
-            workspace_root=state.workspace_root,
-        ).for_isolated(),
+        **display.for_isolated(),
         ask_gate=ask_until_gate,
-        mine=mine if cfg_bool(state.cfg, "until_mine") else None,
+        mine=make_session_miner(
+            state.cfg, state.model, state.console, confirm_gate, display=display,
+        ) if cfg_bool(state.cfg, mine_setting) else None,
     )
+
+
+def _until_callbacks(state: SessionState, confirm_gate):
+    return _autonomous_callbacks(state, confirm_gate, mine_setting="until_mine")
 
 
 def attach_until_result(state: SessionState, run: loop_mod.UntilRun) -> None:
@@ -841,21 +876,7 @@ def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
 
 
 def _graph_callbacks(state: SessionState, confirm_gate):
-    def mine(paths):
-        if not paths:
-            return
-        mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
-
-    return dict(
-        confirm_gate=confirm_gate,
-        **state.console.act_display(
-            context_limit=state.context_limit,
-            context_reserve=state.context_reserve,
-            workspace_root=state.workspace_root,
-        ).for_isolated(),
-        ask_gate=ask_until_gate,
-        mine=mine if cfg_bool(state.cfg, "graph_mine") else None,
-    )
+    return _autonomous_callbacks(state, confirm_gate, mine_setting="graph_mine")
 
 
 def attach_graph_result(state: SessionState, run: graph_mod.GraphRun) -> None:
@@ -907,21 +928,32 @@ def _cmd_flow(state: SessionState, arg: str) -> bool:
 
 
 def _cmd_graph(state: SessionState, arg: str, confirm_gate) -> bool:
-    name = (arg or "").strip().split()[0] if (arg or "").strip() else ""
-    if not name:
+    request = parse_graph_words(
+        (arg or "").split(),
+        run_usage="usage: /graph <name>",
+        propose_usage="usage: /graph propose <name>",
+    )
+    if request.error:
+        state.console.info(request.error)
+        return True
+    if request.action == "propose":
+        from .cli import offer_proposed_graph
+        offer_proposed_graph(state.cfg, state.model, request.name, state.console)
+        return True
+    if request.action == "resume":
         state.console.info("usage: /graph <name>")
         known = ", ".join(graph_mod.list_graphs()) or "(none)"
         state.console.info(f"  graphs: {known}")
         state.console.info("  /continue resumes a paused graph-run")
         return True
     try:
-        defn = graph_mod.load_graph(name)
+        defn = graph_mod.load_graph(request.name)
     except graph_mod.GraphError as e:
         state.console.error(str(e))
         return True
     hint = graph_mod.superseded_graph_hint()
-    run = graph_mod.GraphRun.create(name)
-    state.console.hint(f"[graph · {name}]")
+    run = graph_mod.GraphRun.create(request.name)
+    state.console.hint(f"[graph · {request.name}]")
     if hint:
         state.console.hint(hint)
     _advance_graph(state, run, defn, confirm_gate)
@@ -1174,11 +1206,10 @@ def run_repl(cfg: dict, console: "Console | None" = None,
             return 0
     elif skill:
         try:
-            prompt_text = skills.load_skill(skill, public_only=True)
+            text = skills.skill_prompt(skill, first_task or "", public_only=True)
         except FileNotFoundError as e:
             console.error(str(e))
             return 1
-        text = prompt_text + ("\n\nTask: " + first_task if first_task else "")
         _run_turn(state, text, confirm_gate)
         if not interactive:
             return 0

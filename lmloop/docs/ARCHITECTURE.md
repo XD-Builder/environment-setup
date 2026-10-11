@@ -494,7 +494,7 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
 - `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.
 - `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected snapshot. `/context` prints files in the live thread, then that same snapshot. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
-- CLI and REPL parse `memory` and `flow` through `MemoryRequest` and `FlowRequest`. Read-only memory verbs render in `memory.render_memory_view`. Model runs share `Console.act_display()` (`ActDisplay.for_act` / `for_isolated`). `server.require_model` is the one bring-up failure path. `prepare_reconcile` and `skills.skill_prompt` are the shared reconcile and skill-task builders.
+- CLI and REPL parse `memory`, `flow`, and `graph` through `MemoryRequest`, `FlowRequest`, and `GraphRequest`. `/history`, `/checkpoints`, and `lmloop history` share `CountRequest` (a bad count is an error); the REPL window index comes from `memory.indexed_tail`. `lmloop eval` modes come from `EvalRequest` (`--json` and `--design` are exclusive). Read-only memory verbs render in `memory.render_memory_view`. Model runs share `Console.act_display()` (`ActDisplay.for_act` / `for_isolated`); a live session uses `SessionState.act_display`. Until and graph mine callbacks share `make_session_miner`. `server.require_model` is the one bring-up failure path. `prepare_reconcile` and `skills.skill_prompt` are the shared reconcile and skill-task builders. A reconcile that does not finish prints the same line on the CLI and in the REPL. `graph propose` reviews through `offer_proposed_graph` and saves only on `y`.
 
 ---
 
@@ -552,6 +552,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop until [--check cmd] [--keep cmd] <goal>` | Goal loop (derived plan when no flag is given), then REPL prompt when stdin is a TTY |
 | `lmloop until` | Resume latest open until-run |
 | `lmloop graph <name>` | Authored workflow graph, then REPL prompt when stdin is a TTY |
+| `lmloop graph propose <name>` | Draft a graph; save only on `y` (same review in `/graph propose`) |
 | `lmloop graph` | Resume latest open graph-run |
 | `lmloop skill <name> [task]` | Skill, then REPL prompt when stdin is a TTY |
 | `lmloop skills` | List skill prompts |
@@ -565,7 +566,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |
 | `lmloop memory reconcile` | Review `contradicts` clusters (requires `use_graph`) |
 | `lmloop decisions` | Peek durable decisions |
-| `lmloop history` | List session transcripts |
+| `lmloop history [n]` | List session transcripts (bare paths; `n` > 0, default 15) |
 | `lmloop models` | List models on server |
 | `lmloop config get\|set\|show` | Manage settings |
 | `lmloop completion zsh` | Print zsh completion script |

@@ -620,6 +620,18 @@ def list_sessions(limit: int = 10, slug: "str | None" = None) -> "list[Path]":
     return all_sessions(slug=slug)[-limit:]
 
 
+def indexed_tail(rows: list, limit: int) -> "tuple[int, list]":
+    """1-based index of the first kept row, and the last ``limit`` rows.
+
+    The index is global, matching ``resolve_session`` / ``resolve_checkpoint``.
+    ``limit <= 0`` or an empty list yields ``(1, [])``.
+    """
+    if limit <= 0 or not rows:
+        return 1, []
+    tail = list(rows[-limit:])
+    return len(rows) - len(tail) + 1, tail
+
+
 def all_sessions(slug: "str | None" = None) -> "list[Path]":
     d = project_dir(slug) / "sessions"
     if not d.exists():

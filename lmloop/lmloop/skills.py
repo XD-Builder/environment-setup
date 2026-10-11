@@ -153,7 +153,10 @@ def load_skill(name: str, *, public_only: bool = False) -> str:
 
 
 def skill_prompt(name: str, task: str = "", *, public_only: bool = False) -> str:
-    """Skill body plus an optional ``Task:`` block. Shared by ``/skill`` and audit."""
+    """Skill body plus an optional ``Task:`` block.
+
+    Shared by ``/skill``, ``/memory audit``, and ``lmloop skill``.
+    """
     body = load_skill(name, public_only=public_only)
     task = (task or "").strip()
     if not task:

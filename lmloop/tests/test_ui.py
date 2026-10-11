@@ -116,6 +116,27 @@ class UiTests(unittest.TestCase):
         self.assertEqual(act_keys["workspace_root"], Path("/tmp"))
         self.assertIs(isolated["echo"], act_keys["echo"])
 
+    def test_session_act_display_uses_session_fields(self):
+        from lmloop.repl import SessionState
+        from lmloop.ui import fresh_stats
+
+        root = Path("/tmp/ws")
+        state = SessionState(
+            cfg={"context_reserve": 64},
+            model="m",
+            messages=[],
+            session_log=Path("/tmp/s.jsonl"),
+            stats=fresh_stats(),
+            console=Console(color=False),
+            context_limit=1000,
+            workspace_root=root,
+        )
+        display = state.act_display()
+        self.assertEqual(display.context_limit, 1000)
+        self.assertEqual(display.context_reserve, 64)
+        self.assertEqual(display.workspace_root, root)
+        self.assertNotIn("echo_error", display.for_act())
+
     def test_write_lines_and_tool_path_use_color(self):
         from io import StringIO
         from contextlib import redirect_stdout

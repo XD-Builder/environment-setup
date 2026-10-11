@@ -3,7 +3,15 @@
 import unittest
 
 from lmloop.commands import (
+    EVAL_FLAGS,
+    HISTORY_DEFAULT_CLI,
+    HISTORY_DEFAULT_REPL,
     MEMORY_ARG_CHOICES,
+    count_usage,
+    eval_usage,
+    parse_count_words,
+    parse_eval_words,
+    parse_graph_words,
     parse_memory_words,
     parse_positive_count,
 )
@@ -81,6 +89,70 @@ class MemoryRequestTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             render_memory_view({}, MemoryRequest(verb="mine"), None)
+
+
+class CountRequestTests(unittest.TestCase):
+    def test_empty_uses_the_surface_default(self):
+        cli = parse_count_words([], default=HISTORY_DEFAULT_CLI, usage=count_usage("lmloop history"))
+        repl = parse_count_words([], default=HISTORY_DEFAULT_REPL, usage=count_usage("/history"))
+        self.assertEqual(cli.count, HISTORY_DEFAULT_CLI)
+        self.assertEqual(repl.count, HISTORY_DEFAULT_REPL)
+        self.assertEqual(cli.error, "")
+
+    def test_positive_count_matches_on_both_surfaces(self):
+        usage = count_usage("/history")
+        for token in ("1", "4"):
+            with self.subTest(token=token):
+                cli = parse_count_words([token], default=HISTORY_DEFAULT_CLI, usage=usage)
+                repl = parse_count_words([token], default=HISTORY_DEFAULT_REPL, usage=usage)
+                self.assertEqual(cli.count, repl.count)
+                self.assertEqual(cli.count, int(token))
+                self.assertEqual(cli.error, "")
+
+    def test_bad_tokens_share_one_error(self):
+        usage = count_usage("/checkpoints")
+        for words in (["0"], ["foo"], ["2", "extra"], ["-3"]):
+            with self.subTest(words=words):
+                cli = parse_count_words(words, default=HISTORY_DEFAULT_CLI, usage=usage)
+                repl = parse_count_words(words, default=HISTORY_DEFAULT_REPL, usage=usage)
+                self.assertEqual(cli.error, repl.error)
+                self.assertEqual(cli.error, usage)
+                self.assertEqual(cli.count, 0)
+
+
+class EvalRequestTests(unittest.TestCase):
+    def test_flags_are_exclusive(self):
+        self.assertEqual(parse_eval_words([]).mode, "text")
+        self.assertEqual(parse_eval_words(["--json"]).mode, "json")
+        self.assertEqual(parse_eval_words(["--design"]).mode, "design")
+        self.assertEqual(parse_eval_words(["--design-doc"]).mode, "design")
+        for words in (["--json", "--design"], ["--design", "--design-doc"], ["--json", "--json"], ["--nope"]):
+            with self.subTest(words=words):
+                req = parse_eval_words(words)
+                self.assertEqual(req.error, eval_usage())
+                self.assertEqual(req.mode, "text")
+        self.assertEqual(EVAL_FLAGS, ("--json", "--design", "--design-doc"))
+
+
+class GraphRequestTests(unittest.TestCase):
+    def _parse(self, words):
+        return parse_graph_words(
+            words,
+            run_usage="usage: graph <name>",
+            propose_usage="usage: graph propose <name>",
+        )
+
+    def test_surfaces_agree(self):
+        self.assertEqual(self._parse([]).action, "resume")
+        run = self._parse(["company"])
+        self.assertEqual((run.action, run.name, run.error), ("run", "company", ""))
+        proposed = self._parse(["propose", "demo"])
+        self.assertEqual((proposed.action, proposed.name), ("propose", "demo"))
+
+    def test_extra_tokens_error(self):
+        self.assertEqual(self._parse(["company", "extra"]).error, "usage: graph <name>")
+        self.assertEqual(self._parse(["propose"]).error, "usage: graph propose <name>")
+        self.assertEqual(self._parse(["propose", "demo", "extra"]).error, "usage: graph propose <name>")
 
 
 if __name__ == "__main__":
