@@ -99,6 +99,23 @@ class UiTests(unittest.TestCase):
         ])
         self.assertGreaterEqual(n, 1)
 
+    def test_act_display_omits_echo_error_for_act(self):
+        from pathlib import Path
+
+        console = Console(color=False)
+        display = console.act_display(
+            context_limit=1000,
+            context_reserve=128,
+            workspace_root=Path("/tmp"),
+        )
+        act_keys = display.for_act()
+        isolated = display.for_isolated()
+        self.assertNotIn("echo_error", act_keys)
+        self.assertIs(isolated["echo_error"].__func__, Console.error)
+        self.assertEqual(act_keys["context_limit"], 1000)
+        self.assertEqual(act_keys["workspace_root"], Path("/tmp"))
+        self.assertIs(isolated["echo"], act_keys["echo"])
+
     def test_write_lines_and_tool_path_use_color(self):
         from io import StringIO
         from contextlib import redirect_stdout

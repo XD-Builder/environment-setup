@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from lmloop import memory, workflow
+from lmloop.commands import parse_flow_words
 from lmloop.config import DEFAULTS
 
 
@@ -21,6 +22,19 @@ class WorkflowTests(unittest.TestCase):
         cfg = dict(DEFAULTS)
         rules = workflow.flow_rules(stats, cfg)
         self.assertTrue(any(r.startswith("budget-bound") for r in rules))
+
+    def test_flow_request_is_shared_by_both_invocations(self):
+        cli = parse_flow_words(["--json"], invocation="lmloop flow")
+        repl = parse_flow_words(["--json"], invocation="/flow")
+        self.assertTrue(cli.as_json and repl.as_json)
+        self.assertEqual(cli.error, "")
+        bad = parse_flow_words(["--json", "extra"], invocation="lmloop flow")
+        self.assertEqual(bad.error, "usage: lmloop flow [--json]")
+        stats = workflow.FlowStats(until_runs=2, until_pass=1)
+        text = workflow.render_flow(stats, dict(DEFAULTS), cli)
+        self.assertIn('"until_runs": 2', text)
+        plain = workflow.render_flow(stats, dict(DEFAULTS), parse_flow_words([], invocation="/flow"))
+        self.assertIn("lmloop flow", plain)
 
 
 if __name__ == "__main__":

@@ -217,6 +217,20 @@ def ensure_server(cfg: dict, echo=print) -> str:
     return LmsClient(cfg).ensure(echo=echo)
 
 
+def server_error_text(exc: BaseException) -> str:
+    """User-facing line for a ``ServerError``. Same text in the REPL and the CLI."""
+    return f"error: {exc}"
+
+
+def require_model(cfg: dict, *, echo, on_error) -> str | None:
+    """Return the loaded model, or None after ``on_error(server_error_text(...))``."""
+    try:
+        return ensure_server(cfg, echo=echo)
+    except ServerError as exc:
+        on_error(server_error_text(exc))
+        return None
+
+
 def _is_local_host(host: str) -> bool:
     if not host:
         return True

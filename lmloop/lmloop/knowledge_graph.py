@@ -667,6 +667,31 @@ def graph_stats(slug: "str | None" = None) -> str:
     return KnowledgeGraph(slug).stats()
 
 
+@dataclass(frozen=True)
+class ReconcilePlan:
+    """What ``/memory reconcile`` should do. At most one field is set."""
+
+    notice: str = ""
+    error: str = ""
+    prompt: str = ""
+
+
+def prepare_reconcile(cfg: dict, slug: "str | None" = None) -> ReconcilePlan:
+    """Graph-off, empty cluster, missing skill, or the reconcile prompt."""
+    if not cfg_bool(cfg, "use_graph"):
+        return ReconcilePlan(notice=MSG_GRAPH_OFF)
+    KnowledgeGraph(slug).ensure(cfg)
+    cluster = contradiction_clusters(slug)
+    if cluster.startswith("(no "):
+        return ReconcilePlan(notice=cluster)
+    from . import skills
+    try:
+        prompt = skills.load_skill("_reconcile") + "\n\n" + cluster
+    except FileNotFoundError as exc:
+        return ReconcilePlan(error=str(exc))
+    return ReconcilePlan(prompt=prompt)
+
+
 def contradiction_clusters(slug: "str | None" = None) -> str:
     """Text dump of contradicts edges for /memory reconcile."""
     return KnowledgeGraph(slug).contradiction_text()

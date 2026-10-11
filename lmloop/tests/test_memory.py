@@ -394,6 +394,12 @@ class KnowledgeGraphTests(unittest.TestCase):
                     kg_mod.inspect_report({"use_graph": False}),
                     kg_mod.MSG_GRAPH_OFF,
                 )
+                off = kg_mod.prepare_reconcile({"use_graph": False})
+                self.assertEqual(off.notice, kg_mod.MSG_GRAPH_OFF)
+                self.assertEqual(off.prompt, "")
+                ready = kg_mod.prepare_reconcile({"use_graph": True})
+                self.assertIn("pip", ready.prompt)
+                self.assertEqual(ready.notice, "")
 
     def test_use_graph_false_skips_auto_edges_when_files_exist(self):
         from unittest.mock import patch

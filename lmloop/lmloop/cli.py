@@ -54,11 +54,11 @@ from . import graph as graph_mod
 from .commands import (
     MEMORY_ARG_CHOICES,
     MSG_DEPRECATE_DECISIONS,
-    MSG_DEPRECATE_MEMORY_GRAPH,
     MSG_DEPRECATE_RETRO,
     cli_subcommand_metas,
     cli_subcommand_names,
-    parse_positive_count,
+    parse_flow_words,
+    parse_memory_words,
 )
 from .config import (
     CONFIG_PATH,
@@ -106,17 +106,26 @@ examples:
 """
 
 
-def _session_mine_count(words: list, console: Console, *, usage: str) -> "int | None":
-    """CLI ``mine`` / ``retro`` count. Empty words default to 3; bad tokens error."""
-    if not words:
-        return 3
-    if len(words) == 1:
-        count = parse_positive_count(words[0])
-        if count is not None:
-            return count
-    console.error(usage)
-    console.info("  N is a positive session count (default 3)")
-    return None
+_MINE_DETAIL_CLI = "  N is a positive session count (default 3)"
+
+
+def _require_model(cfg: dict, console: Console) -> "str | None":
+    return server.require_model(cfg, echo=console.info, on_error=console.error)
+
+
+def _cli_display(cfg: dict, console: Console, model: str):
+    return console.act_display(
+        context_limit=server.get_context_limit(model, cfg),
+        context_reserve=cfg_int(cfg, "context_reserve"),
+        workspace_root=Path.cwd().resolve(),
+    )
+
+
+def _reject_memory(console: Console, request) -> int:
+    console.error(request.error)
+    if request.detail:
+        console.info(request.detail)
+    return 1
 
 
 def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
@@ -124,10 +133,8 @@ def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
     if not sessions:
         console.info("no sessions recorded yet")
         return 0
-    try:
-        model = server.ensure_server(cfg, echo=console.info)
-    except server.ServerError as e:
-        console.error(f"error: {e}")
+    model = _require_model(cfg, console)
+    if model is None:
         return 1
     try:
         return mine_sessions(cfg, model, sessions, console, make_confirm_gate(console))
@@ -181,17 +188,15 @@ def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console) -> int:
             console.info("cancelled")
             return 0
 
-    try:
-        model = server.ensure_server(cfg, echo=console.info)
-    except server.ServerError as e:
-        console.error(f"error: {e}")
+    model = _require_model(cfg, console)
+    if model is None:
         return 1
 
     console.info(f"drafting skill '{name}'…")
     try:
         draft = agent.generate_skill_draft(cfg, model, name, brief)
     except server.ServerError as e:
-        console.error(f"error: {e}")
+        console.error(server.server_error_text(e))
         return 1
     except KeyboardInterrupt:
         console.hint("\n[interrupted — draft not saved]")
@@ -333,83 +338,45 @@ def cmd_config(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_memory(cfg: dict, words: list, console: Console) -> int:
-    verb = words[0] if words else "list"
-    if not words or verb == "list":
-        console.write_lines(memory.memory_peek_lines(cfg))
-        return 0
-    if verb == "decisions":
-        console.write_lines(
-            memory.decision_list_lines(limit=memory.MEMORY_DECISIONS_LIMIT),
-        )
-        return 0
-    if verb == "dump":
-        console.write_lines(memory.injected_memory_lines(cfg))
-        return 0
-    if verb == "mine":
-        count = _session_mine_count(
-            words[1:], console, usage="usage: lmloop memory mine [N]",
-        )
-        if count is None:
-            return 1
-        return cmd_memory_mine(cfg, count, console)
-    if verb in ("kg", "graph"):
-        if verb == "graph":
-            console.hint(MSG_DEPRECATE_MEMORY_GRAPH)
-        console.info(knowledge_graph.inspect_report(cfg))
-        return 0
-    if verb == "index":
-        from . import memory_index
-        console.info(memory_index.format_index_report(cfg))
-        return 0
-    if verb == "reindex":
-        from . import memory_index
-        idx = memory_index.MemoryIndex()
-        idx.reindex(cfg)
-        console.info(memory_index.format_index_report(cfg))
-        return 0
-    if verb == "canvas":
-        q = " ".join(words[1:]) if len(words) > 1 else ""
-        console.info(knowledge_graph.format_canvas_text(cfg, query=q))
-        return 0
-    if verb == "audit":
+    request = parse_memory_words(
+        words,
+        mine_default=3,
+        mine_usage="usage: lmloop memory mine [N]",
+        mine_detail=_MINE_DETAIL_CLI,
+    )
+    if request.error:
+        return _reject_memory(console, request)
+    if request.hint:
+        console.hint(request.hint)
+    if request.verb == "mine":
+        return cmd_memory_mine(cfg, request.mine_count or 3, console)
+    if request.verb == "audit":
         console.hint("[memory audit · learn skill]")
-        return cmd_skill_cli(cfg, ["learn", *words[1:]], console)
-    if verb == "reconcile":
-        if not cfg_bool(cfg, "use_graph"):
-            console.info(knowledge_graph.MSG_GRAPH_OFF)
-            return 0
-        knowledge_graph.ensure_graph(cfg)
-        cluster = knowledge_graph.contradiction_clusters()
-        if cluster.startswith("(no "):
-            console.info(cluster)
-            return 0
-        try:
-            model = server.ensure_server(cfg, echo=console.info)
-        except server.ServerError as e:
-            console.error(f"error: {e}")
-            return 1
-        try:
-            prompt = skills.load_skill("_reconcile") + "\n\n" + cluster
-        except FileNotFoundError as e:
-            console.error(str(e))
-            return 1
-        result = loop_mod.isolated_act(
-            cfg, model, prompt,
-            confirm_gate=make_confirm_gate(console),
-            echo=lambda text: console.print_markdown(text) if text else None,
-            echo_status=console.hint,
-            echo_error=console.error,
-            echo_tool=console.tool_call,
-            echo_round=console.round_usage,
-            context_limit=server.get_context_limit(model, cfg),
-            context_reserve=cfg_int(cfg, "context_reserve"),
-            workspace_root=Path.cwd().resolve(),
-            log_label="/memory reconcile",
-        )
-        return 0 if result is not None else 1
-    q = " ".join(words)
-    console.write_lines(memory.learning_list_lines(query=q, limit=30))
+        return cmd_skill_cli(cfg, ["learn", *request.rest], console)
+    if request.verb == "reconcile":
+        return _reconcile_cli(cfg, console)
+    memory.render_memory_view(cfg, request, console)
     return 0
+
+
+def _reconcile_cli(cfg: dict, console: Console) -> int:
+    plan = knowledge_graph.prepare_reconcile(cfg)
+    if plan.notice:
+        console.info(plan.notice)
+        return 0
+    if plan.error:
+        console.error(plan.error)
+        return 1
+    model = _require_model(cfg, console)
+    if model is None:
+        return 1
+    result = loop_mod.isolated_act(
+        cfg, model, plan.prompt,
+        confirm_gate=make_confirm_gate(console),
+        **_cli_display(cfg, console, model).for_isolated(),
+        log_label="/memory reconcile",
+    )
+    return 0 if result is not None else 1
 
 
 def cmd_decisions(cfg: dict, words: list, console: Console) -> int:
@@ -442,10 +409,8 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
     if parsed.err:
         console.error(parsed.err)
         return 1
-    try:
-        model = server.ensure_server(cfg, echo=console.info)
-    except server.ServerError as e:
-        console.error(f"error: {e}")
+    model = _require_model(cfg, console)
+    if model is None:
         return 1
     hint = loop_mod.superseded_until_hint()
     run = loop_mod.UntilRun.create(
@@ -460,10 +425,8 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
 def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
                    model: "str | None" = None) -> int:
     if model is None:
-        try:
-            model = server.ensure_server(cfg, echo=console.info)
-        except server.ServerError as e:
-            console.error(f"error: {e}")
+        model = _require_model(cfg, console)
+        if model is None:
             return 1
     confirm_gate = make_confirm_gate(console)
 
@@ -475,14 +438,7 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
     loop_mod.run_until(
         cfg, model, run=run,
         confirm_gate=confirm_gate,
-        echo=lambda text: console.print_markdown(text) if text else None,
-        echo_status=console.hint,
-        echo_error=console.error,
-        echo_tool=console.tool_call,
-        echo_round=console.round_usage,
-        context_limit=server.get_context_limit(model, cfg),
-        context_reserve=cfg_int(cfg, "context_reserve"),
-        workspace_root=Path.cwd().resolve(),
+        **_cli_display(cfg, console, model).for_isolated(),
         ask_gate=ask_until_gate,
         mine=mine if cfg_bool(cfg, "until_mine") else None,
     )
@@ -497,14 +453,12 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
 def cmd_flow_cli(cfg: dict, words: list, console: Console) -> int:
     from . import workflow
 
-    if words not in ([], ["--json"]):
-        console.error("usage: lmloop flow [--json]")
+    request = parse_flow_words(words, invocation="lmloop flow")
+    if request.error:
+        console.error(request.error)
         return 1
     stats = workflow.collect_flow_stats()
-    if words == ["--json"]:
-        console.info(json.dumps(stats.to_dict(), indent=2))
-        return 0
-    console.info(workflow.format_flow_report(stats, cfg))
+    console.info(workflow.render_flow(stats, cfg, request))
     return 0
 
 
@@ -515,10 +469,8 @@ def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
             console.error("usage: lmloop graph propose <name>")
             return 1
         name = rest[0]
-        try:
-            model = server.ensure_server(cfg, echo=console.info)
-        except server.ServerError as e:
-            console.error(f"error: {e}")
+        model = _require_model(cfg, console)
+        if model is None:
             return 1
         try:
             draft = graph_mod.propose_graph_draft(
@@ -572,10 +524,8 @@ def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
     except graph_mod.GraphError as e:
         console.error(str(e))
         return 1
-    try:
-        model = server.ensure_server(cfg, echo=console.info)
-    except server.ServerError as e:
-        console.error(f"error: {e}")
+    model = _require_model(cfg, console)
+    if model is None:
         return 1
     hint = graph_mod.superseded_graph_hint()
     run = graph_mod.GraphRun.create(name)
@@ -588,10 +538,8 @@ def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
 def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
                    defn: graph_mod.GraphDef, model: "str | None" = None) -> int:
     if model is None:
-        try:
-            model = server.ensure_server(cfg, echo=console.info)
-        except server.ServerError as e:
-            console.error(f"error: {e}")
+        model = _require_model(cfg, console)
+        if model is None:
             return 1
     confirm_gate = make_confirm_gate(console)
 
@@ -603,14 +551,7 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
     graph_mod.run_graph(
         cfg, model, run=run, defn=defn,
         confirm_gate=confirm_gate,
-        echo=lambda text: console.print_markdown(text) if text else None,
-        echo_status=console.hint,
-        echo_error=console.error,
-        echo_tool=console.tool_call,
-        echo_round=console.round_usage,
-        context_limit=server.get_context_limit(model, cfg),
-        context_reserve=cfg_int(cfg, "context_reserve"),
-        workspace_root=Path.cwd().resolve(),
+        **_cli_display(cfg, console, model).for_isolated(),
         ask_gate=ask_until_gate,
         mine=mine if cfg_bool(cfg, "graph_mine") else None,
     )
@@ -623,11 +564,16 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
 
 
 def cmd_retro_cli(cfg: dict, words: list, console: Console) -> int:
-    count = _session_mine_count(words, console, usage="usage: lmloop retro [N]")
-    if count is None:
+    request = parse_memory_words(
+        ["mine", *words],
+        mine_default=3,
+        mine_usage="usage: lmloop retro [N]",
+        mine_detail=_MINE_DETAIL_CLI,
+    )
+    if request.error:
         console.hint(MSG_DEPRECATE_RETRO)
-        return 1
-    return cmd_retro(cfg, count, console)
+        return _reject_memory(console, request)
+    return cmd_retro(cfg, request.mine_count or 3, console)
 
 
 def cmd_skills_cli(cfg: dict, words: list, console: Console) -> int:

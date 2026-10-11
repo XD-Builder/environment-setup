@@ -1,9 +1,11 @@
 """Single command table for CLI stems, slash stems, and reserved skill names.
 
 Handlers stay in cli.py / repl.py; this module owns names and metadata only.
+Memory and flow argument shapes live here so both surfaces parse the same way.
 """
 
 from dataclasses import dataclass
+from typing import Literal, cast
 
 
 @dataclass(frozen=True)
@@ -32,13 +34,6 @@ MEMORY_ARG_HINT = (
     "[list | decisions | dump | query | mine [n] | kg | index | reindex | "
     "canvas | audit | reconcile]"
 )
-
-
-def parse_positive_count(token: str) -> "int | None":
-    """A positive integer token, or None when ``token`` is not one."""
-    if token.isdigit() and int(token) > 0:
-        return int(token)
-    return None
 # Subverbs offered in ``/`` completion (``graph`` kept as runtime alias only).
 MEMORY_ARG_COMPLETION = (
     "list", "decisions", "dump", "mine", "kg", "reconcile", "index", "reindex",
@@ -53,6 +48,89 @@ MSG_DEPRECATE_MEMORY_GRAPH = (
     "[deprecated: use /memory kg — workflow graphs are /graph <name>]"
 )
 MSG_DEPRECATE_RETRO = "[deprecated: use /memory mine]"
+
+MemoryVerb = Literal[
+    "list", "decisions", "dump", "mine", "kg", "index", "reindex",
+    "canvas", "audit", "reconcile", "search",
+]
+# Verbs ``memory.render_memory_view`` can print without a model.
+MEMORY_VIEW_VERBS = frozenset({
+    "list", "decisions", "dump", "kg", "index", "reindex", "canvas", "search",
+})
+
+
+def parse_positive_count(token: str) -> int | None:
+    """A positive integer token, or None when ``token`` is not one."""
+    if token.isdigit() and int(token) > 0:
+        return int(token)
+    return None
+
+
+@dataclass(frozen=True)
+class MemoryRequest:
+    """Parsed ``memory`` / ``/memory`` invocation. ``error`` means do not run."""
+
+    verb: MemoryVerb
+    rest: tuple[str, ...] = ()
+    query: str = ""
+    mine_count: int | None = None
+    error: str = ""
+    detail: str = ""
+    hint: str = ""
+
+
+def parse_memory_words(
+    words: list[str],
+    *,
+    mine_default: int | None,
+    mine_usage: str,
+    mine_detail: str = "",
+) -> MemoryRequest:
+    """Parse memory words.
+
+    ``mine_default`` is the count when ``mine`` has no argument (CLI uses 3).
+    ``None`` means mine this session (REPL). A non-positive or extra token
+    sets ``error`` and does not invent a count.
+    """
+    if not words or words[0] == "list":
+        return MemoryRequest(verb="list")
+    verb = words[0]
+    rest = tuple(words[1:])
+    if verb == "graph":
+        return MemoryRequest(verb="kg", hint=MSG_DEPRECATE_MEMORY_GRAPH)
+    if verb == "mine":
+        if not rest:
+            return MemoryRequest(verb="mine", mine_count=mine_default)
+        if len(rest) == 1:
+            count = parse_positive_count(rest[0])
+            if count is not None:
+                return MemoryRequest(verb="mine", mine_count=count, rest=rest)
+        return MemoryRequest(verb="mine", error=mine_usage, detail=mine_detail)
+    if verb in MEMORY_ARG_CHOICES:
+        return MemoryRequest(verb=cast(MemoryVerb, verb), rest=rest, query=" ".join(rest))
+    return MemoryRequest(verb="search", rest=tuple(words), query=" ".join(words))
+
+
+def flow_usage(invocation: str) -> str:
+    """Usage line for ``lmloop flow`` and ``/flow``."""
+    return f"usage: {invocation} [--json]"
+
+
+@dataclass(frozen=True)
+class FlowRequest:
+    """Parsed ``flow`` / ``/flow`` invocation."""
+
+    as_json: bool = False
+    error: str = ""
+
+
+def parse_flow_words(words: list[str], *, invocation: str) -> FlowRequest:
+    """Accept no args or a single ``--json``. Anything else is ``error``."""
+    if not words:
+        return FlowRequest(as_json=False)
+    if words == ["--json"]:
+        return FlowRequest(as_json=True)
+    return FlowRequest(error=flow_usage(invocation))
 
 
 # Core commands. Skill shortcuts (/investigate, …) are added dynamically in repl.

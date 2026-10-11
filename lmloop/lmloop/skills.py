@@ -152,6 +152,15 @@ def load_skill(name: str, *, public_only: bool = False) -> str:
     return _library().load(name, public_only=public_only)
 
 
+def skill_prompt(name: str, task: str = "", *, public_only: bool = False) -> str:
+    """Skill body plus an optional ``Task:`` block. Shared by ``/skill`` and audit."""
+    body = load_skill(name, public_only=public_only)
+    task = (task or "").strip()
+    if not task:
+        return body
+    return body + "\n\nTask: " + task
+
+
 def skill_blurb(name: str) -> str:
     return _library().blurb(name)
 

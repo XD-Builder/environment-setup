@@ -948,7 +948,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
             with patch("lmloop.repl.mine_sessions", return_value=0) as mine, \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  redirect_stdout(io.StringIO()):
-                _cmd_memory_mine(state, "2", lambda _: False)
+                _cmd_memory_mine(state, 2, lambda _: False)
             mine.assert_called_once()
             paths = mine.call_args[0][2]
             self.assertEqual([p.resolve() for p in paths], [prior1.resolve(), prior2.resolve()])
@@ -964,7 +964,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
             err = io.StringIO()
             with patch("lmloop.repl.mine_sessions", return_value=1), \
                  redirect_stdout(io.StringIO()), redirect_stderr(err):
-                _cmd_memory_mine(state, "", lambda _: False)
+                _cmd_memory_mine(state, None, lambda _: False)
             self.assertIn("memory mine did not finish", err.getvalue())
             self.assertEqual(len(state.messages), 3)
 

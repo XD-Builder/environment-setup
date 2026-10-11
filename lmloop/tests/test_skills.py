@@ -82,6 +82,15 @@ class SkillsDiscoveryTests(unittest.TestCase):
                 self.assertIn("demo", skills.list_skills())
 
 
+class SkillPromptTests(unittest.TestCase):
+    def test_skill_prompt_appends_task_once(self):
+        body = skills.skill_prompt("learn", "", public_only=True)
+        with_task = skills.skill_prompt("learn", " tidy ", public_only=True)
+        self.assertTrue(body.startswith("#"))
+        self.assertEqual(with_task, body + "\n\nTask: tidy")
+        self.assertEqual(with_task.count("Task:"), 1)
+
+
 class SystemPromptMemoryTests(unittest.TestCase):
     def test_system_prompt_requires_memory_disclosure(self):
         text = skills.load_skill("system")

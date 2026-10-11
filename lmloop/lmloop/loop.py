@@ -270,8 +270,9 @@ def isolated_act(
             stats=stats,
         )
     except server.ServerError as e:
-        memory.log_event(session_log, "system", f"error: {e}")
-        echo_error(f"error: {e}")
+        text = server.server_error_text(e)
+        memory.log_event(session_log, "system", text)
+        echo_error(text)
         return None
     except KeyboardInterrupt:
         memory.log_event(session_log, "system", "interrupted")

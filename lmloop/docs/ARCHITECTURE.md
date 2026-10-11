@@ -494,6 +494,7 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
 - `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.
 - `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected snapshot. `/context` prints files in the live thread, then that same snapshot. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
+- CLI and REPL parse `memory` and `flow` through `MemoryRequest` and `FlowRequest`. Read-only memory verbs render in `memory.render_memory_view`. Model runs share `Console.act_display()` (`ActDisplay.for_act` / `for_isolated`). `server.require_model` is the one bring-up failure path. `prepare_reconcile` and `skills.skill_prompt` are the shared reconcile and skill-task builders.
 
 ---
 

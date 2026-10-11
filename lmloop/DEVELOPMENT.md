@@ -74,6 +74,12 @@ list.
 | Confirm-gate labels and tiers | `tools._GATE_KINDS` via `confirm_label()` / `gate_tier()` | Gate strings are `<prefix><detail>`. `ui.make_confirm_gate` prints and asks; it does not classify. `GatePolicy` decides autonomy from the tier, never from the tool name. |
 | Post-tool user echo | `tools.user_notice(name, result)` | `agent._dispatch_tools` makes one call; no tool-name branching in `agent.py`. |
 | Slash / CLI stems, reserved skill names, first-arg completions | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names, `arg_choices`, and `help_tier` live here only. Memory subverb completion uses `MEMORY_ARG_COMPLETION`. |
+| Memory verb and flow flag parse | `MemoryRequest` / `FlowRequest` in `commands.py` | CLI and REPL call `parse_memory_words` / `parse_flow_words`. Do not keep a second verb ladder. |
+| Read-only memory views | `memory.render_memory_view` | Peek, search, kg, index, canvas. `mine` / `audit` / `reconcile` stay in the handlers (they need a model). |
+| Act display kwargs | `ui.ActDisplay` via `Console.act_display` | `for_act()` for `agent.act`; `for_isolated()` when the callee takes `echo_error`. Do not copy the echo/context fields. |
+| Server bring-up failure | `server.require_model` / `server_error_text` | Callers check `None`. The same `error:` line is used in the REPL, the CLI, and `isolated_act`. |
+| Reconcile prep | `knowledge_graph.prepare_reconcile` | CLI and REPL share graph-off, empty cluster, missing skill, and the prompt. |
+| Skill body plus task | `skills.skill_prompt` | `/skill` and `/memory audit`. |
 | Status / resume / nudge copy | `status.py` | Do not hard-code user-facing loop copy in `agent.py`. |
 | Remote API auth | `config.resolve_api_key` / `chat_request_headers` | Bearer token for OpenAI-compatible hosts (OpenRouter). Never log keys. |
 | Session mutable state | `SessionState` | Pass the object; do not thread the same fields as loose args. |
