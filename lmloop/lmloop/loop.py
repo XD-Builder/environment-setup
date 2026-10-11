@@ -29,11 +29,16 @@ from .checks import (
 )
 from .config import DEFAULTS, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
 from .run_artifacts import (
+    CONTROL_PROPOSAL_MIN,
     UntilArtifactStore,
+    apply_dispatch_to_state,
+    artifact_excerpts,
     control_steering,
+    extract_json_object,
     format_budget_block,
     host_assess_state,
     normalize_until_control,
+    single_action_instruction,
 )
 from .server import eval_model_name
 from .tools import run_shell, shell_confirm_flags
@@ -391,6 +396,12 @@ class UntilRun:
             if raw:
                 return normalize_until_control(str(raw))
         return normalize_until_control(cfg_str(cfg, "until_control"))
+
+    def last_control_dispatch(self) -> "dict | None":
+        for ev in reversed(self.events):
+            if ev.get("role") == "control" and ev.get("stage") == "dispatch":
+                return ev
+        return None
 
     @classmethod
     def load(cls, path: Path) -> "UntilRun":
@@ -821,6 +832,16 @@ def _maker_prompt(
             handoff=approved + prior,
         )
     assignment = store.assignment_from_state()
+    excerpt_ids: list = []
+    dispatch_ev = run.last_control_dispatch()
+    if mode == "meta" and dispatch_ev:
+        payload = extract_json_object(str(dispatch_ev.get("handoff") or ""))
+        if payload:
+            if payload.get("instruction"):
+                assignment = str(payload["instruction"])
+            raw_ids = payload.get("context_artifact_ids")
+            if isinstance(raw_ids, list):
+                excerpt_ids = [str(item) for item in raw_ids]
     if not assignment:
         assignment = (
             "Start from the goal and any failing checks; make one checkable increment."
@@ -842,12 +863,13 @@ def _maker_prompt(
             changed_files=None,
         )
         run_state = store.read_state() or "(initial cycle)"
+    excerpts = artifact_excerpts(store, excerpt_ids)
     return MAKER_PROMPT_CONTROL.format(
         goal=run.goal,
         budget_block=budget_block,
         run_state=run_state,
         assignment=assignment,
-        artifact_excerpts="(none — use tools to inspect prior sessions)",
+        artifact_excerpts=excerpts,
     )
 
 
@@ -912,6 +934,250 @@ def _host_assess_after_fail(
         changed_files=changed_files,
         failing_cmd=failing,
     )
+
+
+def _control_context_block(
+    store: UntilArtifactStore,
+    run: UntilRun,
+    *,
+    budget_block: str,
+    check_results: "list | None",
+) -> str:
+    recent = store.load_artifacts()[-6:]
+    artifacts_blob = json.dumps(recent, ensure_ascii=False, indent=2)
+    checks_blob = json.dumps(check_results or [], ensure_ascii=False, indent=2)
+    return (
+        f"Goal: {run.goal}\n\nBudget:\n{budget_block}\n\n"
+        f"Run state:\n{store.read_state() or '(empty)'}\n\n"
+        f"Recent artifacts:\n{artifacts_blob}\n\n"
+        f"Latest check results:\n{checks_blob}\n"
+    )
+
+
+def _run_control_stage(
+    cfg: dict,
+    eval_model: str,
+    *,
+    stage: str,
+    user_text: str,
+    gate,
+    echo,
+    echo_status,
+    echo_error,
+    echo_tool,
+    echo_round,
+    context_limit: int,
+    context_reserve: int,
+    workspace_root: Path,
+    clock_now,
+    memory_block: str,
+    step_stats: dict,
+) -> "tuple[dict | None, Path | None]":
+    playbook = skills.load_skill(f"_control_{stage}")
+    prompt = playbook + "\n\n" + user_text
+    result = isolated_act(
+        cfg, eval_model, prompt,
+        confirm_gate=gate, echo=echo, echo_status=echo_status,
+        echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
+        context_limit=context_limit, context_reserve=context_reserve,
+        workspace_root=workspace_root,
+        log_label=f"/until control {stage}",
+        readonly=True,
+        max_rounds=eval_max_rounds(cfg),
+        clock_now=clock_now,
+        memory_block=memory_block,
+        usage_stats=step_stats,
+        model_override=eval_model,
+        no_tools=True,
+    )
+    if result is None:
+        return None, None
+    messages, session_log = result
+    payload = extract_json_object(last_assistant(messages))
+    return payload, session_log
+
+
+def _finish_control_dispatch(
+    run: UntilRun,
+    store: UntilArtifactStore,
+    dispatch: dict,
+    *,
+    shortcut: bool,
+    session: str,
+    usage: dict,
+) -> "str | None":
+    """Apply dispatch to state and log. Return abstain reason or None."""
+    abstain = str(dispatch.get("abstain_reason") or "").strip()
+    instruction = str(dispatch.get("instruction") or "").strip()
+    if abstain and not instruction:
+        run.append(
+            "control", "blocked", handoff=json.dumps(dispatch),
+            stage="dispatch", session=session, usage=usage,
+            shortcut=shortcut,
+        )
+        return abstain
+    if instruction:
+        apply_dispatch_to_state(store, instruction=instruction)
+    run.append(
+        "control", "next", handoff=json.dumps(dispatch),
+        stage="dispatch", session=session, usage=usage,
+        shortcut=shortcut,
+    )
+    return None
+
+
+def _run_aped_control(
+    run: UntilRun,
+    cfg: dict,
+    store: UntilArtifactStore,
+    *,
+    control_mode: str,
+    check_results: "list | None",
+    eval_handoff: str,
+    run_tokens: int,
+    makers_this_call: int,
+    eval_model: str,
+    gate,
+    echo,
+    echo_status,
+    echo_error,
+    echo_tool,
+    echo_round,
+    context_limit: int,
+    context_reserve: int,
+    workspace_root: Path,
+    clock_now,
+    memory_block: str,
+) -> "tuple[int, str | None]":
+    """APED pipeline for ``until_control: meta``. Returns (tokens_added, abstain)."""
+    if normalize_until_control(control_mode) != "meta":
+        return 0, None
+    budget_block = _budget_block_for_run(
+        run, cfg, run_tokens=run_tokens, makers_this_call=makers_this_call,
+    )
+    shortcut = single_action_instruction(check_results)
+    if not shortcut and not check_results and eval_handoff:
+        shortcut = "Address eval feedback and re-run checks."
+    tokens_added = 0
+    if shortcut:
+        recent_ids = [
+            str(row["id"]) for row in store.load_artifacts()[-3:] if row.get("id")
+        ]
+        dispatch = {
+            "instruction": shortcut,
+            "context_artifact_ids": recent_ids,
+            "abstain_reason": "",
+        }
+        abstain = _finish_control_dispatch(
+            run, store, dispatch, shortcut=True, session="", usage={},
+        )
+        return tokens_added, abstain
+
+    context = _control_context_block(
+        store, run, budget_block=budget_block, check_results=check_results,
+    )
+    assess_stats: dict = {}
+    assess, session_log = _run_control_stage(
+        cfg, eval_model, stage="assess", user_text=context, gate=gate,
+        echo=echo, echo_status=echo_status, echo_error=echo_error,
+        echo_tool=echo_tool, echo_round=echo_round,
+        context_limit=context_limit, context_reserve=context_reserve,
+        workspace_root=workspace_root, clock_now=clock_now,
+        memory_block=memory_block, step_stats=assess_stats,
+    )
+    tokens_added += int(assess_stats.get("total_tokens") or 0)
+    if assess is None:
+        return tokens_added, None
+    run.append(
+        "control", "next", handoff=json.dumps(assess),
+        stage="assess", session=str(session_log or ""), usage=dict(assess_stats),
+    )
+
+    propose_stats: dict = {}
+    propose, session_log = _run_control_stage(
+        cfg, eval_model, stage="propose",
+        user_text="Assess JSON:\n" + json.dumps(assess, ensure_ascii=False),
+        gate=gate, echo=echo, echo_status=echo_status, echo_error=echo_error,
+        echo_tool=echo_tool, echo_round=echo_round,
+        context_limit=context_limit, context_reserve=context_reserve,
+        workspace_root=workspace_root, clock_now=clock_now,
+        memory_block=memory_block, step_stats=propose_stats,
+    )
+    tokens_added += int(propose_stats.get("total_tokens") or 0)
+    if propose is None:
+        return tokens_added, None
+    actions = propose.get("actions") if isinstance(propose.get("actions"), list) else []
+    if len(actions) < CONTROL_PROPOSAL_MIN:
+        propose = {
+            **propose,
+            "actions": actions + [
+                {
+                    "id": f"p{len(actions) + idx + 1}",
+                    "description": shortcut or "Retry the failing check with a minimal fix.",
+                    "targets": [],
+                    "est_calls": 1,
+                }
+                for idx in range(CONTROL_PROPOSAL_MIN - len(actions))
+            ],
+        }
+    run.append(
+        "control", "next", handoff=json.dumps(propose),
+        stage="propose", session=str(session_log or ""), usage=dict(propose_stats),
+    )
+
+    evaluate_stats: dict = {}
+    ranked_in = (
+        "Assess:\n" + json.dumps(assess, ensure_ascii=False)
+        + "\n\nProposals:\n" + json.dumps(propose, ensure_ascii=False)
+        + f"\n\nRemaining maker cycles: "
+        f"{max(0, cfg_int(cfg, 'until_max_steps') - makers_this_call)}"
+    )
+    ranked, session_log = _run_control_stage(
+        cfg, eval_model, stage="evaluate", user_text=ranked_in, gate=gate,
+        echo=echo, echo_status=echo_status, echo_error=echo_error,
+        echo_tool=echo_tool, echo_round=echo_round,
+        context_limit=context_limit, context_reserve=context_reserve,
+        workspace_root=workspace_root, clock_now=clock_now,
+        memory_block=memory_block, step_stats=evaluate_stats,
+    )
+    tokens_added += int(evaluate_stats.get("total_tokens") or 0)
+    if ranked is None:
+        return tokens_added, None
+    run.append(
+        "control", "next", handoff=json.dumps(ranked),
+        stage="evaluate", session=str(session_log or ""), usage=dict(evaluate_stats),
+    )
+
+    dispatch_stats: dict = {}
+    dispatch_in = (
+        "Assess:\n" + json.dumps(assess, ensure_ascii=False)
+        + "\n\nRanked:\n" + json.dumps(ranked, ensure_ascii=False)
+    )
+    dispatch, session_log = _run_control_stage(
+        cfg, eval_model, stage="dispatch", user_text=dispatch_in, gate=gate,
+        echo=echo, echo_status=echo_status, echo_error=echo_error,
+        echo_tool=echo_tool, echo_round=echo_round,
+        context_limit=context_limit, context_reserve=context_reserve,
+        workspace_root=workspace_root, clock_now=clock_now,
+        memory_block=memory_block, step_stats=dispatch_stats,
+    )
+    tokens_added += int(dispatch_stats.get("total_tokens") or 0)
+    if dispatch is None:
+        fallback = store.assignment_from_state() or (
+            "Make the next checkable increment toward the goal."
+        )
+        dispatch = {
+            "instruction": fallback,
+            "context_artifact_ids": [
+                str(row["id"]) for row in store.load_artifacts()[-2:] if row.get("id")
+            ],
+            "abstain_reason": "",
+        }
+    abstain = _finish_control_dispatch(
+        run, store, dispatch, shortcut=False,
+        session=str(session_log or ""), usage=dict(dispatch_stats),
+    )
+    return tokens_added, abstain
 
 
 def _record_until_budget_usage(run: UntilRun, cfg: dict) -> None:
@@ -1177,6 +1443,31 @@ def _run_until_body(
                         check_results=results,
                         changed_files=changed_files,
                     )
+                    if normalize_until_control(control_mode) == "meta":
+                        echo_status(status_mod.msg_until_step(
+                            "control", makers_this_call, max_steps,
+                        ))
+                        added, abstain = _run_aped_control(
+                            run, cfg, artifact_store,
+                            control_mode=control_mode,
+                            check_results=results,
+                            eval_handoff="",
+                            run_tokens=run_tokens,
+                            makers_this_call=makers_this_call,
+                            eval_model=eval_model,
+                            gate=gate, echo=echo, echo_status=echo_status,
+                            echo_error=echo_error, echo_tool=echo_tool,
+                            echo_round=echo_round,
+                            context_limit=context_limit,
+                            context_reserve=context_reserve,
+                            workspace_root=root, clock_now=clock_now,
+                            memory_block=memory_block,
+                        )
+                        run_tokens += added
+                        if abstain:
+                            run.append("abstain", "infeasible", handoff=abstain)
+                            from . import usage as usage_mod
+                            usage_mod.record("until.abstain", reason="control")
                 from . import usage
 
                 blocked_n = sum(1 for row in results if row["status"] == "blocked")
@@ -1257,6 +1548,31 @@ def _run_until_body(
                         eval_handoff=text,
                         changed_files=changed_files,
                     )
+                    if normalize_until_control(control_mode) == "meta":
+                        echo_status(status_mod.msg_until_step(
+                            "control", makers_this_call, max_steps,
+                        ))
+                        added, abstain = _run_aped_control(
+                            run, cfg, artifact_store,
+                            control_mode=control_mode,
+                            check_results=None,
+                            eval_handoff=text,
+                            run_tokens=run_tokens,
+                            makers_this_call=makers_this_call,
+                            eval_model=eval_model,
+                            gate=gate, echo=echo, echo_status=echo_status,
+                            echo_error=echo_error, echo_tool=echo_tool,
+                            echo_round=echo_round,
+                            context_limit=context_limit,
+                            context_reserve=context_reserve,
+                            workspace_root=root, clock_now=clock_now,
+                            memory_block=memory_block,
+                        )
+                        run_tokens += added
+                        if abstain:
+                            run.append("abstain", "infeasible", handoff=abstain)
+                            from . import usage as usage_mod
+                            usage_mod.record("until.abstain", reason="control")
                 continue
             if role == "gate":
                 echo_status(status_mod.msg_until_blocked())

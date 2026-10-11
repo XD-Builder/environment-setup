@@ -92,9 +92,10 @@ def _run_node(packet: dict, cfg: dict) -> dict:
     except GraphError as exc:
         return envelope("blocked", str(exc))
     root = Path(str(packet.get("worktree") or "")) if packet.get("worktree") else Path.cwd()
+    seed = str(packet.get("assignment") or packet.get("handoff") or "")
     outcome = run_named_node(
         cfg, str(packet.get("model")), defn, str(packet.get("node")),
-        str(packet.get("handoff") or ""),
+        seed,
         workspace_root=root,
     )
     return envelope(
