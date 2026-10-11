@@ -455,8 +455,10 @@ def render_memory_view(cfg: dict, request: MemoryRequest, console) -> None:
         console.info(memory_index.format_index_report(cfg))
         return
     if verb == "canvas":
-        from . import knowledge_graph
-        console.info(knowledge_graph.format_canvas_text(cfg, query=request.query))
+        from .canvas_tui import open_memory_canvas
+        text = open_memory_canvas(cfg, query=request.query)
+        if text:
+            console.info(text)
         return
     console.write_lines(learning_list_lines(query=request.query, limit=30))
 
@@ -533,6 +535,10 @@ def _search_memory_scan(query: str, learning_limit: int, decision_limit: int,
         out.append("Learnings:\n" + "\n".join(format_learning_line(r) for r in learnings))
     if decisions:
         out.append("Decisions:\n" + "\n".join(format_decision_line(d) for d in decisions))
+    from .spirit import search_lines
+    spirit_hits = search_lines(query, slug)
+    if spirit_hits:
+        out.append("Spirit:\n" + "\n".join(spirit_hits))
     return "\n\n".join(out) or "(no memory matches)"
 
 

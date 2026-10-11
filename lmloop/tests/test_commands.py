@@ -126,12 +126,25 @@ class EvalRequestTests(unittest.TestCase):
         self.assertEqual(parse_eval_words(["--json"]).mode, "json")
         self.assertEqual(parse_eval_words(["--design"]).mode, "design")
         self.assertEqual(parse_eval_words(["--design-doc"]).mode, "design")
-        for words in (["--json", "--design"], ["--design", "--design-doc"], ["--json", "--json"], ["--nope"]):
+        abstain = parse_eval_words(["--abstention"])
+        self.assertEqual(abstain.mode, "abstention")
+        self.assertFalse(abstain.as_json)
+        both = parse_eval_words(["--json", "--abstention"])
+        self.assertEqual(both.mode, "abstention")
+        self.assertTrue(both.as_json)
+        self.assertEqual(both.error, "")
+        for words in (
+            ["--json", "--design"],
+            ["--design", "--design-doc"],
+            ["--json", "--json"],
+            ["--abstention", "--design"],
+            ["--nope"],
+        ):
             with self.subTest(words=words):
                 req = parse_eval_words(words)
                 self.assertEqual(req.error, eval_usage())
                 self.assertEqual(req.mode, "text")
-        self.assertEqual(EVAL_FLAGS, ("--json", "--design", "--design-doc"))
+        self.assertEqual(EVAL_FLAGS, ("--json", "--design", "--design-doc", "--abstention"))
 
 
 class GraphRequestTests(unittest.TestCase):

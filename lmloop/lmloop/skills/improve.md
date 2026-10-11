@@ -20,3 +20,9 @@ Implement one fix and a test in the same change. Prefer extending
 ## Step 4 — Stop
 Show the diff summary and the test command. Do not commit. Do not start a
 second gap in the same turn.
+
+## Harness edits
+Add a standing line only when it states curiosity, learning, growth, or the
+safety floor, and a tool, skill, or learning does not already enforce it.
+Otherwise save a learning or a spirit trait. If two lines say the same thing,
+delete one.

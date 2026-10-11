@@ -99,20 +99,20 @@ with `lmloop campaign resume … --docker-persist`, optionally bound to `company
 
 ### Docker sandbox status
 
-**Execution sandbox flags (`--docker`, `lmloop sandbox …`) are proposed, not implemented** in
-this repository revision. Default behavior is unchanged: `run_shell` and checks run on the
-**host** via `subprocess`.
-
-When shipped, the UX will match the design:
+The default is still the host. Docker is used only when you pass a flag. No config key
+enables it. `run_shell` and every planned check share that one backend.
 
 | Invocation | Behavior |
 |------------|----------|
-| `lmloop …` (default) | Host shell; Docker never invoked |
+| `lmloop …` (default) | Host shell; Docker is not probed |
 | `lmloop --docker …` | Ephemeral container; removed on exit |
-| `lmloop --docker-persist …` | Long-lived container for supervisors |
+| `lmloop --docker-persist …` | Long-lived container for supervisors (implies `--docker`) |
+| `lmloop sandbox status` | `exec: local (host)` unless this process passed `--docker` |
+| `lmloop sandbox build` | Builds `sandbox/Dockerfile` and stores `image@sha256:…` (never a tag) |
+| `lmloop sandbox reset [--deps]` | Removes the persist container; `--deps` also removes shadow volumes |
 
-No config key will enable Docker; only CLI flags will. Config will tune an **already flagged**
-run (`sandbox_image`, `sandbox_network`, … — see design §3.1).
+`sandbox_image` and `sandbox_network` only apply after the flag. `--docker-image` must
+contain `@sha256:`. Preflight failure exits before the first model call.
 
 ### Why use Docker (when available)
 
@@ -122,20 +122,19 @@ run (`sandbox_image`, `sandbox_network`, … — see design §3.1).
   limits, and optional `sandbox_network: none`.
 - **Honest limits:** `bridge` is **not** full host isolation — see the network table below.
 
-### Prepare the image (today)
-
-You can build the reference image before the CLI exists:
+### Prepare the image
 
 ```bash
 cd lmloop
-docker build -f sandbox/Dockerfile -t lmloop-sandbox:local sandbox/
-docker inspect lmloop-sandbox:local --format='{{index .RepoDigests 0}}'
+lmloop sandbox build
+# writes sandbox_image = <name>@sha256:… to ~/.lmloop/config.json
+lmloop --docker-image '<that digest>' until make the tests pass
 ```
 
-When `lmloop sandbox build` ships, it will digest-pin (`@sha256:…`) and write `sandbox_image`
-to config.
+A floating tag is rejected. If `docker image inspect` does not report a repo digest,
+`sandbox build` refuses to save one.
 
-### Network modes (when `--docker` ships)
+### Network modes
 
 | `sandbox_network` | Inbound from LAN | Reach host services | Internet egress | Typical use |
 |-------------------|------------------|---------------------|-----------------|-------------|
@@ -159,16 +158,15 @@ Credentials and the Docker socket are **not** mounted into the sandbox in v1 (de
 
 | Symptom | Likely cause |
 |---------|----------------|
-| Preflight fails before first token | Daemon down, image digest missing locally, or port range busy on 127.0.0.1 |
-| Checks pass locally but fail in container | Check ran on host while maker was in container (design R-SAME — same backend enforced when shipped) |
-| Wrong Python/node binaries | Host `.venv` visible — use shadow volumes / `sandbox reset --deps` when shipped |
-| `--mirror` / registry pull issues | Document your registry mirror in Docker daemon config; lmloop does not wrap `docker pull` |
+| Preflight fails before first token | Daemon down, image digest missing locally, workspace is `/` or `$HOME`, another sandbox holds this workspace, or a port in 3000–3010 / 8000–8010 is busy on 127.0.0.1 |
+| Checks pass locally but fail in container | They share the maker's backend. A host `.venv` is not visible inside the container (shadow volume) |
+| Wrong Python/node binaries | `lmloop sandbox reset --deps` drops the named volumes so the next run reinstalls them |
+| Persist container refuses to attach | Image digest, config hash, or policy bundle changed. `lmloop sandbox reset` (add `--deps` only when you also want new dependency volumes) |
+| `--mirror` / registry pull issues | Put the registry mirror in the Docker daemon config. lmloop does not wrap `docker pull`, and `git push --mirror` would publish `refs/lmloop/*` snapshot refs |
 
 ---
 
-## Combined example (future)
-
-When both features ship:
+## Combined example
 
 ```bash
 export OPENROUTER_API_KEY='sk-or-…'
@@ -177,5 +175,21 @@ lmloop config set auto_start_server false
 lmloop --docker until --check 'python -m unittest discover -s tests -q' 'fix the failing tests'
 ```
 
-Until then, use OpenRouter **without** `--docker`, or run Docker manually and keep using host
-lmloop for the agent loop.
+Company mode is a further opt-in. It refuses loopback unless `company_remote` is true,
+and it refuses any model that is not in `company/openrouter_autonomous.yaml` or
+`company_models_allowlist`:
+
+```bash
+lmloop campaign start --goal "Ship the auth slice"
+lmloop --docker company run --goal "Ship the auth slice" --campaign <id>
+```
+
+A supervisor can resume the same campaign on later days. State stays on the host;
+`--docker-persist` only reattaches the container:
+
+```bash
+lmloop --docker-persist campaign resume <id>
+```
+
+`campaign_end_of_day_utc` pauses after that UTC hour. `campaign_max_days` (default 30)
+requires `lmloop campaign extend` before work continues.

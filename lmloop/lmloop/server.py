@@ -250,6 +250,11 @@ def _is_local_host(host: str) -> bool:
     return False
 
 
+def base_url_is_local(cfg: dict) -> bool:
+    host = urlparse(config_mod.cfg_str(cfg, "base_url")).hostname or ""
+    return _is_local_host(host)
+
+
 def resolve_model_concurrency(cfg: dict) -> int:
     raw = config_mod.cfg_str(cfg, "model_concurrency").strip().lower()
     if raw == "auto":

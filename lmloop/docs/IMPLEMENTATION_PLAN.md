@@ -22,15 +22,15 @@ and what to move to `archived/` when done.
 | [DESIGN_FILE_READING.md](archived/DESIGN_FILE_READING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_GRAPH_ENGINEERING.md](archived/DESIGN_GRAPH_ENGINEERING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md) | Spec | **Shipped** | `archived/` |
-| [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Spec | Partial — **Phase S open** | Archive after S1–S10 |
+| [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Spec | **Phase S shipped**; probe deferred | Stay in `docs/` while §2.9 is deferred |
 | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Spec | Partial — D minimal, E deferred | Archive when D1–D8 + open A* done |
-| [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Spec | Partial — W6, C2–C3 open | Archive when W6 + C2–C3 done |
-| [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | Partial — Phase C open | Archive after Phase C |
-| [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | Partial — V0 shipped | Archive after V1–V5 (or cut V5) |
-| [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | Proposed (S11–S13, V5) | Merge into sandbox/evals or archive when implemented |
-| [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | Proposed | Archive when company mode ships |
-| [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | Proposed | Archive when campaigns ship |
-| [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spec | Proposed | Archive when spirit layer ships |
+| [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Spec | **C2–C3 shipped**; parallel agents deferred | Stay in `docs/` while Part 5 is deferred |
+| [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | Phases A–C shipped (Wave 1) | Stay until Phase D is cut to Non-goals |
+| [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | **V0–V5 shipped** | Stay in `docs/` while open questions remain |
+| [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | **S11–S13 + V5 shipped**; optimizer not built | Stay in `docs/` (human-gated) |
+| [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | Stay while open questions remain |
+| [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | Stay while open questions remain |
+| [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spec | **P0–P5 shipped** | Stay while open questions remain |
 
 **Archival rule:** When a design doc’s **user-facing** behavior is in README + ARCHITECTURE and
 remaining ideas live only in Non-goals, set `Status: shipped`, move the file to
@@ -55,16 +55,16 @@ flowchart TD
   classDef defer fill:#fff,stroke:#999,stroke-dasharray:5 3
 
   shipped["Steps 0–5, most 6–7, graph propose<br/>(roadmap)"]:::done
-  mem["Memory finish: A5, D3–D8"]:::wave1
-  dag["DAG: W6 KG run nodes"]:::wave1
-  cmd["Command consolidation Phase C"]:::wave1
-  evals["Usage evals V1–V4"]:::wave1
-  sandbox["Sandbox Phase S S1–S10"]:::wave2
-  canvas["Canvas TUI C2–C3"]:::wave2
-  cont["Continual harness S11–S13 + evals V5"]:::wave2
-  company["Multi-agent company"]:::wave3
-  spirit["Evolving spirit"]:::wave3
-  horizon["Long-horizon campaigns"]:::wave3
+  mem["Memory finish: A5, D3–D8"]:::done
+  dag["DAG: W6 KG run nodes"]:::done
+  cmd["Command consolidation Phase C"]:::done
+  evals["Usage evals V1–V5"]:::done
+  sandbox["Sandbox Phase S S1–S13"]:::done
+  canvas["Canvas TUI C2–C3"]:::done
+  cont["Continual harness S11–S13 + evals V5"]:::done
+  company["Multi-agent company"]:::done
+  spirit["Evolving spirit"]:::done
+  horizon["Long-horizon campaigns"]:::done
   emb["Memory Layer E embeddings"]:::defer
   par["Parallel local agents"]:::defer
 
@@ -99,7 +99,7 @@ Do these in parallel where convenient; suggested **serial** order for one contri
 | 1.1 | Memory index | **A5** parse cache; **D3–D8** incremental sync, query, wiring, `memory reindex`, check-inference candidates | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | **Shipped** |
 | 1.2 | Flow / KG | **W6** run/goal nodes in knowledge graph | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | **Shipped** (`record_workflow_run`) |
 | 1.3 | UX vocabulary | **Phase C** — `mine_on_exit`, submit-line mine routes, `/memory audit` | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | **Shipped** |
-| 1.4 | Self-improvement loop | **V1–V4** — join until logs, align `flow`, human-gated agent patches, locked regressions | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | **Shipped** (V5 still open) |
+| 1.4 | Self-improvement loop | **V1–V4** — join until logs, align `flow`, human-gated agent patches, locked regressions | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | **Shipped** (V5 landed in Wave 2) |
 
 Optional in Wave 1: **A1** perf harness (skipped-by-default tests) when touching memory hot paths.
 
@@ -108,26 +108,29 @@ Optional in Wave 1: **A1** perf harness (skipped-by-default tests) when touching
 
 ---
 
-### Wave 2 — Isolation + visibility
+### Wave 2 — Isolation + visibility (**shipped**)
 
-| Order | Track | Tasks | Doc | Depends on |
-|-------|--------|-------|-----|------------|
-| 2.1 | Docker sandbox | **S1–S10** (`DockerBackend`, flags, preflight, shadow volumes, docs) | [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Host checks/snapshots shipped; unlocks 24/7 and company |
-| 2.2 | Canvas TUI | **C2–C3** after **C1** (shipped) | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | **D6** in memory doc; full **D** index helps layout |
-| 2.3 | Governance + co-evolution | **S11–S13**, **V5** Act/Abstain/Pair fixtures | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Phase S + V1–V4 |
+| Order | Track | Tasks | Doc | Status |
+|-------|--------|-------|-----|--------|
+| 2.1 | Docker sandbox | **S1–S10** (`DockerBackend`, flags, preflight, shadow volumes, docs) | [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | **Shipped.** Default stays host. `bridge` is not host isolation |
+| 2.2 | Canvas TUI | **C2–C3** after **C1** | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | **Shipped.** `canvas_tui.py`; text fallback without a TTY |
+| 2.3 | Governance + co-evolution | **S11–S13**, **V5** Act/Abstain/Pair fixtures | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | **Shipped.** Allowlist, scoped secrets, and policy hash are optional files/env, not new config keys. A broken keep abstains |
 
-Update [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md) as **S2+** land (flags,
-network table, troubleshooting).
+[GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md) matches the flags, network
+table, and troubleshooting. These docs stay in `docs/` because each still has a deferred
+section (probe, parallel agents, or the unattended optimizer).
 
 ---
 
-### Wave 3 — Multi-agent and identity (remote + Docker)
+### Wave 3 — Multi-agent and identity (remote + Docker) (**shipped**)
 
-| Order | Track | Doc | Depends on |
-|-------|--------|-----|------------|
-| 3.1 | Multi-agent company | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | **S1–S6**, DAG **D1–D3**, OpenRouter allowlist in guide |
-| 3.2 | Evolving spirit | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Stable memory + optional `use_graph`; best after **D** index and mine/retro paths |
-| 3.3 | Long-horizon campaigns | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Company orchestrator, **`--docker-persist`**, plan/board stores |
+| Order | Track | Doc | Status |
+|-------|--------|-----|--------|
+| 3.1 | Multi-agent company | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | **Shipped.** `lmloop --docker company run`. JSON manifest (stdlib; no YAML parser). Allowlist is the packaged file plus `company_models_allowlist`. At most two workers, and only with distinct worktrees. `ceo` / `retro` / `plan` / `mine` stay on the host. Local sequential mode is unchanged |
+| 3.2 | Evolving spirit | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | **Shipped.** Seed, actions, thoughts, traits, `self.md`, `/spirit distill --patch`. `spirit_self_max_chars` is the constant 4000 |
+| 3.3 | Long-horizon campaigns | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | **Shipped.** `lmloop campaign` store, plan block, board, daily tick, end-of-day hour, `campaign_max_days`. The `plan` skill's JSON is validated before it touches the plan |
+
+Constants, not config keys: `COMPANY_MAX_PARALLEL = 2`, orchestrator model = `eval_model` or the manifest, spirit injection cap 4000, plan injection cap 4000. Parallel **local** agents stay deferred.
 
 Use [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) when
 designing **V3/V5** and spirit reflection — research, not a gating dependency.

@@ -209,7 +209,10 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
     expansion = collect_at_refs(user_text, cwd=state.workspace_root)
     user_content, extra_readable = _turn_user_content(state, expansion)
     _echo_at_refs(state, expansion)
-    memory.log_event(state.session_log, "user", extract.flatten_content(user_content))
+    flat = extract.flatten_content(user_content)
+    memory.log_event(state.session_log, "user", flat)
+    from .spirit import note_user_text
+    note_user_text(state.cfg, flat, state.session_log)
     state.messages.append({"role": "user", "content": user_content})
     try:
         agent.act(
@@ -927,6 +930,33 @@ def _cmd_flow(state: SessionState, arg: str) -> bool:
     return True
 
 
+def _cmd_company(state: SessionState, arg: str) -> bool:
+    from .cli import cmd_company
+    words = (arg or "manifest").split()
+    cmd_company(state.cfg, words, state.console)
+    return True
+
+
+def _cmd_campaign(state: SessionState, arg: str) -> bool:
+    from .cli import cmd_campaign
+    cmd_campaign(state.cfg, (arg or "status").split(), state.console)
+    return True
+
+
+def _cmd_spirit(state: SessionState, arg: str) -> bool:
+    from .cli import cmd_spirit
+    cmd_spirit(state.cfg, (arg or "log").split(), state.console)
+    return True
+
+
+def _cmd_sandbox(state: SessionState, arg: str) -> bool:
+    from .cli import cmd_sandbox
+
+    words = (arg or "").strip().split()
+    cmd_sandbox(state.cfg, words, state.console)
+    return True
+
+
 def _cmd_graph(state: SessionState, arg: str, confirm_gate) -> bool:
     request = parse_graph_words(
         (arg or "").split(),
@@ -1052,6 +1082,10 @@ def _build_slash_commands(confirm_gate) -> list:
         "until": lambda s, a: _cmd_until(s, a, confirm_gate),
         "graph": lambda s, a: _cmd_graph(s, a, confirm_gate),
         "flow": _cmd_flow,
+        "sandbox": _cmd_sandbox,
+        "company": _cmd_company,
+        "campaign": _cmd_campaign,
+        "spirit": _cmd_spirit,
         "save": lambda s, a: _cmd_save(s, a, confirm_gate),
         "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
         "quit": lambda s, a: False,

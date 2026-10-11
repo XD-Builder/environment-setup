@@ -169,22 +169,28 @@ def parse_count_words(
     return CountRequest(error=usage)
 
 
-EvalMode = Literal["text", "json", "design"]
+EvalMode = Literal["text", "json", "design", "abstention"]
 EVAL_JSON_FLAG = "--json"
 EVAL_DESIGN_FLAGS = ("--design", "--design-doc")
-EVAL_FLAGS = (EVAL_JSON_FLAG, *EVAL_DESIGN_FLAGS)
+EVAL_ABSTENTION_FLAG = "--abstention"
+EVAL_FLAGS = (EVAL_JSON_FLAG, *EVAL_DESIGN_FLAGS, EVAL_ABSTENTION_FLAG)
 
 
 def eval_usage(invocation: str = "lmloop eval") -> str:
-    """Usage line for ``lmloop eval``. ``--design-doc`` is an alias, not a third mode."""
-    return f"usage: {invocation} [--json | --design]"
+    """Usage line for ``lmloop eval``. ``--design-doc`` is an alias of ``--design``."""
+    return f"usage: {invocation} [--json | --design | --abstention]"
 
 
 @dataclass(frozen=True)
 class EvalRequest:
-    """Parsed ``lmloop eval`` invocation. Modes are mutually exclusive."""
+    """Parsed ``lmloop eval`` invocation.
+
+    ``--json`` and ``--design`` are exclusive. ``--abstention`` may also take
+    ``--json``. ``as_json`` is that combination.
+    """
 
     mode: EvalMode = "text"
+    as_json: bool = False
     error: str = ""
 
 
@@ -193,19 +199,32 @@ def parse_eval_words(
     *,
     invocation: str = "lmloop eval",
 ) -> EvalRequest:
-    """One of text (no flags), ``--json``, or ``--design`` / ``--design-doc``."""
-    mode: "EvalMode | None" = None
+    """Text, json, design, or abstention. A second flag is an error except abstention+json."""
+    seen: list[str] = []
     for word in words:
         if word == EVAL_JSON_FLAG:
-            chosen: EvalMode = "json"
+            kind = "json"
         elif word in EVAL_DESIGN_FLAGS:
-            chosen = "design"
+            kind = "design"
+        elif word == EVAL_ABSTENTION_FLAG:
+            kind = "abstention"
         else:
             return EvalRequest(error=eval_usage(invocation))
-        if mode is not None:
+        if kind in seen:
             return EvalRequest(error=eval_usage(invocation))
-        mode = chosen
-    return EvalRequest(mode=mode or "text")
+        seen.append(kind)
+    kinds = set(seen)
+    if "design" in kinds and kinds != {"design"}:
+        return EvalRequest(error=eval_usage(invocation))
+    if kinds == {"abstention", "json"}:
+        return EvalRequest(mode="abstention", as_json=True)
+    if kinds == {"abstention"}:
+        return EvalRequest(mode="abstention")
+    if kinds == {"json"}:
+        return EvalRequest(mode="json")
+    if kinds == {"design"}:
+        return EvalRequest(mode="design")
+    return EvalRequest(mode="text")
 
 
 GRAPH_PROPOSE_VERB = "propose"
@@ -299,8 +318,26 @@ COMMANDS: tuple = (
     CommandMeta("completion", "shell completion script",
                 accepts_arg=True, arg_hint="zsh", slash=False, cli=True),
     CommandMeta("eval", "summarize local usage evals and improvement gaps",
-                accepts_arg=True, arg_hint="[--json | --design]",
+                accepts_arg=True, arg_hint="[--json | --design | --abstention]",
                 slash=False, cli=True, reserve_skill=False),
+    CommandMeta("sandbox", "Docker sandbox status, build, reset (opt-in --docker)",
+                accepts_arg=True,
+                arg_hint="[status | build | shell | reset [--deps] | rm]",
+                arg_choices=("build", "status", "shell", "reset", "rm"),
+                cli=True),
+    CommandMeta("company", "opt-in multi-agent company (needs --docker and a remote model)",
+                accepts_arg=True, arg_hint="run --goal TEXT [--campaign ID] | manifest",
+                arg_choices=("run", "manifest"), cli=True),
+    CommandMeta("worker", "headless company worker (stdin packet, stdout envelope)",
+                accepts_arg=True, arg_hint="run", slash=False, cli=True),
+    CommandMeta("campaign", "multi-day campaign: start, resume, status, board, extend",
+                accepts_arg=True,
+                arg_hint="start --goal TEXT | resume | status | board | extend",
+                arg_choices=("start", "resume", "status", "board", "extend"),
+                cli=True),
+    CommandMeta("spirit", "project spirit: log, review, or distill thoughts into self",
+                accepts_arg=True, arg_hint="log | review | distill [--patch file]",
+                arg_choices=("log", "review", "distill"), cli=True),
     CommandMeta("quit", "exit", exits=True),
     CommandMeta("exit", "exit", exits=True),
     CommandMeta("q", "exit", exits=True),

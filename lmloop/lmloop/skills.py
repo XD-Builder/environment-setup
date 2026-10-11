@@ -18,7 +18,7 @@ SKILLS_DIR = Path(__file__).parent / "skills"
 USER_SKILLS_DIR = STATE_ROOT / "skills"
 SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
-HOW_TO_WORK_MARKER = "\n## How to work"
+HOW_TO_WORK_MARKER = "\n## Curiosity"
 TOOLS_HEADING = "## Tools available"
 CONTEXT_HEADING = "## Context recovery (from project memory)"
 MSG_SKILL_NAME_SHAPE = (
@@ -115,7 +115,7 @@ class SkillLibrary:
             + ", ".join(f"`{n}`" for n in names)
             + ".\n"
         )
-        # Inject after the first paragraph / before "## How to work" when present.
+        # Inject the live tool list after the opening paragraph.
         if HOW_TO_WORK_MARKER in base:
             base = base.replace(HOW_TO_WORK_MARKER, tools_block + HOW_TO_WORK_MARKER, 1)
         else:
@@ -124,6 +124,14 @@ class SkillLibrary:
         steering = steer.steering_block(workspace_root)
         if steering:
             base += "\n\n" + steering
+        from .exec import DockerBackend, active_backend
+        backend = active_backend()
+        if isinstance(backend, DockerBackend) and backend.network == "bridge":
+            base += "\n\n" + steer.sandbox_port_hint()
+        from .spirit import spirit_block
+        spirit = spirit_block(cfg, workspace=workspace_root)
+        if spirit:
+            base += "\n\n" + spirit
         ctx = memory_block if memory_block is not None else memory.context_block(cfg)
         if ctx:
             base += "\n\n" + CONTEXT_HEADING + "\n\n" + ctx

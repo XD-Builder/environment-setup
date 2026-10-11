@@ -55,7 +55,7 @@ lmloop retro                            # alias for memory mine
 lmloop memory graph                     # knowledge-graph stats (use_graph)
 lmloop memory index                     # FTS5 / scan index status
 lmloop memory reindex                   # rebuild index.sqlite3 from JSONL
-lmloop memory canvas [query]            # terminal knowledge canvas (text; use_graph)
+lmloop memory canvas [query]            # knowledge canvas (full-screen TTY, else text)
 lmloop memory reconcile                 # review contradicts clusters (use_graph)
 lmloop graph propose <name>             # draft a workflow graph from flow stats (≥5 finished runs)
 lmloop skills                           # list skill prompts
@@ -64,7 +64,12 @@ lmloop skill investigate "vim plug install hangs"
 lmloop skill review                     # review the current branch diff
 lmloop models                           # models loaded on the server
 lmloop config show|get|set              # settings (~/.lmloop/config.json)
-lmloop eval [--json | --design]       # local usage evals and improvement gaps
+lmloop eval [--json | --design | --abstention]
+lmloop --docker until make the tests pass   # opt-in ephemeral sandbox (host is the default)
+lmloop sandbox status                   # local (host) unless this process passed --docker
+lmloop --docker company run --goal "…"  # opt-in company: remote allowlist, worktrees, gates
+lmloop campaign start --goal "…"        # multi-day plan store (host); resume runs the daily tick
+lmloop spirit log                       # actions, thoughts, traits for this repo
 lmloop completion zsh                   # print zsh completion script
 ```
 
@@ -96,7 +101,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | `lmloop memory index` | Show derived memory index backend, size, and doc counts (`memory_index` config). | Peek |
 | `lmloop memory reindex` | Delete and rebuild `index.sqlite3` from JSONL (learnings, decisions, sessions, run handoffs). | Write |
 | `lmloop memory audit` | Run the `learn` skill. In the REPL, `/memory audit` and `/learn` use a side session so the live thread stays unchanged. | Write |
-| `lmloop memory canvas` | Read-only knowledge canvas (text layout; full TUI when `prompt_toolkit` canvas ships). | Peek |
+| `lmloop memory canvas` | Read-only knowledge canvas. A TTY with `prompt_toolkit` opens the full-screen view (`hjkl`, `+`/`-`, Tab, `/`, `t`, `g`, `r`, `q`); otherwise the text layout. | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
 | `lmloop graph propose <name>` | One no-tools draft from `lmloop flow` stats; unified diff; save on `y` only. `/graph propose <name>` is the same review. | Write |
 | `lmloop decisions` | Deprecated alias for `memory decisions` (shows up to 30 rows). | Peek |
@@ -228,10 +233,13 @@ local, single-user research loop needs.
   a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/skills/<name>.md` —
   numbered steps, English conditionals, explicit report format. Immediately
   available as `lmloop skill <name>`, `/skill <name>`, and `/name`.
-- **Steering:** always-on markdown (not a `/name` skill). Drop `*.md` in
-  `lmloop/steer/`, `~/.lmloop/steer/`, or `<workspace>/.lmloop/steer/`. Files
-  concatenate into the system prompt (packaged, then user, then project; later
-  dirs can contradict earlier; same-name files add, they do not override).
+- **Steering:** always-on markdown (not a `/name` skill). The standing harness
+  is curiosity, learning, and growth; add a line only when it is that stance
+  or a safety floor, and a tool, skill, or learning does not already say it.
+  Drop `*.md` in `lmloop/steer/`, `~/.lmloop/steer/`, or
+  `<workspace>/.lmloop/steer/`. Files concatenate into the system prompt
+  (packaged, then user, then project; later dirs can contradict earlier;
+  same-name files add, they do not override).
   A Clock block (UTC date) is frozen at REPL session start and at each until/graph
   run so relative windows like "last 4 weeks" use that snapshot, not a
   training-cutoff year. `current_time` refreshes that clock in a long session.
@@ -251,7 +259,7 @@ local, single-user research loop needs.
 | Topic | Status | Doc |
 |-------|--------|-----|
 | **OpenRouter** / any remote OpenAI-compatible API | **Supported** via `base_url` + `api_key` / env | [GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md) |
-| **`--docker` execution sandbox** | **Proposed** (host shell remains the default) | Same guide + [DESIGN_SANDBOX_AND_VERIFICATION.md](docs/DESIGN_SANDBOX_AND_VERIFICATION.md) |
+| **`--docker` execution sandbox** | **Opt-in** (host shell remains the default; no config key enables it) | Same guide + [DESIGN_SANDBOX_AND_VERIFICATION.md](docs/DESIGN_SANDBOX_AND_VERIFICATION.md) |
 | **Multi-agent company** on Docker + allowlisted OpenRouter models | **Proposed** | [DESIGN_MULTI_AGENT_COMPANY.md](docs/DESIGN_MULTI_AGENT_COMPANY.md) |
 | **Long-horizon campaigns** (multi-day plan, reflection, coordination) | **Proposed** | [DESIGN_LONG_HORIZON_PLANNING.md](docs/DESIGN_LONG_HORIZON_PLANNING.md) |
 
@@ -292,7 +300,9 @@ zsh completion for `config set` is generated from these keys.
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
 | `mine_on_exit` | `false` | When true, leaving the REPL mines the current session |
 | `check_inference` | `auto` | `auto`: when `until` has no `--check` or `--keep`, derive a check plan from the goal, project files, repo docs, memory, and earlier runs. `off`: plain-language goals go straight to the evaluator |
-| `until_baseline` | `auto` | `auto`: run the plan once before any work, drop commands that cannot start, and turn already-passing checks into invariants. `off`: a passing check finishes the run immediately |
+| `until_baseline` | `auto` | `auto`: run the plan once before any work, drop commands that cannot start, and turn already-passing checks into invariants. `off`: a passing check finishes the run immediately. A keep that already fails ends the run as `abstain` (no maker step) |
+| `sandbox_image` | *(empty)* | Digest-pinned image (`name@sha256:…`) written by `lmloop sandbox build`. Inert unless you passed `--docker`. A tag is rejected |
+| `sandbox_network` | `bridge` | `bridge` (default), `none`, or `host`. Inert unless you passed `--docker`. `bridge` is not host isolation |
 | `model_concurrency` | `auto` | Host-wide lock slots per `base_url`. `auto`: 1 for local/LM Studio, 4 for remote endpoints; or set an integer 1–8 |
 | `run_token_budget` | `0` | Pause an until/graph run after this many tokens (`0` = off). `/continue` resumes |
 | `eval_model` | `` | Model for checker/eval/proposal calls; empty = same as `model` |
@@ -302,6 +312,15 @@ zsh completion for `config set` is generated from these keys.
 | `graph_mine` | `true` | After a terminal graph pass (or an explicit `mine` node), mine learnings from its transcripts |
 | `use_graph` | `false` | Opt-in knowledge-graph memory (`graph_nodes.jsonl` / `graph_edges.jsonl`; `/memory graph`, `/memory reconcile`) |
 | `vision` | `auto` | Attach images to chat when the loaded model is a VLM. `auto` uses LM Studio’s native models API (not the model name). `true` / `false` override. |
+| `company_remote` | `false` | Allow `lmloop company run` against loopback or a non-OpenRouter host. Default company mode requires a remote OpenRouter `base_url` |
+| `company_models_allowlist` | *(empty)* | Comma-separated model ids added to `company/openrouter_autonomous.yaml`. Company chat calls outside that union fail before HTTP |
+| `use_spirit` | `true` | Inject the project spirit charter (and `self.md` when it exists) ahead of fenced memory |
+| `spirit_actions` | `true` | Append `spirit/actions.jsonl` after tool calls. Turn off on a shared machine |
+| `spirit_distill_after_mine` | `false` | After an until mine, write `spirit/pending_distill.json` for `/spirit distill` |
+| `spirit_remote` | `false` | When true, a remote `base_url` also receives `self.md`. Otherwise only the seed charter is sent |
+| `campaign_daily_reflect` | `true` | On `campaign resume`, append a daily tick when the UTC date changed |
+| `campaign_end_of_day_utc` | *(empty)* | Hour 0–23 UTC. When set, resume pauses after that hour until the next UTC date |
+| `campaign_max_days` | `30` | Resume refuses after this many days until `lmloop campaign extend` |
 
 ## Troubleshooting
 
@@ -316,7 +335,9 @@ zsh completion for `config set` is generated from these keys.
 | `DENIED` on shell commands | Destructive patterns require typing `y`. Pipes/redirection only if `confirm_shell_syntax` is true. `confirm_shell false` disables all confirms. |
 | `DENIED: the user declined to overwrite …` | `write_file` on an existing file asks first. Say `y`, or let the model use `update_file` (the intended path for edits). |
 | A file was overwritten or deleted by mistake | The tool result and the dim REPL line cite the backup under `~/.lmloop/projects/<slug>/trash/<stamp>/`. Copy it back (or ask the model to `move_file` it back). Backups are pruned after 14 days. |
-| Autonomous run damaged the workspace | Each maker row in `until/<ts>.jsonl` or `graphs/<name>/<ts>.jsonl` may include `snapshot_ref` (`HEAD` or `refs/lmloop/...`). Restore with `git restore --source=<ref> -- .` or `git checkout <ref> -- <path>`. Refs older than 14 days are pruned; `git push` does not send `refs/lmloop/*` by default. |
+| Autonomous run damaged the workspace | Each maker row in `until/<ts>.jsonl` or `graphs/<name>/<ts>.jsonl` may include `snapshot_ref` (`HEAD` or `refs/lmloop/...`). Restore with `git restore --source=<ref> -- .` or `git checkout <ref> -- <path>`. Refs older than 14 days are pruned; `git push` does not send `refs/lmloop/*` by default. `git push --mirror` would, so do not mirror a repo that still has those refs |
+| `--docker` exits before the first token | Preflight failed: Docker CLI missing (`LMLOOP_DOCKER`), daemon down, image not a local `@sha256:` digest, workspace is `/` or `$HOME`, another sandbox already has this workspace, or a published port is busy on `127.0.0.1`. `lmloop sandbox status` shows the mode. `bridge` does not isolate the host |
+| Checks pass on the host and fail under `--docker` | Host `.venv` / `node_modules` are shadowed by named volumes. Install dependencies inside the container, or `lmloop sandbox reset --deps` to drop those volumes. A registry mirror belongs in the Docker daemon config; lmloop does not wrap `docker pull` |
 | `/until` keeps asking y/N | Recoverable file ops auto-approve by default; the ask is for destructive shell or outside-workspace writes, once per maker step. `lmloop config set autonomous_gates all` silences it for unattended runs; `none` asks for everything. |
 | `until` runs the wrong check | The plan is printed before the first cycle. Press `e` to edit it, or pass `--check` / `--keep`. `lmloop config set check_inference off` leaves plain-language goals to the evaluator. `until_baseline off` makes a passing check finish the run immediately. |
 | Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
@@ -345,6 +366,23 @@ input when `vision` is `auto` (LM Studio VLM flag) or `true`.
 Shell commands without pipes
 run via `exec` (no shell) with that directory as `cwd`. Destructive patterns
 require explicit user confirmation; pipes/redirection do not unless you set
-`lmloop config set confirm_shell_syntax true`. HTTPS fetches verify TLS certificates.
+`lmloop config set confirm_shell_syntax true`. The default executor is the
+host. `--docker` / `--docker-persist` move **those shell commands and the
+check plan** into one container for the process; file tools and the model
+client stay on the host. `sandbox_network: bridge` publishes test ports on
+`127.0.0.1` only (3000–3010 and 8000–8010) and still allows egress and
+reachability of host services bound to `0.0.0.0`. `none` drops the network.
+`host` is an explicit Linux/WSL2 opt-in that shares the host network
+namespace. No config key turns the sandbox on. HTTPS fetches verify TLS certificates.
+`lmloop company run` is a second opt-in on top of `--docker`: an orchestrator
+on the host and up to two workers, each on a git worktree under
+`.lmloop/worktrees/`. It requires an OpenRouter `base_url` (or
+`company_remote`) and refuses model ids outside the packaged allowlist plus
+`company_models_allowlist`. Workers do not write learnings; milestone gates
+run on the integration worktree first. `ceo`, `retro`, `plan`, and `mine`
+stay on the host. Campaigns (`lmloop campaign`) keep a separate plan and
+board from learnings. Spirit (`use_spirit`) injects the seed charter and an
+optional `self.md` before fenced memory; `/spirit distill --patch` promotes
+thoughts. Parallel local agents stay off.
 `remember` appends to `~/.lmloop/projects/<slug>/learnings.jsonl` (slug = git remote
 or directory name).

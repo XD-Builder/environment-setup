@@ -1,6 +1,6 @@
 # Design: Multi-agent company (Docker sandbox + OpenRouter)
 
-**Status:** proposed — for review and critique before implementation  
+**Status:** shipped — JSON manifest, allowlist, worktrees, worker envelopes, milestone gates. Parallel width is the constant 2. Open questions in §15 remain.  
 **Date:** 2026-10-05  
 **Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_GRAPH_ENGINEERING.md](archived/DESIGN_GRAPH_ENGINEERING.md), [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md), [ARCHITECTURE.md](ARCHITECTURE.md)  
 **Supersedes (when built):** “Parallel agents — deferred” in DAG Part 5 for the **Docker + remote allowlist** path only; sequential local LM Studio stays the default.

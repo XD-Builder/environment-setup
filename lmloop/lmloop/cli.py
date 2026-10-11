@@ -17,7 +17,7 @@
     lmloop memory kg                knowledge-graph stats (use_graph)
     lmloop memory index             memory index status
     lmloop memory reindex           rebuild the memory index from JSONL
-    lmloop memory canvas [query]    text knowledge canvas (use_graph)
+    lmloop memory canvas [query]    knowledge canvas (full-screen TTY, else text)
     lmloop memory audit [task]      run the learn skill (REPL: side session)
     lmloop memory reconcile         review contradicts clusters (use_graph)
     lmloop retro [N]                deprecated — use memory mine
@@ -26,8 +26,16 @@
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
-    lmloop eval [--json | --design] local usage evals and improvement gaps
-                                    (--design-doc is an alias for --design)
+    lmloop eval [--json | --design | --abstention] local usage evals and improvement gaps
+                                    (--design-doc is an alias for --design;
+                                     --json may accompany --abstention)
+    lmloop sandbox [status|build|shell|reset|rm]  Docker sandbox (opt-in; default is host)
+    lmloop --docker …                         ephemeral container for this process
+    lmloop --docker-persist …                 long-lived container (implies --docker)
+    lmloop --docker company run --goal TEXT   opt-in company (remote allowlist, worktrees)
+    lmloop campaign start --goal TEXT         multi-day campaign store
+    lmloop campaign resume [id]               daily tick, then status
+    lmloop spirit log|review|distill          project spirit layer
 
 Project memory commands:
 
@@ -46,6 +54,7 @@ Project memory commands:
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -254,6 +263,9 @@ __SUBS__
   local curcontext="$curcontext" state
   _arguments -C \
     '--model[override model for this run]:model:' \
+    '--docker[run shell commands in an ephemeral container]' \
+    '--docker-persist[reattach a long-lived sandbox container]' \
+    '--docker-image[digest-pinned image override]:image:' \
     '--help[show help]' \
     '1: :->cmd' \
     '*:: :->args' && return
@@ -621,6 +633,15 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     if request.error:
         console.error(request.error)
         return 1
+    if request.mode == "abstention":
+        payload = evals.abstention_report()
+        if request.as_json:
+            console.info(json.dumps(payload, indent=2))
+            return 0
+        train = evals.load_abstention_pairs(split="train")
+        validation = evals.load_abstention_pairs(split="validation")
+        console.info(evals.format_abstention(train, validation))
+        return 0
     from .workflow import collect_flow_stats
     stats = evals.load_stats()
     gaps = evals.find_gaps(stats)
@@ -638,12 +659,210 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
+def cmd_sandbox(cfg: dict, words: list, console: Console) -> int:
+    """``lmloop sandbox`` — status by default. Build persists a digest, never a tag."""
+    from . import exec as exec_mod
+
+    verb = words[0] if words else "status"
+    if verb not in ("", "status", "build", "shell", "reset", "rm"):
+        console.error("usage: lmloop sandbox [status | build | shell | reset [--deps] | rm]")
+        return 1
+    if verb in ("", "status"):
+        backend = exec_mod.active_backend()
+        if isinstance(backend, exec_mod.DockerBackend):
+            console.info(backend.status_text())
+        else:
+            console.info(exec_mod.local_status_text())
+        return 0
+    if verb == "build":
+        return _sandbox_build(cfg, console)
+    root = Path.cwd().resolve()
+    backend = exec_mod.active_backend()
+    if not isinstance(backend, exec_mod.DockerBackend):
+        backend = exec_mod.DockerBackend(cfg, root, persist=True)
+    if verb == "reset":
+        deps = "--deps" in words[1:]
+        backend.reset(deps=deps)
+        console.info("sandbox reset" + (" --deps" if deps else ""))
+        return 0
+    if verb == "rm":
+        backend.runner(  # type: ignore[operator]
+            [backend.bin, "rm", "-f", backend.persist_name], timeout=30,
+        )
+        console.info(f"removed {backend.persist_name}")
+        return 0
+    if verb == "shell":
+        if not isinstance(exec_mod.active_backend(), exec_mod.DockerBackend):
+            console.error("sandbox shell needs --docker or --docker-persist on this process")
+            return 1
+        argv = backend.shell_argv()
+        if not sys.stdin.isatty():
+            console.error("sandbox shell needs a TTY")
+            console.info(" ".join(argv))
+            return 1
+        proc = subprocess.run(argv)
+        return int(proc.returncode or 0)
+    return 1
+
+
+def _sandbox_build(cfg: dict, console: Console) -> int:
+    from . import exec as exec_mod
+
+    dockerfile = Path(__file__).resolve().parent.parent / "sandbox" / "Dockerfile"
+    if not dockerfile.is_file():
+        console.error(f"missing {dockerfile}")
+        return 1
+    tag = "lmloop-sandbox:local"
+    bin_name = exec_mod.docker_binary()
+    runner = exec_mod.subprocess_runner
+    built = runner(
+        [bin_name, "build", "-f", str(dockerfile), "-t", tag, str(dockerfile.parent)],
+        timeout=600,
+    )
+    if built.returncode != 0:
+        console.error((built.stderr or built.stdout or "docker build failed").strip())
+        return 1
+    inspected = runner(
+        [bin_name, "image", "inspect", tag, "--format", "{{json .RepoDigests}}"],
+        timeout=30,
+    )
+    digest = exec_mod.sandbox_build_digest(inspected.stdout)
+    if not digest or not exec_mod.image_has_digest(digest):
+        console.error("refusing to persist a tag; image inspect did not yield @sha256:")
+        return 1
+    cfg["sandbox_image"] = digest
+    save_config(cfg)
+    console.info(f"sandbox_image = {digest}")
+    return 0
+
+
 def cmd_completion_cli(cfg: dict, words: list, console: Console) -> int:
     shell = words[0] if words else ""
     if not shell:
         console.error("usage: lmloop completion zsh")
         return 1
     return cmd_completion(shell, console)
+
+
+def _sandbox_ready() -> bool:
+    from .exec import DockerBackend, active_backend
+    return isinstance(active_backend(), DockerBackend)
+
+
+def cmd_company(cfg: dict, words: list, console: Console) -> int:
+    from .company.manifest import MANIFEST_REL, ManifestError, allowlist_errors, load_manifest
+    from .company.allowlist import effective_allowlist
+    from .company.orchestrator import CompanyError, read_company_goal, run_company
+    from .company.worker import spawn_worker
+
+    verb = words[0] if words else ""
+    if verb in ("", "manifest"):
+        path = Path(words[1]) if len(words) > 1 and verb == "manifest" else Path.cwd() / MANIFEST_REL
+        try:
+            manifest = load_manifest(path)
+        except ManifestError as exc:
+            console.error(str(exc))
+            return 1
+        errors = allowlist_errors(manifest, set(effective_allowlist(cfg)))
+        if errors:
+            for line in errors:
+                console.error(line)
+            return 1
+        console.info(f"manifest {manifest.sha[:12]} graph {manifest.graph} roles {len(manifest.roles)}")
+        return 0
+    if verb != "run":
+        console.error("usage: lmloop company run --goal TEXT [--campaign ID]")
+        return 1
+    goal, campaign = read_company_goal(words[1:])
+    if not goal:
+        console.error("company run needs --goal TEXT")
+        return 1
+    try:
+        result = run_company(
+            cfg, repo=Path.cwd(), goal=goal, sandbox_ready=_sandbox_ready(),
+            launcher=spawn_worker, campaign_id=campaign,
+        )
+    except CompanyError as exc:
+        console.error(str(exc))
+        return 1
+    console.info(f"company {result.status} {result.run_path}")
+    return 0 if result.status == "pass" else 1
+
+
+def cmd_worker(cfg: dict, words: list, console: Console) -> int:
+    from .company.worker import main_worker
+
+    if words and words[0] not in ("run",):
+        console.error("usage: lmloop worker run")
+        return 1
+    return main_worker(cfg)
+
+
+def cmd_campaign(cfg: dict, words: list, console: Console) -> int:
+    from . import campaign as campaign_mod
+
+    verb = words[0] if words else "status"
+    try:
+        if verb == "start":
+            tail = words[1:]
+            if "--goal" in tail:
+                idx = tail.index("--goal")
+                goal = tail[idx + 1] if idx + 1 < len(tail) else ""
+            else:
+                goal = " ".join(tail)
+            meta = campaign_mod.start(goal, company="--company" in tail, workspace=Path.cwd())
+            console.info(f"campaign {meta['id']} open")
+            return 0
+        if verb == "resume":
+            cid = words[1] if len(words) > 1 else ""
+            report = campaign_mod.prepare_resume(cfg, cid, workspace=Path.cwd())
+            console.info(report.get("message") or report.get("status"))
+            return 0 if report.get("ok") else 1
+        if verb == "status":
+            cid = words[1] if len(words) > 1 else (campaign_mod.latest_open() or "")
+            console.info(campaign_mod.status_text(cid))
+            return 0
+        if verb == "board":
+            cid = words[1] if len(words) > 1 else (campaign_mod.latest_open() or "")
+            console.info(campaign_mod.board_text(cid))
+            return 0
+        if verb == "extend":
+            cid = words[1] if len(words) > 1 else (campaign_mod.latest_open() or "")
+            meta = campaign_mod.extend(cid, cfg)
+            console.info(f"extended through {meta.get('extended_through')}")
+            return 0
+    except campaign_mod.CampaignError as exc:
+        console.error(str(exc))
+        return 1
+    console.error("usage: lmloop campaign start --goal TEXT | resume | status | board | extend")
+    return 1
+
+
+def cmd_spirit(cfg: dict, words: list, console: Console) -> int:
+    from .spirit import SpiritError, apply_distill, log_text, review_text
+
+    verb = words[0] if words else "log"
+    try:
+        if verb == "log":
+            console.info(log_text())
+            return 0
+        if verb == "review":
+            console.info(review_text())
+            return 0
+        if verb == "distill":
+            if "--patch" not in words:
+                console.error("usage: lmloop spirit distill --patch file.json")
+                return 1
+            path = Path(words[words.index("--patch") + 1])
+            patch = json.loads(path.read_text())
+            result = apply_distill(patch, cfg)
+            console.info(f"distill thoughts {len(result['thoughts'])} self {result['self']}")
+            return 0
+    except (SpiritError, json.JSONDecodeError, OSError, IndexError) as exc:
+        console.error(str(exc))
+        return 1
+    console.error("usage: lmloop spirit log | review | distill --patch file.json")
+    return 1
 
 
 def cli_handlers() -> dict:
@@ -662,7 +881,45 @@ def cli_handlers() -> dict:
         "skill": cmd_skill_cli,
         "completion": cmd_completion_cli,
         "eval": cmd_eval_cli,
+        "sandbox": cmd_sandbox,
+        "company": cmd_company,
+        "worker": cmd_worker,
+        "campaign": cmd_campaign,
+        "spirit": cmd_spirit,
     }
+
+
+def activate_sandbox(cfg: dict, args, console: Console) -> int:
+    """Start a sandbox when the flag asked for one. No flag: do not probe Docker.
+
+    Returns 0 to continue, or an exit code that stops the process before any
+    model call. A config key cannot turn this on.
+    """
+    from . import exec as exec_mod
+
+    image = (getattr(args, "docker_image", "") or "").strip()
+    if image and not exec_mod.image_has_digest(image):
+        console.error("image reference must contain @sha256:")
+        return 2
+    enabled = bool(getattr(args, "docker", False) or getattr(args, "docker_persist", False))
+    if not enabled:
+        return 0
+    backend = exec_mod.build_backend(
+        cfg,
+        Path.cwd(),
+        docker=True,
+        persist=bool(args.docker_persist),
+        image=image,
+    )
+    report = backend.start()
+    if not report.ok:
+        for line in report.errors:
+            console.error(line)
+        return 1
+    for line in report.warnings:
+        console.hint(line)
+    exec_mod.install_backend(backend)
+    return 0
 
 
 def main(argv=None) -> int:
@@ -673,6 +930,22 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model", help="override model for this run")
+    parser.add_argument(
+        "--docker", action="store_true",
+        help="run shell commands inside an ephemeral container (removed on exit)",
+    )
+    parser.add_argument(
+        "--docker-persist", action="store_true",
+        help="reattach a long-lived sandbox container (implies --docker)",
+    )
+    parser.add_argument(
+        "--docker-image", default="",
+        help="one-run image override; must contain @sha256:",
+    )
+    parser.add_argument(
+        "--company", action="store_true",
+        help="with --docker, run the rest of the line as a company goal",
+    )
     parser.add_argument("cmd", nargs="?", default="", help="task / subcommand")
     # REMAINDER keeps flags like until --check from being eaten as argparse options.
     parser.add_argument("args", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
@@ -682,10 +955,23 @@ def main(argv=None) -> int:
     if args.model:
         cfg["model"] = args.model
     console = Console(cfg_bool(cfg, "color"))
+    code = activate_sandbox(cfg, args, console)
+    if code:
+        return code
 
     words = ([args.cmd] if args.cmd else []) + list(args.args)
     sub = words[0] if words else ""
     handlers = cli_handlers()
+    if args.company and sub not in ("company", "worker", "campaign"):
+        if sub in handlers:
+            console.error("--company is only valid with a goal or company run")
+            return 2
+        goal = " ".join(words).strip()
+        if not goal:
+            console.error("usage: lmloop --docker --company --goal is required")
+            return 2
+        usage.record("cli.command", command="company")
+        return cmd_company(cfg, ["run", "--goal", goal], console)
     if sub in handlers:
         usage.record("cli.command", command=sub)
         return handlers[sub](cfg, words[1:], console)

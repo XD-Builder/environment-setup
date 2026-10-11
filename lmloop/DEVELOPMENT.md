@@ -76,7 +76,7 @@ list.
 | Slash / CLI stems, reserved skill names, first-arg completions | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names, `arg_choices`, and `help_tier` live here only. Memory subverb completion uses `MEMORY_ARG_COMPLETION`. |
 | Memory verb and flow flag parse | `MemoryRequest` / `FlowRequest` in `commands.py` | CLI and REPL call `parse_memory_words` / `parse_flow_words`. Do not keep a second verb ladder. |
 | Optional list count | `CountRequest` in `commands.py` | `/history`, `/checkpoints`, and `lmloop history`. A bad token is an error. Rendering stays per surface (indices vs bare paths). |
-| Eval report flags | `EvalRequest` in `commands.py` | `lmloop eval`. `--json` and `--design` are exclusive. Completion reads `EVAL_FLAGS`. |
+| Eval report flags | `EvalRequest` in `commands.py` | `lmloop eval`. `--json` and `--design` are exclusive. `--abstention` may also take `--json`. Completion reads `EVAL_FLAGS`. |
 | Graph invocation | `GraphRequest` in `commands.py` | CLI and REPL. `propose` saves only through `offer_proposed_graph` (explicit `y`). |
 | Read-only memory views | `memory.render_memory_view` | Peek, search, kg, index, canvas. `mine` / `audit` / `reconcile` stay in the handlers (they need a model). |
 | Act display kwargs | `ui.ActDisplay` via `Console.act_display` | `for_act()` for `agent.act`; `for_isolated()` when the callee takes `echo_error`. Do not copy the echo/context fields. A live REPL session goes through `SessionState.act_display`. |
@@ -114,7 +114,8 @@ find yourself updating two lists, you have already added debt.
 | Derived check plans (no model calls) | `checks.py` |
 | Git snapshots before autonomous maker steps | `snapshot.py` |
 | Model slots + concurrency | `server.py` |
-| Shell backend seam | `exec.py` |
+| Shell backend seam (host default, opt-in Docker) | `exec.py` |
+| Knowledge canvas projection and keys | `canvas_tui.py` |
 | Memory FTS5/scan index | `memory_index.py` |
 | Flow stats (`lmloop flow`) | `workflow.py` |
 | Authored workflow graphs | `graph.py` |
@@ -124,6 +125,9 @@ find yourself updating two lists, you have already added debt.
 | Live-thread file manifest (`/context`) | `context.py` |
 | Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
 | Usage aggregation, gap rules, `lmloop eval` | `evals.py` (leaf: `usage`, stdlib) |
+| Company manifest, allowlist, worktrees, orchestrator | `company/` (`chat` may import `company.allowlist` only) |
+| Campaign plan, board, ticks | `campaign.py` (host writer; workers do not import it to append) |
+| Spirit seed, actions, thoughts, self | `spirit/` |
 | `@path` completion + ref expansion | `files_index.py` |
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
@@ -164,6 +168,10 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
   import `tools` at module load (lazy `ToolResult` only for image attachments).
 - `loop.py` must not import `graph`.
 - `agent.py` / `stream.py` / `display.py` / `chat.py` must not import `loop` or `graph`.
+- `company/` may import `graph`, `loop`, and `exec`. `graph` and `loop` must not import `company`.
+- `chat.py` may import `company.allowlist` only (leaf). It must not import the orchestrator.
+- `campaign.py` and `spirit/` must not import `agent`, `loop`, `graph`, or `company.orchestrator`.
+- Workers do not append learnings, decisions, campaign rows, or spirit distill output.
 
 ### Keep components small
 

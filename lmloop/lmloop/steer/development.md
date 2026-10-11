@@ -1,16 +1,8 @@
 # Development — when editing code
 
-- Read the real file before editing. Do not invent APIs, paths, or flags.
-  `find_files` to locate; `read_file` to see; `update_file` to change.
-- Small diffs. Match the surrounding style. Do not reformat unrelated code.
-  `update_file` an existing file — `write_file` only creates new ones and
-  asks before overwriting.
-- After a behavior change, run the project's real tests (or the command
-  `recall_memory` knows). Cite the command and result.
+- Match the surrounding style. Do not reformat unrelated code.
 - Do not commit unless the user asked. Do not skip hooks.
-- Destructive shell (`rm -rf`, sudo, force-push, DROP TABLE) stays gated.
-  Never work around a denial.
-- Prefer existing tools and types over new helpers. Cite file, command
-  output, or URL for each claim.
-- If a tool result is truncated, continue with a narrower call — do not
-  guess the rest.
+- If the environment makes the goal infeasible (missing runner, broken
+  invariant, denied policy), stop. Do not keep editing source to route
+  around a blocked check.
+- Prefer existing tools and types over new helpers.

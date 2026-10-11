@@ -135,8 +135,30 @@ def render_flow(stats: FlowStats, cfg: dict, request: FlowRequest) -> str:
     return format_flow_report(stats, cfg)
 
 
+def company_prefix_note(slug: "str | None" = None) -> str:
+    """One line when company runs recorded a stable or drifted prompt prefix."""
+    root = memory.project_dir(slug) / "company"
+    if not root.is_dir():
+        return ""
+    by_node: dict[str, set] = {}
+    for path in sorted(root.glob("*/run.jsonl")):
+        for row in memory.read_jsonl(path):
+            if row.get("role") != "prefix" or not row.get("node"):
+                continue
+            by_node.setdefault(str(row["node"]), set()).add(str(row.get("prefix_hash") or ""))
+    if not by_node:
+        return ""
+    drifted = [name for name, hashes in by_node.items() if len(hashes) > 1]
+    if drifted:
+        return "company prefix drifted: " + ", ".join(sorted(drifted))
+    return f"company prefix stable across {len(by_node)} node(s)"
+
+
 def format_flow_report(stats: FlowStats, cfg: dict) -> str:
     lines = ["lmloop flow · project stats", json.dumps(stats.to_dict(), indent=2)]
+    prefix = company_prefix_note()
+    if prefix:
+        lines.append(prefix)
     rules = flow_rules(stats, cfg)
     if rules:
         lines.append("")

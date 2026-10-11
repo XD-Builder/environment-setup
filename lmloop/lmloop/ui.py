@@ -501,6 +501,8 @@ class Console:
         lines.append(row("graph", "on" if hud.graph_on else "off"))
         lines.append(row("checkpoint", "yes" if hud.checkpoint else "no"))
         lines.append(row("hud", hud.line()))
+        from .exec import describe_exec
+        lines.append(row("exec", describe_exec()))
         lines.append(row("cwd", str(Path.cwd()), t.dim))
         return "\n".join(lines)
 
