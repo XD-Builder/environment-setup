@@ -92,13 +92,18 @@ class UntilControlIntegrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            state_root = root / "state"
+            state_root.mkdir()
+            proj = state_root / "projects" / "ws"
+            (proj / "until").mkdir(parents=True)
             with patch("lmloop.loop.isolated_act", side_effect=fake_act), \
                  patch("lmloop.loop.run_plan_commands", return_value=[
                      {"cmd": "false", "status": "fail", "output": "[exit code: 1]"},
                  ]), \
                  patch("lmloop.loop.snapshot.take_snapshot", return_value=type(
                      "Snap", (), {"ref": "refs/lmloop/x"},
-                 )()):
+                 )()), \
+                 patch("lmloop.loop.project_dir", return_value=proj):
                 run = UntilRun.create(
                     "goal", checks=("false",), until_control="budget",
                 )

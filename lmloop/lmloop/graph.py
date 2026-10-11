@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import knowledge_graph, memory, skills, snapshot, status as status_mod, tools
-from .config import DEFAULTS, STATE_ROOT, cfg_bool, cfg_int, project_dir, utc_now
+from .config import DEFAULTS, STATE_ROOT, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
 from .loop import (
     DONE_ROLES,
     EVAL_PROMPT,
@@ -763,7 +763,7 @@ def _run_until_node(
     else:
         urun = UntilRun.create(
             node.goal, checks=node.checks, keeps=node.keeps,
-            until_control=node.control or cfg.get("until_control"),
+            until_control=node.control or cfg_str(cfg, "until_control"),
         )
     result = run_until(
         cfg, model, run=urun,

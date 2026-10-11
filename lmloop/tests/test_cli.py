@@ -1029,7 +1029,9 @@ class MemoryMineAndUntilTests(unittest.TestCase):
              redirect_stdout(io.StringIO()):
             code = main(["until", "--check", "true", "green"])
         self.assertEqual(code, 0)
-        create.assert_called_once_with("green", checks=("true",), keeps=())
+        create.assert_called_once_with(
+            "green", checks=("true",), keeps=(), until_control="off",
+        )
         run.assert_called_once()
 
     def test_until_empty_resumes_open_run(self):
