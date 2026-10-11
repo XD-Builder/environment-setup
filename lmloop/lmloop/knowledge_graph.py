@@ -13,10 +13,12 @@ from .config import cfg_bool, utc_now
 GRAPH_NODE_TYPES = frozenset({
     "learning", "decision", "session", "file", "skill", "concept",
     "run", "goal",
+    "action", "thought", "trait", "self_snapshot",
 })
 GRAPH_EDGE_TYPES = frozenset({
     "leads_to", "contradicts", "in_session", "references",
     "uses_skill", "related_to", "supersedes",
+    "evidence_for", "supports", "expresses", "grounded_in",
 })
 MSG_GRAPH_OFF = "knowledge graph is off — `lmloop config set use_graph true`"
 CANVAS_NODE_CAP = 2000
@@ -29,6 +31,10 @@ _TYPE_BAND = {
     "concept": 5.0,
     "run": 6.0,
     "goal": 7.0,
+    "action": 8.0,
+    "thought": 9.0,
+    "trait": 10.0,
+    "self_snapshot": 11.0,
 }
 
 # Per-project fingerprint: skip _backfill when learnings/decisions/sessions unchanged.
@@ -665,6 +671,31 @@ def record_skill_use(skill_name: str, session: "Path | None" = None,
 def graph_stats(slug: "str | None" = None) -> str:
     """Adjacency-list stats: counts, orphans, contradiction clusters."""
     return KnowledgeGraph(slug).stats()
+
+
+@dataclass(frozen=True)
+class ReconcilePlan:
+    """What ``/memory reconcile`` should do. At most one field is set."""
+
+    notice: str = ""
+    error: str = ""
+    prompt: str = ""
+
+
+def prepare_reconcile(cfg: dict, slug: "str | None" = None) -> ReconcilePlan:
+    """Graph-off, empty cluster, missing skill, or the reconcile prompt."""
+    if not cfg_bool(cfg, "use_graph"):
+        return ReconcilePlan(notice=MSG_GRAPH_OFF)
+    KnowledgeGraph(slug).ensure(cfg)
+    cluster = contradiction_clusters(slug)
+    if cluster.startswith("(no "):
+        return ReconcilePlan(notice=cluster)
+    from . import skills
+    try:
+        prompt = skills.load_skill("_reconcile") + "\n\n" + cluster
+    except FileNotFoundError as exc:
+        return ReconcilePlan(error=str(exc))
+    return ReconcilePlan(prompt=prompt)
 
 
 def contradiction_clusters(slug: "str | None" = None) -> str:

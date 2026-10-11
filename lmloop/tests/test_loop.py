@@ -657,7 +657,8 @@ class UntilRunnerTests(unittest.TestCase):
         self.assertEqual(acts["n"], 0)
         roles = [e.get("role") for e in run.events]
         self.assertIn("baseline", roles)
-        self.assertIn("gate", roles)
+        self.assertIn("abstain", roles)
+        self.assertNotIn("gate", roles)
         self.assertNotIn("maker", roles)
         self.assertTrue(run.is_done())
 

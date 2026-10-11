@@ -1,6 +1,6 @@
 # Design: Long-horizon planning, reflection, and multi-day coordination
 
-**Status:** proposed — for review before implementation  
+**Status:** shipped — campaign store, plan block, board, daily tick, end-of-day, max days. Plan injection cap is the constant 4000. Open questions in §10 remain.  
 **Date:** 2026-10-08  
 **Depends on:** [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md), [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md), [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md), [ARCHITECTURE.md](ARCHITECTURE.md)  
 **Extends:** company orchestrator, `--docker-persist`, milestone retro — with **campaigns** that survive calendar days and **planning memory** distinct from pitfall learnings.

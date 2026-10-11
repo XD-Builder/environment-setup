@@ -61,6 +61,17 @@ def load_steering(workspace_root: "Path | None" = None) -> str:
     return "\n\n".join(parts)
 
 
+SANDBOX_PORT_HINT = (
+    "Test servers must bind 0.0.0.0 inside the sandbox on a port in "
+    "3000-3010 or 8000-8010; the host reaches them at 127.0.0.1."
+)
+
+
+def sandbox_port_hint() -> str:
+    """Steering line appended only while a bridge sandbox is the active backend."""
+    return SANDBOX_PORT_HINT
+
+
 def steering_block(workspace_root: "Path | None" = None) -> str:
     """System-prompt section, or empty when no steer files load."""
     body = load_steering(workspace_root)

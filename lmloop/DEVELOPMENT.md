@@ -48,6 +48,15 @@ cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 Setup reuses an existing venv when its Python is new enough; it only deletes the
 tree if the interpreter is missing or older than 3.14.
 
+GitHub Actions (`.github/workflows/ci.yaml`) runs that suite, then scripted-model
+baselines. `LMLOOP_SKIP_AGENT_E2E=1` skips the agent probes and leaves the leaf
+contracts in the unit job. Component probes and holistic flows talk to a
+localhost OpenAI stub (`tests/e2e_harness.py`); they do not call LM Studio or
+OpenRouter. The docker-local job builds `lmloop/sandbox/Dockerfile`, checks
+Python 3.14 / git / ripgrep / curl, and reruns the agent suite **inside** that
+image with `LocalBackend` (no `--docker` on that path). `--docker` / `DockerBackend`
+regression lives in `tests/test_wave2.py`.
+
 **Dependencies.** Do not add a package unless the stdlib (or an existing extra:
 `prompt_toolkit`, `rich`, `ddgs`) cannot do the job. The agent loop stays on
 `urllib` — no OpenAI SDK, no HTTP client framework.
@@ -74,6 +83,17 @@ list.
 | Confirm-gate labels and tiers | `tools._GATE_KINDS` via `confirm_label()` / `gate_tier()` | Gate strings are `<prefix><detail>`. `ui.make_confirm_gate` prints and asks; it does not classify. `GatePolicy` decides autonomy from the tier, never from the tool name. |
 | Post-tool user echo | `tools.user_notice(name, result)` | `agent._dispatch_tools` makes one call; no tool-name branching in `agent.py`. |
 | Slash / CLI stems, reserved skill names, first-arg completions | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names, `arg_choices`, and `help_tier` live here only. Memory subverb completion uses `MEMORY_ARG_COMPLETION`. |
+| Memory verb and flow flag parse | `MemoryRequest` / `FlowRequest` in `commands.py` | CLI and REPL call `parse_memory_words` / `parse_flow_words`. Do not keep a second verb ladder. |
+| Optional list count | `CountRequest` in `commands.py` | `/history`, `/checkpoints`, and `lmloop history`. A bad token is an error. Rendering stays per surface (indices vs bare paths). |
+| Eval report flags | `EvalRequest` in `commands.py` | `lmloop eval`. `--json` and `--design` are exclusive. `--abstention` may also take `--json`. Completion reads `EVAL_FLAGS`. |
+| Graph invocation | `GraphRequest` in `commands.py` | CLI and REPL. `propose` saves only through `offer_proposed_graph` (explicit `y`). |
+| Read-only memory views | `memory.render_memory_view` | Peek, search, kg, index, canvas. `mine` / `audit` / `reconcile` stay in the handlers (they need a model). |
+| Act display kwargs | `ui.ActDisplay` via `Console.act_display` | `for_act()` for `agent.act`; `for_isolated()` when the callee takes `echo_error`. Do not copy the echo/context fields. A live REPL session goes through `SessionState.act_display`. |
+| Until/graph session mine | `repl.make_session_miner` | CLI and REPL until/graph mine callbacks. Empty path lists are a no-op. |
+| History window index | `memory.indexed_tail` | `/history` and `/checkpoints` share the 1-based index `/restore` uses. |
+| Server bring-up failure | `server.require_model` / `server_error_text` | Callers check `None`. The same `error:` line is used in the REPL, the CLI, and `isolated_act`. |
+| Reconcile prep | `knowledge_graph.prepare_reconcile` | CLI and REPL share graph-off, empty cluster, missing skill, and the prompt. |
+| Skill body plus task | `skills.skill_prompt` | `/skill`, `/memory audit`, and `lmloop skill`. |
 | Status / resume / nudge copy | `status.py` | Do not hard-code user-facing loop copy in `agent.py`. |
 | Remote API auth | `config.resolve_api_key` / `chat_request_headers` | Bearer token for OpenAI-compatible hosts (OpenRouter). Never log keys. |
 | Session mutable state | `SessionState` | Pass the object; do not thread the same fields as loose args. |
@@ -102,9 +122,9 @@ find yourself updating two lists, you have already added debt.
 | Goal loop (`until` maker/check/eval) | `loop.py` |
 | Derived check plans (no model calls) | `checks.py` |
 | Git snapshots before autonomous maker steps | `snapshot.py` |
-| Derived check plans | `checks.py` |
 | Model slots + concurrency | `server.py` |
-| Shell backend seam | `exec.py` |
+| Shell backend seam (host default, opt-in Docker) | `exec.py` |
+| Knowledge canvas projection and keys | `canvas_tui.py` |
 | Memory FTS5/scan index | `memory_index.py` |
 | Flow stats (`lmloop flow`) | `workflow.py` |
 | Authored workflow graphs | `graph.py` |
@@ -113,9 +133,12 @@ find yourself updating two lists, you have already added debt.
 | Paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, project slug, `utc_now()` | `config.py` |
 | Live-thread file manifest (`/context`) | `context.py` |
 | Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
-| Usage aggregation, gap rules, `lmloop eval` report | `evals.py` (leaf: `usage`, stdlib) |
+| Usage aggregation, gap rules, abstention pairs, `lmloop eval` report | `evals.py` (leaf: `usage`, stdlib) |
 | Assertion pyramid, golden gates | `contracts.py` (stdlib at import; grammar/tool checkers lazy-import `graph` / `tools`) |
 | Local spans, eval queue, golden inbox | `traces.py` (`contracts`, `usage`, `config`, `memory`) |
+| Company manifest, allowlist, worktrees, orchestrator | `company/` (`chat` may import `company.allowlist` only) |
+| Campaign plan, board, ticks | `campaign.py` (host writer; workers do not import it to append) |
+| Spirit seed, actions, thoughts, self | `spirit/` |
 | `@path` completion + ref expansion | `files_index.py` |
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
@@ -159,6 +182,10 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
 - `contracts.py` stays a stdlib import. Grammar and tool-arg checkers may lazy-import `graph` and `tools`. It must not import `agent` at module load.
 - `traces.py` may import `contracts`, `usage`, `config`, and `memory`. It must not import `agent`, `loop`, or `graph`.
 - `agent.py` may import `traces` lazily inside `act` / `_dispatch_tools`.
+- `company/` may import `graph`, `loop`, and `exec`. `graph` and `loop` must not import `company`.
+- `chat.py` may import `company.allowlist` only (leaf). It must not import the orchestrator.
+- `campaign.py` and `spirit/` must not import `agent`, `loop`, `graph`, or `company.orchestrator`.
+- Workers do not append learnings, decisions, campaign rows, or spirit distill output.
 
 ### Keep components small
 

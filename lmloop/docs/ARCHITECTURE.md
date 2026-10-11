@@ -19,20 +19,20 @@ lmloop/
 │   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
 │   ├── archived/               # shipped design specs (see archived/README.md)
 │   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (partial)
-│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks shipped; --docker proposed
-│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, text canvas shipped; TUI partial
+│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker shipped
+│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, canvas TUI shipped; parallel agents deferred
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
-│   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps → design loop (partial)
+│   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
 │   ├── DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates, local traces (shipped)
-│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
-│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns, planning memory, multi-day reflect + coordination (proposed)
-│   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
+│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
+│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
+│   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
-│   └── Dockerfile              # reference image for future lmloop sandbox build
+│   └── Dockerfile              # reference image; lmloop sandbox build records @sha256:
 ├── company/
-│   └── openrouter_autonomous.yaml  # illustrative allowlist tiers (company mode proposed)
+│   └── openrouter_autonomous.yaml  # company allowlist; config may add ids, not remove the check
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -51,13 +51,17 @@ lmloop/
 │   ├── memory_index.py         # derived FTS5/scan index (incremental sync)
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
 │   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
-│   ├── exec.py                 # shell backend seam (LocalBackend; Docker proposed)
+│   ├── exec.py                 # LocalBackend (default) and opt-in DockerBackend
 │   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
-│   ├── evals.py                # aggregate usage → gaps; lmloop eval (read-only)
+│   ├── evals.py                # usage gaps + abstention Act/Abstain/Pair
 │   ├── contracts.py            # assertion pyramid (schema, rubric, trajectory, gates)
 │   ├── traces.py               # local spans, eval queue, golden inbox
+│   ├── campaign.py             # multi-day plan, board, reflect ticks (host writer)
+│   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator
+│   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
+│   ├── canvas_tui.py          # knowledge-canvas projection and full-screen keys
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
 │   ├── markdown_view.py        # render assistant markdown (no quote gutter)
@@ -70,7 +74,7 @@ lmloop/
 │   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
-│   │   ├── system.md           # system prompt: how to work, memory, safety
+│   │   ├── system.md           # standing harness: curiosity, learning, growth, safety floor
 │   │   ├── _author.md          # meta-prompt for skill drafting (not user-facing)
 │   │   ├── _graph_mine.md      # mine phase: propose graph edges (private)
 │   │   ├── _reconcile.md       # review contradicts edges (private)
@@ -91,7 +95,7 @@ lmloop/
 ├── evals/golden/               # versioned assertion cases + baseline rates
 │   ├── cases.json
 │   └── baseline.json
-├── tests/                      # stdlib unittest; named test_<area>.py
+├── tests/                      # unittest test_*.py; e2e_harness.py drives scripted-model baselines
 ```
 
 ---
@@ -332,8 +336,8 @@ until goal:
     plan     — flags, or checks.py derives commands (goal text, project files,
                repo docs, memory, proven history). Shown once on a TTY.
     baseline — run the plan once (until_baseline). Unrunnable inferred commands
-               are dropped; unrunnable typed ones block. An inferred check that
-               already passes becomes a keep. A failing keep blocks.
+               are dropped; unrunnable typed ones block (human gate). An inferred
+               check that already passes becomes a keep. A failing keep abstains.
     maker    — isolated act() with the goal + prior handoff
     check    — run the plan. A check that went fail → pass, with keeps and
                advisory commands green, is done (no eval). Otherwise a failing
@@ -348,7 +352,8 @@ until goal:
 - The plan is stored on the until log (`checks` on the meta row, then on the `baseline` or `plan` row). Resume reuses it and does not baseline again. A graph until-node copies the plan onto the node row's `verify` field.
 - Maker and checker are different session logs. Missing `STATUS:` is `blocked`, never `pass`.
 - Eval cannot `write_file`, `update_file`, `move_file`, `delete_file`, `remember`, `log_decision`, or `graph_add_edge` (`tools.READONLY_OMIT`). It may `run_shell` to verify; a destructive shell request there is simply `DENIED` under the until/graph `GatePolicy` and never re-asked.
-- A failing check goes straight back to the maker — no eval turn. `DENIED:`, spawn `ERROR:`, and exit 126/127 are `blocked` → gate.
+- A failing check goes straight back to the maker — no eval turn. `DENIED:`, spawn `ERROR:`, and exit 126/127 are `blocked` → gate. A keep that already fails at baseline appends role `abstain` / `infeasible` and does not start a maker step.
+- Shell commands and check-plan commands share one process backend (`exec.active_backend`). The default is `LocalBackend` on the host. `--docker` or `--docker-persist` installs a `DockerBackend` after preflight; there is no host fallback. `/stats` prints `exec: local (host)` unless that flag was passed. `bridge` publishes `127.0.0.1:3000-3010` and `127.0.0.1:8000-8010` and is not host isolation.
 - `until_max_steps` (default 12) counts maker cycles **this invocation**; pause, then `/continue` or `lmloop until` with no goal resumes.
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
@@ -445,6 +450,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ├── usage.jsonl                     # append-only local feature-usage events (opt-out: LMLOOP_USAGE=0)
 ├── traces.jsonl                    # act() parent span + tool child spans (LMLOOP_TRACE=0 off)
 ├── eval_queue.jsonl                # parents waiting for `lmloop eval --drain`
+├── evals/last_report.json          # last `lmloop eval` report (gaps + flow)
 ├── evals/golden_inbox.jsonl        # anonymized span failures (promote by hand)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
@@ -462,6 +468,8 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ```
 
 **Project slug** is resolved from git remote (`owner-repo`) or directory name.
+
+`lmloop eval` aggregates `usage.jsonl` and folds this project's until/graph logs into gaps. Check commands that look like secrets are dropped. An unreadable log sets `run_log_error` and a `run-log-unreadable` gap instead of omitting those signals. The text report's flow section uses the caller's config (`until_max_steps`), the same budget `lmloop flow` uses. Invalid usage rows are counted and surfaced as `invalid-usage-rows`; unknown feature names never reach the feature counter because `validate_row` rejects them first.
 
 ### Learnings (`learnings.jsonl`)
 
@@ -483,7 +491,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 - `read_session()` renders log files (including truncated tool rows) up to `max_chars`.
 - `format_messages_transcript()` renders the live thread (honors `/undo`) for `/compact` and this-session `/memory mine`. Tool rows are included truncated (live payloads can be huge); system messages are omitted.
 - `session_messages()` rebuilds user/assistant turns for `/restore`. Tool/system rows are transcript-only (truncated, not API-shaped) and are omitted. Restore loads those turns into the in-memory thread and prints the last assistant reply — it does not start a new model turn.
-- `/compact`, `/memory mine`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log). `/save` uses `no_tools` so the checkpoint call cannot emit tool calls.
+- `/compact`, `/memory mine`, `/memory audit` (`/learn`), and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log). `/save` uses `no_tools` so the checkpoint call cannot emit tool calls. A mine that does not finish tells the user; the learnings path is printed only after a completed mine. Unexpected errors in a live turn stay on the REPL and append the traceback to the session log.
 
 ### Checkpoints (`checkpoints/*.md`)
 
@@ -500,6 +508,7 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
 - `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.
 - `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected snapshot. `/context` prints files in the live thread, then that same snapshot. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
+- CLI and REPL parse `memory`, `flow`, and `graph` through `MemoryRequest`, `FlowRequest`, and `GraphRequest`. `/history`, `/checkpoints`, and `lmloop history` share `CountRequest` (a bad count is an error); the REPL window index comes from `memory.indexed_tail`. `lmloop eval` modes come from `EvalRequest` (`--json` and `--design` are exclusive). Read-only memory verbs render in `memory.render_memory_view`. Model runs share `Console.act_display()` (`ActDisplay.for_act` / `for_isolated`); a live session uses `SessionState.act_display`. Until and graph mine callbacks share `make_session_miner`. `server.require_model` is the one bring-up failure path. `prepare_reconcile` and `skills.skill_prompt` are the shared reconcile and skill-task builders. A reconcile that does not finish prints the same line on the CLI and in the REPL. `graph propose` reviews through `offer_proposed_graph` and saves only on `y`.
 
 ---
 
@@ -509,11 +518,12 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 
 At session start (and each isolated `/until` or graph `act()`), the system prompt is assembled from:
 
-1. `skills/system.md` — core instructions (how to work, memory discipline, safety, style)
+1. `skills/system.md` — standing harness: curiosity, learning, growth, and the safety floor. Repo-specific practice is learned, not added as more lines here.
 2. Live tool name list
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
-5. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old)
+5. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
+6. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
 
 `/context` is the audit view of what the model is holding. It prints two sections, colored when stdout is a TTY (`Console.write_lines`):
 
@@ -557,6 +567,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop until [--check cmd] [--keep cmd] <goal>` | Goal loop (derived plan when no flag is given), then REPL prompt when stdin is a TTY |
 | `lmloop until` | Resume latest open until-run |
 | `lmloop graph <name>` | Authored workflow graph, then REPL prompt when stdin is a TTY |
+| `lmloop graph propose <name>` | Draft a graph; save only on `y` (same review in `/graph propose`) |
 | `lmloop graph` | Resume latest open graph-run |
 | `lmloop skill <name> [task]` | Skill, then REPL prompt when stdin is a TTY |
 | `lmloop skills` | List skill prompts |
@@ -570,11 +581,11 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |
 | `lmloop memory reconcile` | Review `contradicts` clusters (requires `use_graph`) |
 | `lmloop decisions` | Peek durable decisions |
-| `lmloop history` | List session transcripts |
+| `lmloop history [n]` | List session transcripts (bare paths; `n` > 0, default 15) |
 | `lmloop models` | List models on server |
 | `lmloop config get\|set\|show` | Manage settings |
 | `lmloop completion zsh` | Print zsh completion script |
-| `lmloop eval [--json \| --design]` | Usage gaps from `usage.jsonl` |
+| `lmloop eval [--json \| --design \| --abstention]` | Usage gaps, or Act/Abstain/Pair on fixture pairs |
 | `lmloop eval --gate commit\|pr\|nightly` | Assertion pyramid against `evals/golden/` |
 | `lmloop eval --drain` / `--inbox` | Score the local trace queue / show flagged spans |
 
@@ -584,7 +595,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 
 **Files:** `contracts.py`, `traces.py`, `evals/golden/`
 
-`lmloop eval` without a gate flag still aggregates `usage.jsonl`. `--gate` runs the packaged golden cases with no model call:
+`lmloop eval` without a gate flag still aggregates `usage.jsonl`. `--abstention` scores Act/Abstain/Pair on fixture pairs; that is separate from the trajectory abstain checker below. `--gate` runs the packaged golden cases with no model call:
 
 - **commit** — layer 1 only (JSON Schema subset, Python `ast`, graph DSL, `validate_tool_arguments`, span shape). Any miss fails.
 - **pr** — layers 1–3 (invariants, ROUGE-1 / BLEU-1 / bag-of-words cosine, rubric citation, tool order, redundant calls, rollback, abstention). A pass-rate drop greater than 2% fails.

@@ -1,6 +1,6 @@
 # Design: Continual harness and sandbox co-evolution
 
-**Status:** proposed — informs Phase S (Docker), usage evals V5+, and harness control logic; nothing here is implemented as a single subsystem yet.
+**Status:** partial — S11–S13, the `abstain` outcome, paired fixtures, and `lmloop eval --abstention` shipped. An unattended harness optimizer is still out of scope (human PRs only).
 **Date:** 2026-10-09
 **Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·

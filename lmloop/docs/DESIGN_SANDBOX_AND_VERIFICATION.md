@@ -1,6 +1,6 @@
 # Design: Execution sandbox and verification hardening
 
-**Status:** partial — Phase R (R1–R2), Phase V (V0–V10), and `exec.LocalBackend` seam shipped. Phase S (`--docker`, `DockerBackend`) remains proposed.
+**Status:** Phase R, Phase V, and Phase S (S1–S13) shipped. Default execution is still the host. The per-cycle probe (§2.9) stays deferred.
 **Date:** 2026-09-19 · **Revised:** 2026-10-09 (governance + co-evolution alignment)
 **Depends on:** `tools.run_shell`, `tools.GatePolicy`, `loop.run_until`, `graph.run_graph`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
@@ -24,9 +24,10 @@ Two questions drive this file:
 | R1 git temp-index snapshots, `snapshot_ref` on maker rows | `snapshot.py`, `loop.py`, `graph.py` |
 | R2 recovery copy beside `trash/` | `README.md` troubleshooting |
 | V0–V10 derived checks, baseline, targeted tests (V7), model proposal (V8), shell evidence (V9), docs + `company` graph | `checks.py`, `loop.py`, `graphs/company.md` |
-| Local backend seam (no Docker yet) | `exec.py` → `LocalBackend` only |
+| S1–S10 `--docker`, `DockerBackend`, preflight, shadow volumes, `lmloop sandbox` | `exec.py`, `cli.py`, `commands.py` |
+| S11–S13 egress allowlist, scoped secret files, policy-bundle hash | `exec.py` (workspace `.lmloop/` files or `LMLOOP_SANDBOX_*` env; not extra config keys) |
 
-**Not shipped yet:** Phase S (`--docker`, `DockerBackend`, preflight, shadow volumes).
+**Still deferred:** the per-cycle adversarial probe (§2.9).
 
 ## Review log (round 4)
 

@@ -510,6 +510,11 @@ def _dispatch_tools(
         notice = tools.user_notice(name, result)
         if notice:
             echo_status(notice)
+        from .spirit import note_tool
+        note_tool(
+            cfg, name=name, args=_args, result=result, session_log=session_log,
+            ok=not str(result).startswith(("error", "ERROR", "refused", "DENIED")),
+        )
         if session_log:
             memory.log_event(
                 session_log, "tool",

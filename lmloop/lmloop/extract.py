@@ -437,12 +437,13 @@ def _pdftotext(data: bytes) -> "tuple[str | None, str | None]":
 def _pypdf_text(data: bytes) -> "tuple[str | None, str | None]":
     try:
         from pypdf import PdfReader
+        from pypdf.errors import PdfReadError
     except ImportError:
         return None, "pypdf not installed"
     try:
         reader = PdfReader(io.BytesIO(data))
         pages = [(p.extract_text() or "") for p in reader.pages]
-    except Exception as e:
+    except (PdfReadError, ValueError, OSError) as e:
         return None, f"{type(e).__name__}: {e}"
     return "\n\n".join(pages), None
 

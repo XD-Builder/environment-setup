@@ -99,6 +99,44 @@ class UiTests(unittest.TestCase):
         ])
         self.assertGreaterEqual(n, 1)
 
+    def test_act_display_omits_echo_error_for_act(self):
+        from pathlib import Path
+
+        console = Console(color=False)
+        display = console.act_display(
+            context_limit=1000,
+            context_reserve=128,
+            workspace_root=Path("/tmp"),
+        )
+        act_keys = display.for_act()
+        isolated = display.for_isolated()
+        self.assertNotIn("echo_error", act_keys)
+        self.assertIs(isolated["echo_error"].__func__, Console.error)
+        self.assertEqual(act_keys["context_limit"], 1000)
+        self.assertEqual(act_keys["workspace_root"], Path("/tmp"))
+        self.assertIs(isolated["echo"], act_keys["echo"])
+
+    def test_session_act_display_uses_session_fields(self):
+        from lmloop.repl import SessionState
+        from lmloop.ui import fresh_stats
+
+        root = Path("/tmp/ws")
+        state = SessionState(
+            cfg={"context_reserve": 64},
+            model="m",
+            messages=[],
+            session_log=Path("/tmp/s.jsonl"),
+            stats=fresh_stats(),
+            console=Console(color=False),
+            context_limit=1000,
+            workspace_root=root,
+        )
+        display = state.act_display()
+        self.assertEqual(display.context_limit, 1000)
+        self.assertEqual(display.context_reserve, 64)
+        self.assertEqual(display.workspace_root, root)
+        self.assertNotIn("echo_error", display.for_act())
+
     def test_write_lines_and_tool_path_use_color(self):
         from io import StringIO
         from contextlib import redirect_stdout
