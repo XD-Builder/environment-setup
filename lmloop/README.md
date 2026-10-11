@@ -31,6 +31,12 @@ Run tests:
 cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 ```
 
+GitHub Actions (`.github/workflows/ci.yaml`) runs that suite, scripted-model
+baselines per component, holistic flows (until, memory, graph, remote-shaped auth,
+`@path`), and the same agent suite inside the reference sandbox image (host
+`LocalBackend` in-container; not `lmloop --docker`). Nothing in CI calls LM Studio
+or OpenRouter.
+
 Contribution practices (module layout, exceptions, where to patch tests) are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 LM Studio's `lms` CLI is optional but recommended: with it installed, lmloop
@@ -251,7 +257,7 @@ local, single-user research loop needs.
   (Ollama example), `lmloop config set model llama3.1`.
 - **OpenRouter (remote):** set `base_url` to `https://openrouter.ai/api/v1`, supply an
   API key (`OPENROUTER_API_KEY` or `lmloop config set api_key …`), and set
-  `auto_start_server false`. Full steps, privacy notes, and planned Docker sandbox flags:
+  `auto_start_server false`. Full steps, privacy notes, and opt-in Docker sandbox:
   [docs/GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md).
 
 ### Remote models and Docker sandbox

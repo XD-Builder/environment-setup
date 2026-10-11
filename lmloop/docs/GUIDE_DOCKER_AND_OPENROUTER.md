@@ -1,8 +1,7 @@
 # Guide: OpenRouter and Docker sandbox
 
 This guide covers **using lmloop with remote models (OpenRouter)** today, and **opt-in
-Docker execution** as specified in the design docs (sandbox CLI flags are not shipped yet;
-see [Status](#docker-sandbox-status) below).
+Docker execution** on the host (see [Status](#docker-sandbox-status) below).
 
 Design references:
 
@@ -100,7 +99,14 @@ with `lmloop campaign resume … --docker-persist`, optionally bound to `company
 ### Docker sandbox status
 
 The default is still the host. Docker is used only when you pass a flag. No config key
-enables it. `run_shell` and every planned check share that one backend.
+enables it. `run_shell` and check-plan commands share the active backend for that process
+(`LocalBackend` by default, `DockerBackend` after `--docker` / `--docker-persist`).
+
+**GitHub Actions (`docker-local`):** builds `lmloop/sandbox/Dockerfile`, verifies the image
+toolchain (Python 3.14, git, ripgrep, curl), and reruns the scripted agent baselines inside
+a container with the repo bind-mounted. That job does **not** pass `--docker`; it exercises
+`LocalBackend` on the sandbox Linux userland. End-to-end **`--docker`** behavior (preflight,
+digest pin, shadow volumes) is covered by **`tests/test_wave2.py`** on runners with Docker.
 
 | Invocation | Behavior |
 |------------|----------|

@@ -9,4 +9,5 @@ vim/spell/*
 __pycache__/
 *.pyc
 lmloop/.venv/
+ci-reports/
 .lmloop/worktrees/

@@ -48,6 +48,15 @@ cd lmloop && PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 Setup reuses an existing venv when its Python is new enough; it only deletes the
 tree if the interpreter is missing or older than 3.14.
 
+GitHub Actions (`.github/workflows/ci.yaml`) runs that suite, then scripted-model
+baselines. `LMLOOP_SKIP_AGENT_E2E=1` skips the agent probes and leaves the leaf
+contracts in the unit job. Component probes and holistic flows talk to a
+localhost OpenAI stub (`tests/e2e_harness.py`); they do not call LM Studio or
+OpenRouter. The docker-local job builds `lmloop/sandbox/Dockerfile`, checks
+Python 3.14 / git / ripgrep / curl, and reruns the agent suite **inside** that
+image with `LocalBackend` (no `--docker` on that path). `--docker` / `DockerBackend`
+regression lives in `tests/test_wave2.py`.
+
 **Dependencies.** Do not add a package unless the stdlib (or an existing extra:
 `prompt_toolkit`, `rich`, `ddgs`) cannot do the job. The agent loop stays on
 `urllib` — no OpenAI SDK, no HTTP client framework.
