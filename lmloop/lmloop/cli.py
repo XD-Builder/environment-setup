@@ -22,7 +22,7 @@
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
-    lmloop eval [--json | --design] local usage evals and improvement gaps
+    lmloop eval [--json | --design | --gate commit|pr|nightly | --drain | --inbox]
 
 Project memory commands:
 
@@ -612,22 +612,75 @@ def cmd_skill_cli(cfg: dict, words: list, console: Console) -> int:
     return run_repl(cfg, console=console, skill=name, first_task=task)
 
 
+_EVAL_USAGE = (
+    "usage: lmloop eval [--json | --design | --gate commit|pr|nightly | --drain | --inbox]"
+)
+
+
 def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
-    from . import evals
+    from . import contracts, evals, traces
 
     as_json = False
-    as_design = False
-    rest: list[str] = []
-    for w in words:
-        if w == "--json":
+    mode = ""
+    gate = ""
+    conflict = False
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word == "--json":
             as_json = True
-        elif w in ("--design", "--design-doc"):
-            as_design = True
+        elif word in ("--design", "--design-doc"):
+            conflict = conflict or bool(mode and mode != "design")
+            mode = "design"
+        elif word == "--drain":
+            conflict = conflict or bool(mode and mode != "drain")
+            mode = "drain"
+        elif word == "--inbox":
+            conflict = conflict or bool(mode and mode != "inbox")
+            mode = "inbox"
+        elif word == "--gate":
+            conflict = conflict or bool(mode and mode != "gate")
+            mode = "gate"
+            if index + 1 >= len(words):
+                console.error("usage: lmloop eval --gate commit|pr|nightly")
+                return 1
+            index += 1
+            gate = words[index]
         else:
-            rest.append(w)
-    if rest:
-        console.error("usage: lmloop eval [--json | --design]")
+            conflict = True
+        index += 1
+    if conflict or (as_json and mode == "design"):
+        console.error(_EVAL_USAGE)
         return 1
+    if mode == "gate":
+        if gate not in contracts.GATES:
+            console.error("usage: lmloop eval --gate commit|pr|nightly")
+            return 1
+        report = contracts.run_gate(gate)
+        if as_json:
+            console.info(json.dumps(report.to_dict(), indent=2))
+        else:
+            console.info(contracts.format_gate(report))
+        return 0 if report.ok else 1
+    if mode == "drain":
+        report = traces.drain()
+        if as_json:
+            console.info(json.dumps(report, indent=2))
+        else:
+            console.info(traces.format_drain(report))
+        return 1 if report["failed"] else 0
+    if mode == "inbox":
+        rows = traces.read_inbox()
+        if as_json:
+            console.info(json.dumps(rows, indent=2))
+        else:
+            console.info(traces.format_inbox(rows))
+        return 0
+    if mode == "design":
+        stats = evals.load_stats()
+        gaps = evals.find_gaps(stats)
+        console.info(evals.design_doc_skeleton(gaps))
+        return 0
     from .workflow import collect_flow_stats
     stats = evals.load_stats()
     gaps = evals.find_gaps(stats)
@@ -636,12 +689,9 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     payload["flow"] = flow.to_dict()
     evals.write_last_report(payload)
     if as_json:
-        console.echo(json.dumps(payload, indent=2))
+        console.info(json.dumps(payload, indent=2))
         return 0
-    if as_design:
-        console.echo(evals.design_doc_skeleton(gaps))
-        return 0
-    console.echo(evals.format_report(stats, gaps, flow=flow))
+    console.info(evals.format_report(stats, gaps, flow=flow))
     return 0
 
 

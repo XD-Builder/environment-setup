@@ -26,7 +26,8 @@ and what to move to `archived/` when done.
 | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Spec | Partial — D minimal, E deferred | Archive when D1–D8 + open A* done |
 | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Spec | Partial — W6, C2–C3 open | Archive when W6 + C2–C3 done |
 | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | Partial — Phase C open | Archive after Phase C |
-| [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | Partial — V0 shipped | Archive after V1–V5 (or cut V5) |
+| [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | Partial — V0–V4 shipped | Archive after V5 (or cut V5) |
+| [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) | Spec | **Shipped** — deterministic pyramid, local traces, CI gates | Keep until a judge-model or off-host collector is actually adopted (current non-goals) |
 | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | Proposed (S11–S13, V5) | Merge into sandbox/evals or archive when implemented |
 | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | Proposed | Archive when company mode ships |
 | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | Proposed | Archive when campaigns ship |

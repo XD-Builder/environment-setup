@@ -24,6 +24,7 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps → design loop (partial)
+│   ├── DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates, local traces (shipped)
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
 │   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns, planning memory, multi-day reflect + coordination (proposed)
 │   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
@@ -55,6 +56,8 @@ lmloop/
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── evals.py                # aggregate usage → gaps; lmloop eval (read-only)
+│   ├── contracts.py            # assertion pyramid (schema, rubric, trajectory, gates)
+│   ├── traces.py               # local spans, eval queue, golden inbox
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
 │   ├── markdown_view.py        # render assistant markdown (no quote gutter)
@@ -85,6 +88,9 @@ lmloop/
 │   │   └── development.md      # model-facing coding bar
 │   └── graphs/                 # packaged workflow graphs
 │       └── company.md          # ceo → build → qa → mine
+├── evals/golden/               # versioned assertion cases + baseline rates
+│   ├── cases.json
+│   └── baseline.json
 ├── tests/                      # stdlib unittest; named test_<area>.py
 ```
 
@@ -437,6 +443,9 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ~/.lmloop/
 ├── config.json                     # user settings (base_url, model, max_rounds, …)
 ├── usage.jsonl                     # append-only local feature-usage events (opt-out: LMLOOP_USAGE=0)
+├── traces.jsonl                    # act() parent span + tool child spans (LMLOOP_TRACE=0 off)
+├── eval_queue.jsonl                # parents waiting for `lmloop eval --drain`
+├── evals/golden_inbox.jsonl        # anonymized span failures (promote by hand)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
 ├── steer/<name>.md                 # user always-on steering (concatenated)
@@ -565,6 +574,23 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop models` | List models on server |
 | `lmloop config get\|set\|show` | Manage settings |
 | `lmloop completion zsh` | Print zsh completion script |
+| `lmloop eval [--json \| --design]` | Usage gaps from `usage.jsonl` |
+| `lmloop eval --gate commit\|pr\|nightly` | Assertion pyramid against `evals/golden/` |
+| `lmloop eval --drain` / `--inbox` | Score the local trace queue / show flagged spans |
+
+---
+
+## Assertion gates
+
+**Files:** `contracts.py`, `traces.py`, `evals/golden/`
+
+`lmloop eval` without a gate flag still aggregates `usage.jsonl`. `--gate` runs the packaged golden cases with no model call:
+
+- **commit** — layer 1 only (JSON Schema subset, Python `ast`, graph DSL, `validate_tool_arguments`, span shape). Any miss fails.
+- **pr** — layers 1–3 (invariants, ROUGE-1 / BLEU-1 / bag-of-words cosine, rubric citation, tool order, redundant calls, rollback, abstention). A pass-rate drop greater than 2% fails.
+- **nightly** — layers 1–4 (distractors and schema mutations). A miss fails the scheduled job as an alert and does not set `blocks_merge`.
+
+`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md).
 
 ---
 

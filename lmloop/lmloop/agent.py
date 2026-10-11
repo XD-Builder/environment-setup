@@ -486,6 +486,8 @@ def _dispatch_tools(
     echo_tool, echo_status, stats, session_log, workspace_root, messages: list,
     cfg: dict, model: str,
 ) -> None:
+    from . import traces as traces_mod
+
     round_media = []
     prepared = []
     for call_idx, call in enumerate(tool_calls):
@@ -504,6 +506,7 @@ def _dispatch_tools(
         prepared, raw_results,
     ):
         result, attachments = tools.unwrap_tool_result(raw_result)
+        traces_mod.note_tool(name, result, round_idx=round_idx)
         notice = tools.user_notice(name, result)
         if notice:
             echo_status(notice)
@@ -572,6 +575,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
     """
+    from . import traces as traces_mod
     from . import usage as usage_mod
 
     usage_mod.record("agent.act", readonly=readonly, no_tools=no_tools)
@@ -614,6 +618,7 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
         return messages
 
     try:
+        traces_mod.start_turn()
         for round_idx in range(turn.max_gather + 1):
             is_answer = turn.is_answer_round(round_idx, echo_status)
             if is_answer and not (
@@ -695,5 +700,14 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             tools=turn.turn_tools,
             interrupted=bool(stats and stats.get("interrupted")),
             ok=act_ok,
+        )
+        traces_mod.finish_turn(
+            rounds=turn.turn_rounds,
+            tools=turn.turn_tools,
+            interrupted=bool(stats and stats.get("interrupted")),
+            ok=act_ok,
+            readonly=readonly,
+            no_tools=no_tools,
+            output=traces_mod.output_excerpt(messages),
         )
         memory.set_active_session(prev_session)
