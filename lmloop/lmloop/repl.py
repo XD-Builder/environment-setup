@@ -1,7 +1,9 @@
 """Interactive REPL for lmloop."""
 
+import json
 import re
 import sys
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +18,7 @@ from .commands import (
     MSG_DEPRECATE_DECISIONS,
     MSG_DEPRECATE_MEMORY_GRAPH,
     MSG_DEPRECATE_RETRO,
+    parse_positive_count,
     slash_command_metas,
 )
 from .config import cfg_bool, cfg_int, project_slug
@@ -237,7 +240,11 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
         )
         return False
     except Exception as e:
-        memory.log_event(state.session_log, "system", f"error: {type(e).__name__}: {e}")
+        detail = traceback.format_exc().rstrip()
+        memory.log_event(
+            state.session_log, "system",
+            f"error: {type(e).__name__}: {e}\n{detail}",
+        )
         state.console.error(f"error: {type(e).__name__}: {e}")
         state.console.hint(f"  conversation kept — type to steer, or {MSG_RESUME}")
         return False
@@ -331,7 +338,7 @@ def _cmd_memory(state: SessionState, arg: str, confirm_gate) -> bool:
         return True
     if verb == "audit":
         rest = parts[1] if len(parts) > 1 else ""
-        return _run_named_skill(state, "learn", rest, confirm_gate)
+        return _cmd_memory_audit(state, rest, confirm_gate)
     if verb == "reconcile":
         return _cmd_memory_reconcile(state, confirm_gate)
     state.console.write_lines(memory.learning_list_lines(query=arg, limit=30))
@@ -355,6 +362,25 @@ def _cmd_memory_dump(state: SessionState) -> bool:
 
 def _cmd_memory_graph(state: SessionState) -> bool:
     state.console.info(knowledge_graph.inspect_report(state.cfg))
+    return True
+
+
+def _cmd_memory_audit(state: SessionState, rest: str, confirm_gate) -> bool:
+    """Run the learn skill off the live thread (same contract as ``/learn``)."""
+    try:
+        prompt = skills.load_skill("learn", public_only=True)
+    except FileNotFoundError as e:
+        state.console.error(str(e))
+        return True
+    task = (rest or "").strip()
+    if task:
+        prompt += "\n\nTask: " + task
+    state.console.hint("[memory audit · learn skill · current conversation unchanged]")
+    result = _isolated_act(state, prompt, confirm_gate, log_label="/memory audit")
+    if result is None:
+        state.console.error("memory audit did not finish")
+        return True
+    knowledge_graph.record_skill_use("learn", session=state.session_log, cfg=state.cfg)
     return True
 
 
@@ -448,10 +474,17 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
     return 0
 
 
+def _finish_mine(state: SessionState, rc: int) -> None:
+    if rc != 0:
+        state.console.error("memory mine did not finish")
+        state.console.hint("  check the server, then retry /memory mine")
+
+
 def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
     arg = (arg or "").strip()
-    if arg.isdigit() and int(arg) > 0:
-        n = int(arg)
+    tokens = arg.split()
+    n = parse_positive_count(tokens[0]) if len(tokens) == 1 else None
+    if n is not None:
         current = state.session_log.resolve()
         paths = [
             p for p in memory.all_sessions()
@@ -465,16 +498,18 @@ def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
         label = f"last {len(paths)} session(s)"
         state.console.hint(f"[memory mine · {label} · current conversation unchanged]")
         try:
-            mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
+            rc = mine_sessions(state.cfg, state.model, paths, state.console, confirm_gate)
         except KeyboardInterrupt:
             state.console.hint(
                 f"\n[interrupted — current conversation unchanged; {MSG_RESUME}]"
             )
+            return True
+        _finish_mine(state, rc)
         return True
     if arg:
         state.console.info("usage: /memory mine [n]")
         state.console.info("  /memory mine       mine this session")
-        state.console.info("  /memory mine 3     mine last 3 sessions")
+        state.console.info("  /memory mine 3     mine last 3 prior sessions")
         return True
     transcript = memory.format_messages_transcript(state.messages)
     if not transcript:
@@ -482,7 +517,7 @@ def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
         return True
     state.console.hint("[memory mine · this session · current conversation unchanged]")
     try:
-        mine_sessions(
+        rc = mine_sessions(
             state.cfg, state.model, None, state.console, confirm_gate,
             transcript=transcript,
         )
@@ -490,6 +525,8 @@ def _cmd_memory_mine(state: SessionState, arg: str, confirm_gate) -> bool:
         state.console.hint(
             f"\n[interrupted — current conversation unchanged; {MSG_RESUME}]"
         )
+        return True
+    _finish_mine(state, rc)
     return True
 
 
@@ -918,15 +955,14 @@ def _cmd_flow(state: SessionState, arg: str) -> bool:
     from . import workflow
 
     words = (arg or "").strip().split()
-    as_json = words == ["--json"] or (words and words[0] == "--json")
-    stats = workflow.collect_flow_stats()
-    if as_json:
-        import json
-        state.console.write_lines([json.dumps(stats.to_dict(), indent=2)])
+    if words not in ([], ["--json"]):
+        state.console.info("usage: /flow [--json]")
         return True
-    state.console.write_lines(
-        workflow.format_flow_report(stats, state.cfg).splitlines(),
-    )
+    stats = workflow.collect_flow_stats()
+    if words == ["--json"]:
+        state.console.info(json.dumps(stats.to_dict(), indent=2))
+        return True
+    state.console.info(workflow.format_flow_report(stats, state.cfg))
     return True
 
 
@@ -1074,9 +1110,12 @@ def _build_slash_commands(confirm_gate) -> list:
         if slash in taken:
             continue
         blurb = skills.skill_blurb(name) or f"run {name} skill"
+        if name == "learn":
+            handler = lambda s, a: _cmd_memory_audit(s, a, confirm_gate)
+        else:
+            handler = lambda s, a, n=name: _run_named_skill(s, n, a, confirm_gate)
         commands.append(SlashCommand(
-            slash, blurb,
-            lambda s, a, n=name: _run_named_skill(s, n, a, confirm_gate),
+            slash, blurb, handler,
             "[task]", accepts_arg=True,
             advanced=name in ADVANCED_SKILL_SLASH,
         ))

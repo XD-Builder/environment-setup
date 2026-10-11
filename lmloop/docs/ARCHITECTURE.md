@@ -437,6 +437,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ~/.lmloop/
 ├── config.json                     # user settings (base_url, model, max_rounds, …)
 ├── usage.jsonl                     # append-only local feature-usage events (opt-out: LMLOOP_USAGE=0)
+├── evals/last_report.json          # last `lmloop eval` report (gaps + flow)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
 ├── steer/<name>.md                 # user always-on steering (concatenated)
@@ -453,6 +454,8 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ```
 
 **Project slug** is resolved from git remote (`owner-repo`) or directory name.
+
+`lmloop eval` aggregates `usage.jsonl` and folds this project's until/graph logs into gaps. Check commands that look like secrets are dropped. An unreadable log sets `run_log_error` and a `run-log-unreadable` gap instead of omitting those signals. The text report's flow section uses the caller's config (`until_max_steps`), the same budget `lmloop flow` uses. Invalid usage rows are counted and surfaced as `invalid-usage-rows`; unknown feature names never reach the feature counter because `validate_row` rejects them first.
 
 ### Learnings (`learnings.jsonl`)
 
@@ -474,7 +477,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 - `read_session()` renders log files (including truncated tool rows) up to `max_chars`.
 - `format_messages_transcript()` renders the live thread (honors `/undo`) for `/compact` and this-session `/memory mine`. Tool rows are included truncated (live payloads can be huge); system messages are omitted.
 - `session_messages()` rebuilds user/assistant turns for `/restore`. Tool/system rows are transcript-only (truncated, not API-shaped) and are omitted. Restore loads those turns into the in-memory thread and prints the last assistant reply — it does not start a new model turn.
-- `/compact`, `/memory mine`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log). `/save` uses `no_tools` so the checkpoint call cannot emit tool calls.
+- `/compact`, `/memory mine`, `/memory audit` (`/learn`), and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log). `/save` uses `no_tools` so the checkpoint call cannot emit tool calls. A mine that does not finish tells the user; the learnings path is printed only after a completed mine. Unexpected errors in a live turn stay on the REPL and append the traceback to the session log.
 
 ### Checkpoints (`checkpoints/*.md`)
 

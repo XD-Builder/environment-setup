@@ -28,6 +28,17 @@ MEMORY_ARG_CHOICES = (
     "list", "decisions", "dump", "mine", "kg", "graph", "reconcile",
     "index", "reindex", "canvas", "audit",
 )
+MEMORY_ARG_HINT = (
+    "[list | decisions | dump | query | mine [n] | kg | index | reindex | "
+    "canvas | audit | reconcile]"
+)
+
+
+def parse_positive_count(token: str) -> "int | None":
+    """A positive integer token, or None when ``token`` is not one."""
+    if token.isdigit() and int(token) > 0:
+        return int(token)
+    return None
 # Subverbs offered in ``/`` completion (``graph`` kept as runtime alias only).
 MEMORY_ARG_COMPLETION = (
     "list", "decisions", "dump", "mine", "kg", "reconcile", "index", "reindex",
@@ -79,7 +90,7 @@ COMMANDS: tuple = (
     CommandMeta("models", "list models on the server", slash=False, cli=True),
     CommandMeta("memory", "project memory dashboard; subverbs: dump | mine | kg | …",
                 accepts_arg=True,
-                arg_hint="[list | decisions | dump | query | mine [n] | kg | reconcile]",
+                arg_hint=MEMORY_ARG_HINT,
                 arg_choices=MEMORY_ARG_CHOICES, cli=True),
     CommandMeta("until", "work toward a goal until a check or evaluator passes",
                 accepts_arg=True, arg_hint="[--check cmd] [--keep cmd] <goal>", cli=True),

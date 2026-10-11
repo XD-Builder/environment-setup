@@ -95,7 +95,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 | `lmloop memory kg` | Peek **knowledge graph** stats (`use_graph` must be true). `memory graph` is a deprecated alias. | Peek |
 | `lmloop memory index` | Show derived memory index backend, size, and doc counts (`memory_index` config). | Peek |
 | `lmloop memory reindex` | Delete and rebuild `index.sqlite3` from JSONL (learnings, decisions, sessions, run handoffs). | Write |
-| `lmloop memory audit` | Run the `learn` skill over project memory. REPL `/learn` is the hidden alias. | Write |
+| `lmloop memory audit` | Run the `learn` skill. In the REPL, `/memory audit` and `/learn` use a side session so the live thread stays unchanged. | Write |
 | `lmloop memory canvas` | Read-only knowledge canvas (text layout; full TUI when `prompt_toolkit` canvas ships). | Peek |
 | `lmloop memory reconcile` | Review `contradicts` clusters via a side session (`use_graph`). | Write |
 | `lmloop graph propose <name>` | One no-tools draft from `lmloop flow` stats; unified diff; save on `y` only. | Write |
@@ -106,7 +106,7 @@ These are easy to mix up. **Peek** (read-only) vs **write** vs **reload**:
 In the REPL:
 
 - **Peek:** `/memory` (dashboard: HUD + top learnings/decisions), `/memory dump` (injected memory only), `/context` (files in this thread, then injected memory). `/decisions` is deprecated — use `/memory decisions`. `/help` lists core commands; `/help all` lists restore, compact, undo, reconcile, etc. Headings, keys, and loaded paths are colored on a TTY. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
-- **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `/learn` curates via tools. `/save [title]` writes a checkpoint file (live thread unchanged).
+- **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `n` must be a positive integer. `/memory audit` and `/learn` curate via the learn skill in a side session (live thread unchanged). `/save [title]` writes a checkpoint file (live thread unchanged). A failed mine prints `memory mine did not finish` instead of the learnings path.
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
 
@@ -120,7 +120,7 @@ Inside the REPL:
 | `/ceo [plan]` | strategy / plan review (auto from `skills/ceo.md`) |
 | `/review [scope]` | pre-landing code review |
 | `/investigate [symptom]` | root-cause debugging |
-| `/learn [query]` | curate and audit project learnings |
+| `/learn [query]` | curate project learnings in a side session (same as `/memory audit`) |
 | `/qa [scope]` | run tests and verify changes end-to-end |
 | `/compact [focus]` | summarize thread in a side session; optional replace |
 | `/undo` | drop the last user turn from the in-memory thread |
@@ -133,7 +133,7 @@ Inside the REPL:
 | `/until [--check cmd] [--keep cmd] <goal>` | isolated maker/checker loop. With no flags, lmloop derives a check plan from the goal and the project, shows it (`Enter` run, `e` edit, `s` checker only; no prompt when stdin is not a TTY), and baselines it once. A check that goes fail → pass finishes the run; an already-passing check becomes an invariant and the evaluator decides. `--check` / `--keep` skip inference. Then type to continue from a handoff |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
-| `/memory [list \| decisions \| dump \| query \| mine [n] \| kg \| reconcile]` | dashboard or search; injected memory; mine this session (or last n prior files); knowledge-graph stats (`kg`); reconcile contradictions when `use_graph` |
+| `/memory [list \| decisions \| dump \| query \| mine [n] \| kg \| index \| reindex \| canvas \| audit \| reconcile]` | dashboard or search; injected memory; mine this session (or last n prior files); knowledge-graph stats (`kg`); index status; text canvas; audit learnings in a side session; reconcile contradictions when `use_graph` |
 | `/model <name>` | switch model, or list models with no argument |
 | `/stats` | show token usage, session activity, and the memory HUD (learnings, decisions, graph, checkpoint) |
 | `/new` | reset conversation (memory context re-injected) |

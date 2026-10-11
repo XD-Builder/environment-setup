@@ -378,6 +378,9 @@ class AtRefTurnTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("RuntimeError", err.getvalue())
             self.assertEqual(state.messages[-1]["role"], "user")
+            logged = state.session_log.read_text(encoding="utf-8")
+            self.assertIn("Traceback", logged)
+            self.assertIn("RuntimeError", logged)
 
     def test_cli_skill_rejects_author(self):
         err = io.StringIO()
@@ -895,6 +898,29 @@ class MemoryMineAndUntilTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(mine.call_args[0][1], 5)
 
+    def test_memory_mine_cli_rejects_bad_count(self):
+        from lmloop.cli import cmd_memory
+
+        cases = (
+            ["memory", "mine", "foo"],
+            ["memory", "mine", "0"],
+            ["memory", "mine", "3", "extra"],
+            ["retro", "nope"],
+        )
+        for argv in cases:
+            with self.subTest(argv=argv):
+                with patch("lmloop.cli.cmd_memory_mine") as mine:
+                    err = io.StringIO()
+                    with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                        code = main(argv)
+                self.assertEqual(code, 1)
+                mine.assert_not_called()
+                self.assertIn("usage:", err.getvalue())
+        # Direct call covers the helper without argparse.
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            self.assertEqual(cmd_memory({}, ["mine", "x"], Console(color=False)), 1)
+
     def test_retro_cli_alias_hints_and_mines(self):
         with patch("lmloop.cli.cmd_memory_mine", return_value=0) as mine:
             buf = io.StringIO()
@@ -919,13 +945,53 @@ class MemoryMineAndUntilTests(unittest.TestCase):
                 p.write_text(json.dumps({"role": "user", "content": text}) + "\n")
             current.write_text("")
             state = self._state(root, current)
-            with patch("lmloop.repl.mine_sessions") as mine, \
+            with patch("lmloop.repl.mine_sessions", return_value=0) as mine, \
                  patch("lmloop.memory.project_dir", return_value=root), \
                  redirect_stdout(io.StringIO()):
                 _cmd_memory_mine(state, "2", lambda _: False)
             mine.assert_called_once()
             paths = mine.call_args[0][2]
             self.assertEqual([p.resolve() for p in paths], [prior1.resolve(), prior2.resolve()])
+
+    def test_memory_mine_reports_failure(self):
+        from lmloop.repl import _cmd_memory_mine
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            state = self._state(root, log)
+            err = io.StringIO()
+            with patch("lmloop.repl.mine_sessions", return_value=1), \
+                 redirect_stdout(io.StringIO()), redirect_stderr(err):
+                _cmd_memory_mine(state, "", lambda _: False)
+            self.assertIn("memory mine did not finish", err.getvalue())
+            self.assertEqual(len(state.messages), 3)
+
+    def test_memory_audit_leaves_live_thread(self):
+        from lmloop.repl import _build_slash_commands, _cmd_memory
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            log = root / "s.jsonl"
+            log.write_text("")
+            state = self._state(root, log)
+            before = list(state.messages)
+
+            def fake_iso(_state, text, _gate, *, log_label, **_kwargs):
+                self.assertEqual(log_label, "/memory audit")
+                self.assertIn("Task: tidy", text)
+                return [{"role": "assistant", "content": "audited"}]
+
+            with patch("lmloop.repl._isolated_act", side_effect=fake_iso), \
+                 patch("lmloop.repl.skills.load_skill", return_value="# Skill: learn"), \
+                 patch("lmloop.knowledge_graph.record_skill_use") as recorded, \
+                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                _cmd_memory(state, "audit tidy", lambda _: False)
+                learn = next(c for c in _build_slash_commands(lambda _: False) if c.name == "/learn")
+                learn.handler(state, "tidy")
+            self.assertEqual(state.messages, before)
+            self.assertEqual(recorded.call_count, 2)
 
     def test_until_cli_runs_goal(self):
         fake = Mock()
@@ -1038,6 +1104,20 @@ class MemoryMineAndUntilTests(unittest.TestCase):
             self.assertIsNone(state.until_run)
 
 
+    def test_graph_propose_prints_draft(self):
+        out = io.StringIO()
+        with patch("lmloop.cli.server.ensure_server", return_value="m"), \
+             patch("lmloop.cli.graph_mod.propose_graph_draft", return_value="name: demo\n"), \
+             patch("lmloop.cli.graph_mod.diff_proposed_graph", return_value="--- diff"), \
+             patch("sys.stdin.isatty", return_value=False), \
+             redirect_stdout(out):
+            code = main(["graph", "propose", "demo"])
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("--- diff", text)
+        self.assertIn("name: demo", text)
+        self.assertIn("non-interactive", text)
+
     def test_graph_cli_requires_name_or_open_run(self):
         err = io.StringIO()
         with patch("lmloop.cli.graph_mod.latest_open_graph_run", return_value=None), \
@@ -1111,6 +1191,113 @@ class MemoryMineAndUntilTests(unittest.TestCase):
             self.assertEqual(adv.call_args[0][1].path, grun.path)
 
 
+class EvalCliTests(unittest.TestCase):
+    def test_eval_json_writes_report(self):
+        import json
+
+        from lmloop.evals import EvalStats
+        from lmloop.workflow import FlowStats
+
+        stats = EvalStats(events=2, features={"cli.command": 2})
+        flow = FlowStats(until_runs=1)
+        with tempfile.TemporaryDirectory() as d:
+            report = Path(d) / "last_report.json"
+            out = io.StringIO()
+            with patch("lmloop.evals.load_stats", return_value=stats), \
+                 patch("lmloop.workflow.collect_flow_stats", return_value=flow), \
+                 patch("lmloop.evals.last_report_path", return_value=report), \
+                 redirect_stdout(out):
+                code = main(["eval", "--json"])
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["events"], 2)
+            self.assertIn("gaps", payload)
+            self.assertIn("flow", payload)
+            self.assertEqual(json.loads(report.read_text(encoding="utf-8"))["events"], 2)
+
+    def test_eval_design_doc_alias(self):
+        from lmloop.evals import EvalStats
+        from lmloop.workflow import FlowStats
+
+        with tempfile.TemporaryDirectory() as d:
+            report = Path(d) / "last_report.json"
+            out = io.StringIO()
+            with patch("lmloop.evals.load_stats", return_value=EvalStats()), \
+                 patch("lmloop.workflow.collect_flow_stats", return_value=FlowStats()), \
+                 patch("lmloop.evals.last_report_path", return_value=report), \
+                 redirect_stdout(out):
+                code = main(["eval", "--design-doc"])
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("lmloop eval --json", text)
+        self.assertNotIn("--gaps-json", text)
+
+    def test_eval_rejects_unknown_flag(self):
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["eval", "--nope"])
+        self.assertEqual(code, 1)
+        self.assertIn("usage:", err.getvalue())
+
+    def test_flow_json_and_text(self):
+        import json
+
+        from lmloop.workflow import FlowStats
+
+        flow = FlowStats(until_runs=2, until_pass=1)
+        out = io.StringIO()
+        with patch("lmloop.workflow.collect_flow_stats", return_value=flow), \
+             redirect_stdout(out):
+            code = main(["flow", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())["until_runs"], 2)
+
+        out = io.StringIO()
+        with patch("lmloop.workflow.collect_flow_stats", return_value=flow), \
+             redirect_stdout(out):
+            code = main(["flow"])
+        self.assertEqual(code, 0)
+        self.assertIn("lmloop flow", out.getvalue())
+
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["flow", "--json", "extra"])
+        self.assertEqual(code, 1)
+        self.assertIn("usage:", err.getvalue())
+
+    def test_repl_flow_prints_text_and_json(self):
+        import json
+
+        from lmloop.repl import SessionState, _cmd_flow
+        from lmloop.ui import fresh_stats
+        from lmloop.workflow import FlowStats
+
+        flow = FlowStats(until_runs=1, until_pass=1)
+        with tempfile.TemporaryDirectory() as d:
+            state = SessionState(
+                cfg={"until_max_steps": 12},
+                model="m",
+                messages=[],
+                session_log=Path(d) / "s.jsonl",
+                stats=fresh_stats(),
+                console=Console(color=False),
+            )
+            out = io.StringIO()
+            with patch("lmloop.workflow.collect_flow_stats", return_value=flow), \
+                 redirect_stdout(out):
+                self.assertTrue(_cmd_flow(state, ""))
+            self.assertIn("lmloop flow", out.getvalue())
+            out = io.StringIO()
+            with patch("lmloop.workflow.collect_flow_stats", return_value=flow), \
+                 redirect_stdout(out):
+                self.assertTrue(_cmd_flow(state, "--json"))
+            self.assertEqual(json.loads(out.getvalue())["until_runs"], 1)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertTrue(_cmd_flow(state, "--json extra"))
+            self.assertIn("usage:", out.getvalue())
+
+
 class RegistryTests(unittest.TestCase):
     def test_every_slash_meta_has_a_handler(self):
         from lmloop.commands import slash_command_metas
@@ -1133,6 +1320,9 @@ class RegistryTests(unittest.TestCase):
         script = out.getvalue()
         for name in cli_subcommand_names():
             self.assertIn(f"'{name}:", script)
+        self.assertIn("compadd - --json --design --design-doc", script)
+        self.assertIn("compadd - propose", script)
+        self.assertIn("compadd - --json", script)
 
 
 class MemoryInspectTests(unittest.TestCase):

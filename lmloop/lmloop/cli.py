@@ -15,6 +15,10 @@
     lmloop memory dump              readable view of injected memory
     lmloop memory mine [N]          mine last N sessions into learnings (writes)
     lmloop memory kg                knowledge-graph stats (use_graph)
+    lmloop memory index             memory index status
+    lmloop memory reindex           rebuild the memory index from JSONL
+    lmloop memory canvas [query]    text knowledge canvas (use_graph)
+    lmloop memory audit [task]      run the learn skill (REPL: side session)
     lmloop memory reconcile         review contradicts clusters (use_graph)
     lmloop retro [N]                deprecated — use memory mine
     lmloop decisions                deprecated — use memory decisions
@@ -23,12 +27,17 @@
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
     lmloop eval [--json | --design] local usage evals and improvement gaps
+                                    (--design-doc is an alias for --design)
 
 Project memory commands:
 
     memory            peek dashboard; list | decisions | dump | kg | mine | reconcile
-    memory mine [N]   mine last N sessions into learnings (writes memory)
+    memory mine [N]   mine last N sessions into learnings (N > 0, default 3)
     memory kg         knowledge-graph stats (requires use_graph)
+    memory index      memory index status
+    memory reindex    rebuild the memory index from JSONL
+    memory canvas     text knowledge canvas (requires use_graph)
+    memory audit      run the learn skill
     memory reconcile  review contradicts clusters (requires use_graph)
     retro [N]         deprecated — use memory mine
     decisions         deprecated — use memory decisions
@@ -49,6 +58,7 @@ from .commands import (
     MSG_DEPRECATE_RETRO,
     cli_subcommand_metas,
     cli_subcommand_names,
+    parse_positive_count,
 )
 from .config import (
     CONFIG_PATH,
@@ -69,8 +79,11 @@ project memory commands:
   memory list        same dashboard (HUD + top learnings/decisions)
   memory decisions   top active decisions
   memory dump        readable view of injected memory
-  memory mine [N]    mine last N sessions into learnings (writes memory)
+  memory mine [N]    mine last N sessions (N > 0, default 3)
   memory kg          knowledge-graph stats (requires use_graph)
+  memory index       memory index status; reindex rebuilds it
+  memory canvas      text knowledge canvas (requires use_graph)
+  memory audit       run the learn skill
   memory reconcile   review contradicts clusters (requires use_graph)
   retro [N]          deprecated — use memory mine
   decisions          deprecated — use memory decisions
@@ -89,7 +102,21 @@ examples:
   lmloop skill review
   lmloop memory mine 3
   lmloop memory kg
+  lmloop eval --json
 """
+
+
+def _session_mine_count(words: list, console: Console, *, usage: str) -> "int | None":
+    """CLI ``mine`` / ``retro`` count. Empty words default to 3; bad tokens error."""
+    if not words:
+        return 3
+    if len(words) == 1:
+        count = parse_positive_count(words[0])
+        if count is not None:
+            return count
+    console.error(usage)
+    console.info("  N is a positive session count (default 3)")
+    return None
 
 
 def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
@@ -253,7 +280,16 @@ __SUBS__
             compadd - __MEMORY_VERBS__
           fi
           ;;
-        retro|until|graph|decisions|history|models)
+        retro|until|decisions|history|models)
+          ;;
+        graph)
+          (( CURRENT == 2 )) && compadd - propose
+          ;;
+        eval)
+          compadd - --json --design --design-doc
+          ;;
+        flow)
+          compadd - --json
           ;;
       esac
       ;;
@@ -310,8 +346,11 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
         console.write_lines(memory.injected_memory_lines(cfg))
         return 0
     if verb == "mine":
-        rest = words[1:]
-        count = int(rest[0]) if rest and rest[0].isdigit() else 3
+        count = _session_mine_count(
+            words[1:], console, usage="usage: lmloop memory mine [N]",
+        )
+        if count is None:
+            return 1
         return cmd_memory_mine(cfg, count, console)
     if verb in ("kg", "graph"):
         if verb == "graph":
@@ -458,13 +497,14 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
 def cmd_flow_cli(cfg: dict, words: list, console: Console) -> int:
     from . import workflow
 
-    as_json = words == ["--json"] or (words and words[0] == "--json")
+    if words not in ([], ["--json"]):
+        console.error("usage: lmloop flow [--json]")
+        return 1
     stats = workflow.collect_flow_stats()
-    if as_json:
-        import json
-        console.write_lines([json.dumps(stats.to_dict(), indent=2)])
+    if words == ["--json"]:
+        console.info(json.dumps(stats.to_dict(), indent=2))
         return 0
-    console.write_lines(workflow.format_flow_report(stats, cfg).splitlines())
+    console.info(workflow.format_flow_report(stats, cfg))
     return 0
 
 
@@ -493,7 +533,7 @@ def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
         console.info(diff)
         console.info("")
         console.info("--- proposed graph ---")
-        console.write_lines(draft.splitlines())
+        console.info(draft)
         if not sys.stdin.isatty():
             console.hint("non-interactive — not saved")
             return 0
@@ -583,7 +623,10 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
 
 
 def cmd_retro_cli(cfg: dict, words: list, console: Console) -> int:
-    count = int(words[0]) if words and words[0].isdigit() else 3
+    count = _session_mine_count(words, console, usage="usage: lmloop retro [N]")
+    if count is None:
+        console.hint(MSG_DEPRECATE_RETRO)
+        return 1
     return cmd_retro(cfg, count, console)
 
 
@@ -636,12 +679,12 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     payload["flow"] = flow.to_dict()
     evals.write_last_report(payload)
     if as_json:
-        console.echo(json.dumps(payload, indent=2))
+        console.info(json.dumps(payload, indent=2))
         return 0
     if as_design:
-        console.echo(evals.design_doc_skeleton(gaps))
+        console.info(evals.design_doc_skeleton(gaps))
         return 0
-    console.echo(evals.format_report(stats, gaps, flow=flow))
+    console.info(evals.format_report(stats, gaps, flow=flow, cfg=cfg))
     return 0
 
 

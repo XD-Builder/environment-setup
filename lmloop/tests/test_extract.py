@@ -232,6 +232,47 @@ class PdfWhisperTests(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(run.call_args[0][0][0], "pdftotext")
 
+    def test_pypdf_read_error_is_reported(self):
+        import sys
+        import types
+
+        class PdfReadError(Exception):
+            pass
+
+        class PdfReader:
+            def __init__(self, _buf):
+                raise PdfReadError("bad pdf")
+
+        pypdf = types.ModuleType("pypdf")
+        pypdf.PdfReader = PdfReader
+        errors = types.ModuleType("pypdf.errors")
+        errors.PdfReadError = PdfReadError
+        with mock.patch.dict(sys.modules, {"pypdf": pypdf, "pypdf.errors": errors}):
+            from lmloop.extract import _pypdf_text
+            text, err = _pypdf_text(b"%PDF-1.4")
+        self.assertIsNone(text)
+        self.assertIn("PdfReadError", err or "")
+
+    def test_pypdf_unexpected_error_propagates(self):
+        import sys
+        import types
+
+        class PdfReadError(Exception):
+            pass
+
+        class PdfReader:
+            def __init__(self, _buf):
+                raise RuntimeError("parser bug")
+
+        pypdf = types.ModuleType("pypdf")
+        pypdf.PdfReader = PdfReader
+        errors = types.ModuleType("pypdf.errors")
+        errors.PdfReadError = PdfReadError
+        with mock.patch.dict(sys.modules, {"pypdf": pypdf, "pypdf.errors": errors}):
+            from lmloop.extract import _pypdf_text
+            with self.assertRaises(RuntimeError):
+                _pypdf_text(b"%PDF-1.4")
+
     def test_pdf_missing_tools(self):
         pdf = b"%PDF-1.4\n%fake"
         with mock.patch("lmloop.extract.shutil.which", return_value=None), \
