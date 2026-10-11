@@ -25,7 +25,7 @@ lmloop/
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
 │   ├── archived/DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates (shipped)
-│   ├── DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md  # proposed: business vs workflow module split
+│   ├── archived/DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md  # business vs workflow split (shipped)
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
 │   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
 │   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
@@ -52,6 +52,14 @@ lmloop/
 │   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
 │   ├── memory_index.py         # derived FTS5/scan index (incremental sync)
 │   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
+│   ├── run_log.py              # until/graph JSONL run logs (leaf)
+│   ├── until_parse.py          # --check/--keep parsing (leaf)
+│   ├── until_runner.py         # until state machine
+│   ├── loop.py                 # until facade (CLI/REPL + test patches)
+│   ├── graph_dsl.py            # authored graph parse/load (leaf)
+│   ├── graph_runner.py         # graph frontier + run_graph
+│   ├── graph.py                # graph facade
+│   ├── workflow_finish.py      # terminal usage + KG hooks
 │   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
 │   ├── exec.py                 # LocalBackend (default) and opt-in DockerBackend
 │   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors

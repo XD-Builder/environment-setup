@@ -197,7 +197,7 @@ def _grammar_python(text: str) -> str | None:
 
 
 def _grammar_graph(text: str) -> str | None:
-    from .graph import GraphError, parse_graph
+    from .graph_dsl import GraphError, parse_graph
 
     try:
         parse_graph(text, "golden")

@@ -11,6 +11,7 @@ and [README.md](../../README.md).
 | [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md) | Authored workflow graphs (`graph.py`) |
 | [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md) | Opt-in knowledge graph (`use_graph`) |
 | [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) | Four-layer assertion pyramid, local traces, CI gates |
+| [DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md](DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md) | Business vs workflow module split (`run_log`, DSL, runners) |
 
 Active (partial or proposed) specs stay in [../](../). Build order:
 [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) and [../DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md).
