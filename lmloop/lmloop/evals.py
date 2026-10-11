@@ -74,7 +74,7 @@ class EvalStats:
     last_ts: str = ""
     never_pass_checks: list[str] = field(default_factory=list)
     always_pause_nodes: list[str] = field(default_factory=list)
-    shell_errors: int = 0
+    run_log_error: str = ""
     blocked_checks: int = 0
     abstains: int = 0
     bridge_untrusted: int = 0
@@ -160,6 +160,14 @@ def aggregate(events: list[dict]) -> EvalStats:
 
 def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[EvalGap]:
     gaps: list[EvalGap] = []
+    if stats.run_log_error:
+        gaps.append(EvalGap(
+            id="run-log-unreadable",
+            severity="watch",
+            title="Until or graph logs could not be read",
+            evidence=stats.run_log_error,
+            design_hook="evals.join_run_logs",
+        ))
     if stats.events < 1:
         gaps.append(EvalGap(
             id="no-usage",
@@ -168,7 +176,6 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             evidence="usage.jsonl is empty or all rows invalid",
             design_hook="DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md § bootstrap",
         ))
-        return gaps
 
     tool_calls = sum(stats.tools.values())
     tool_errs = sum(stats.tool_errors.values())
@@ -268,16 +275,14 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             design_hook="DESIGN_COMMAND_CONSOLIDATION.md; README command tables",
         ))
 
-    unknown_features = {
-        f for f in stats.features if f not in KNOWN_FEATURES
-    }
-    if unknown_features:
+    if stats.invalid_rows:
+        total = stats.events + stats.invalid_rows
         gaps.append(EvalGap(
-            id="unknown-features",
-            severity="action",
-            title="Usage rows reference features not in KNOWN_FEATURES",
-            evidence=", ".join(sorted(unknown_features)),
-            design_hook="evals.KNOWN_FEATURES + DEVELOPMENT.md instrumentation",
+            id="invalid-usage-rows",
+            severity="watch",
+            title="Usage log has rows the aggregator skipped",
+            evidence=f"invalid_rows={stats.invalid_rows} of {total}",
+            design_hook="evals.KNOWN_FEATURES + validate_row",
         ))
 
     if stats.never_pass_checks:
@@ -298,7 +303,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             evidence=f"nodes: {shown}",
             design_hook="DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md § fan-out",
         ))
-    shell_errs = stats.tool_errors.get("run_shell", 0) or stats.shell_errors
+    shell_errs = stats.tool_errors.get("run_shell", 0)
     paused = stats.until_outcomes.get("paused", 0)
     if shell_errs >= 3 and paused >= 1:
         gaps.append(EvalGap(
@@ -317,7 +322,7 @@ _SECRET_CMD = re.compile(
 )
 
 
-def _safe_cmd(cmd: str) -> str:
+def redact_check_cmd(cmd: str) -> str:
     text = (cmd or "").strip()
     if not text or _SECRET_CMD.search(text):
         return ""
@@ -339,7 +344,7 @@ def join_run_logs(stats: EvalStats, slug: "str | None" = None) -> EvalStats:
                 if row.get("role") not in ("check", "baseline"):
                     continue
                 for result in row.get("results") or []:
-                    cmd = _safe_cmd(str(result.get("cmd") or ""))
+                    cmd = redact_check_cmd(str(result.get("cmd") or ""))
                     if not cmd:
                         continue
                     seen[cmd] += 1
@@ -373,8 +378,8 @@ def load_stats(path: Path | None = None, *, slug: "str | None" = None) -> EvalSt
     stats = aggregate(read_events(path or USAGE_PATH))
     try:
         join_run_logs(stats, slug)
-    except OSError:
-        pass
+    except OSError as exc:
+        stats.run_log_error = f"{type(exc).__name__}: {exc}"
     return stats
 
 
@@ -394,6 +399,7 @@ def report_dict(stats: EvalStats, gaps: list[EvalGap]) -> dict[str, Any]:
             "rounds_p50": _percentile(stats.act_rounds, 50),
             "rounds_p90": _percentile(stats.act_rounds, 90),
         },
+        "run_log_error": stats.run_log_error,
         "gaps": [
             {
                 "id": g.id,
@@ -409,6 +415,7 @@ def report_dict(stats: EvalStats, gaps: list[EvalGap]) -> dict[str, Any]:
 
 def format_report(
     stats: EvalStats, gaps: list[EvalGap], *, flow: "object | None" = None,
+    cfg: "dict | None" = None,
 ) -> str:
     lines = [
         "lmloop eval report (local usage.jsonl)",
@@ -440,7 +447,9 @@ def format_report(
         if isinstance(flow, FlowStats):
             lines.append("")
             lines.append("  flow:")
-            for row in compact_flow_summary(flow, {"until_max_steps": 12}).splitlines():
+            from .config import DEFAULTS
+            summary_cfg = cfg if cfg is not None else DEFAULTS
+            for row in compact_flow_summary(flow, summary_cfg).splitlines():
                 lines.append(f"    {row}")
     return "\n".join(lines)
 
@@ -462,7 +471,7 @@ def design_doc_skeleton(gaps: list[EvalGap], *, title: str = "Usage-driven impro
         f"# Design: {title}",
         "",
         "**Status:** proposed (generated from local usage evals)",
-        "**Source:** ``lmloop eval --gaps-json`` / ``~/.lmloop/usage.jsonl``",
+        "**Source:** ``lmloop eval --json`` / ``~/.lmloop/usage.jsonl``",
         "",
         "## Observed gaps",
         "",
@@ -508,13 +517,6 @@ def _percentile(values: list[int], pct: int) -> int | None:
     ordered = sorted(values)
     idx = max(0, min(len(ordered) - 1, (pct * len(ordered) - 1) // 100))
     return ordered[idx]
-
-
-_ERROR_PREFIX = re.compile(r"^ERROR:")
-
-
-def is_tool_error_result(text: str) -> bool:
-    return bool(_ERROR_PREFIX.match((text or "").strip()))
 
 
 # Named environment mutations for paired abstention fixtures (V5 / E1).

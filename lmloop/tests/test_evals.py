@@ -89,6 +89,39 @@ class ReportTests(unittest.TestCase):
         text = evals.design_doc_skeleton([gap])
         self.assertIn("demo", text)
         self.assertIn("Proposed changes", text)
+        self.assertIn("lmloop eval --json", text)
+        self.assertNotIn("--gaps-json", text)
+
+    def test_invalid_rows_are_a_gap(self):
+        stats = evals.aggregate([{"nope": 1}, _row("tool", name="x")])
+        ids = {g.id for g in evals.find_gaps(stats)}
+        self.assertIn("invalid-usage-rows", ids)
+        self.assertNotIn("unknown-features", ids)
+
+    def test_flow_section_uses_caller_budget(self):
+        from lmloop.workflow import FlowStats
+
+        flow = FlowStats(maker_cycles=[10, 10, 10, 10])
+        stats = evals.EvalStats()
+        tight = evals.format_report(stats, [], flow=flow, cfg={"until_max_steps": 8})
+        loose = evals.format_report(stats, [], flow=flow, cfg={"until_max_steps": 20})
+        self.assertIn("budget-bound", tight)
+        self.assertNotIn("budget-bound", loose)
+
+    def test_unreadable_run_logs_become_a_gap(self):
+        with mock.patch("lmloop.evals.join_run_logs", side_effect=PermissionError("denied")), \
+             mock.patch("lmloop.evals.read_events", return_value=[]):
+            stats = evals.load_stats(Path("/tmp/unused-usage.jsonl"))
+        self.assertIn("PermissionError", stats.run_log_error)
+        payload = evals.report_dict(stats, evals.find_gaps(stats))
+        self.assertEqual(payload["run_log_error"], stats.run_log_error)
+        self.assertIn("run-log-unreadable", {g["id"] for g in payload["gaps"]})
+
+    def test_check_gaps_show_without_usage_events(self):
+        stats = evals.EvalStats(never_pass_checks=["pytest -q"])
+        ids = {g.id for g in evals.find_gaps(stats)}
+        self.assertIn("no-usage", ids)
+        self.assertIn("check-never-passes", ids)
 
 
 class InstrumentationRegistryTests(unittest.TestCase):

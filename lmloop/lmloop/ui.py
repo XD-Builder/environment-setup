@@ -10,6 +10,8 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import tools
@@ -242,11 +244,72 @@ def write_clipboard(text: str) -> "str | None":
     return "no clipboard tool (need pbcopy, wl-copy, or xclip)"
 
 
+@dataclass(frozen=True)
+class ActDisplay:
+    """Echo and context fields shared by ``act``, isolated acts, until, and graph.
+
+    ``agent.act`` has no ``echo_error``; isolated and loop entry points do.
+    """
+
+    echo: Callable[..., None]
+    echo_status: Callable[..., None]
+    echo_error: Callable[..., None]
+    echo_tool: Callable[..., None]
+    echo_round: Callable[..., None]
+    context_limit: int
+    context_reserve: int
+    workspace_root: Path
+
+    def for_act(self) -> dict:
+        """Keyword args for ``agent.act`` (no ``echo_error``)."""
+        return {
+            "echo": self.echo,
+            "echo_status": self.echo_status,
+            "echo_tool": self.echo_tool,
+            "echo_round": self.echo_round,
+            "context_limit": self.context_limit,
+            "context_reserve": self.context_reserve,
+            "workspace_root": self.workspace_root,
+        }
+
+    def for_isolated(self) -> dict:
+        """Keyword args for ``isolated_act``, ``run_until``, and ``run_graph``."""
+        out = self.for_act()
+        out["echo_error"] = self.echo_error
+        return out
+
+
 class Console:
     """Unified human-facing output for REPL and CLI subcommands."""
 
     def __init__(self, color: bool = True):
         self.t = Theme(color)
+
+    def markdown_echo(self) -> Callable[[str], None]:
+        """Assistant-text callback. Empty strings are not printed."""
+        def echo(text: str) -> None:
+            if text:
+                self.print_markdown(text)
+        return echo
+
+    def act_display(
+        self,
+        *,
+        context_limit: int,
+        context_reserve: int,
+        workspace_root: Path,
+    ) -> ActDisplay:
+        """Display bundle for one model run. Callers add confirm/mine/ask."""
+        return ActDisplay(
+            echo=self.markdown_echo(),
+            echo_status=self.hint,
+            echo_error=self.error,
+            echo_tool=self.tool_call,
+            echo_round=self.round_usage,
+            context_limit=context_limit,
+            context_reserve=context_reserve,
+            workspace_root=workspace_root,
+        )
 
     def banner(self, project: str) -> None:
         t = self.t

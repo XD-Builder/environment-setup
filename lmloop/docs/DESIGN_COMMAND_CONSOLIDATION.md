@@ -64,7 +64,7 @@ behavior that can evolve without new slash commands.
 - Config: `mine_on_exit`, stronger HUD nudges after long sessions.
 - Submit-line keyword routes: “mine last 3 sessions” → `_cmd_memory_mine` (tests in
   `test_cli.py` / REPL).
-- **`/memory audit`** → `learn.md` skill; `/learn` hidden alias.
+- **`/memory audit`** → `learn.md` skill in a side session (live thread unchanged); `/learn` is the same path, hidden from default completion.
 
 ### Phase D — Not merged
 

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .commands import MEMORY_VIEW_VERBS, MemoryRequest
 from .config import cfg_bool, cfg_int, cfg_str, project_dir, utc_now
 from .extract import flatten_content
 
@@ -423,6 +424,45 @@ def memory_peek_lines(cfg: dict, slug: "str | None" = None) -> "list[ViewLine]":
     return lines
 
 
+def render_memory_view(cfg: dict, request: MemoryRequest, console) -> None:
+    """Print a read-only memory verb. CLI and REPL share this path.
+
+    ``mine``, ``audit``, and ``reconcile`` need a model and are not views.
+    """
+    verb = request.verb
+    if verb not in MEMORY_VIEW_VERBS:
+        raise ValueError(f"not a memory view verb: {verb}")
+    if verb == "list":
+        console.write_lines(memory_peek_lines(cfg))
+        return
+    if verb == "decisions":
+        console.write_lines(decision_list_lines(limit=MEMORY_DECISIONS_LIMIT))
+        return
+    if verb == "dump":
+        console.write_lines(injected_memory_lines(cfg))
+        return
+    if verb == "kg":
+        from . import knowledge_graph
+        console.info(knowledge_graph.inspect_report(cfg))
+        return
+    if verb == "index":
+        from . import memory_index
+        console.info(memory_index.format_index_report(cfg))
+        return
+    if verb == "reindex":
+        from . import memory_index
+        memory_index.MemoryIndex().reindex(cfg)
+        console.info(memory_index.format_index_report(cfg))
+        return
+    if verb == "canvas":
+        from .canvas_tui import open_memory_canvas
+        text = open_memory_canvas(cfg, query=request.query)
+        if text:
+            console.info(text)
+        return
+    console.write_lines(learning_list_lines(query=request.query, limit=30))
+
+
 def format_learning_line(row: dict) -> str:
     """Model/search line: key, type, confidence, insight."""
     return f"- [{row['key']}] ({row['type']}, {row['confidence']}/10) {row['insight']}"
@@ -584,6 +624,18 @@ def list_sessions(limit: int = 10, slug: "str | None" = None) -> "list[Path]":
     if limit <= 0:
         return []
     return all_sessions(slug=slug)[-limit:]
+
+
+def indexed_tail(rows: list, limit: int) -> "tuple[int, list]":
+    """1-based index of the first kept row, and the last ``limit`` rows.
+
+    The index is global, matching ``resolve_session`` / ``resolve_checkpoint``.
+    ``limit <= 0`` or an empty list yields ``(1, [])``.
+    """
+    if limit <= 0 or not rows:
+        return 1, []
+    tail = list(rows[-limit:])
+    return len(rows) - len(tail) + 1, tail
 
 
 def all_sessions(slug: "str | None" = None) -> "list[Path]":

@@ -442,6 +442,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ~/.lmloop/
 ├── config.json                     # user settings (base_url, model, max_rounds, …)
 ├── usage.jsonl                     # append-only local feature-usage events (opt-out: LMLOOP_USAGE=0)
+├── evals/last_report.json          # last `lmloop eval` report (gaps + flow)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
 ├── steer/<name>.md                 # user always-on steering (concatenated)
@@ -458,6 +459,8 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ```
 
 **Project slug** is resolved from git remote (`owner-repo`) or directory name.
+
+`lmloop eval` aggregates `usage.jsonl` and folds this project's until/graph logs into gaps. Check commands that look like secrets are dropped. An unreadable log sets `run_log_error` and a `run-log-unreadable` gap instead of omitting those signals. The text report's flow section uses the caller's config (`until_max_steps`), the same budget `lmloop flow` uses. Invalid usage rows are counted and surfaced as `invalid-usage-rows`; unknown feature names never reach the feature counter because `validate_row` rejects them first.
 
 ### Learnings (`learnings.jsonl`)
 
@@ -479,7 +482,7 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 - `read_session()` renders log files (including truncated tool rows) up to `max_chars`.
 - `format_messages_transcript()` renders the live thread (honors `/undo`) for `/compact` and this-session `/memory mine`. Tool rows are included truncated (live payloads can be huge); system messages are omitted.
 - `session_messages()` rebuilds user/assistant turns for `/restore`. Tool/system rows are transcript-only (truncated, not API-shaped) and are omitted. Restore loads those turns into the in-memory thread and prints the last assistant reply — it does not start a new model turn.
-- `/compact`, `/memory mine`, and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log). `/save` uses `no_tools` so the checkpoint call cannot emit tool calls.
+- `/compact`, `/memory mine`, `/memory audit` (`/learn`), and `/save` run `act()` on a side thread so the live conversation is unchanged until the user confirms a compact replace (which starts a new session log). `/save` uses `no_tools` so the checkpoint call cannot emit tool calls. A mine that does not finish tells the user; the learnings path is printed only after a completed mine. Unexpected errors in a live turn stay on the REPL and append the traceback to the session log.
 
 ### Checkpoints (`checkpoints/*.md`)
 
@@ -496,6 +499,7 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 - First use backfills nodes from existing learnings, decisions, and sessions. `remember` / `log_decision` then add `in_session` and `references` (paths mentioned in the text). `/skill` records `uses_skill`.
 - `recall_memory` does keyword match plus 1-hop neighbors. `graph_add_edge` (tool, `use_graph` only) requires a `note`.
 - `/memory graph` prints counts, an adjacency list, and `contradiction_clusters()`. `/memory list` / `/memory decisions` / `/memory dump` inspect learnings, decisions, and the injected snapshot. `/context` prints files in the live thread, then that same snapshot. `/memory reconcile` reviews `contradicts` clusters. `/memory mine` appends a graph-edge phase.
+- CLI and REPL parse `memory`, `flow`, and `graph` through `MemoryRequest`, `FlowRequest`, and `GraphRequest`. `/history`, `/checkpoints`, and `lmloop history` share `CountRequest` (a bad count is an error); the REPL window index comes from `memory.indexed_tail`. `lmloop eval` modes come from `EvalRequest` (`--json` and `--design` are exclusive). Read-only memory verbs render in `memory.render_memory_view`. Model runs share `Console.act_display()` (`ActDisplay.for_act` / `for_isolated`); a live session uses `SessionState.act_display`. Until and graph mine callbacks share `make_session_miner`. `server.require_model` is the one bring-up failure path. `prepare_reconcile` and `skills.skill_prompt` are the shared reconcile and skill-task builders. A reconcile that does not finish prints the same line on the CLI and in the REPL. `graph propose` reviews through `offer_proposed_graph` and saves only on `y`.
 
 ---
 
@@ -554,6 +558,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop until [--check cmd] [--keep cmd] <goal>` | Goal loop (derived plan when no flag is given), then REPL prompt when stdin is a TTY |
 | `lmloop until` | Resume latest open until-run |
 | `lmloop graph <name>` | Authored workflow graph, then REPL prompt when stdin is a TTY |
+| `lmloop graph propose <name>` | Draft a graph; save only on `y` (same review in `/graph propose`) |
 | `lmloop graph` | Resume latest open graph-run |
 | `lmloop skill <name> [task]` | Skill, then REPL prompt when stdin is a TTY |
 | `lmloop skills` | List skill prompts |
@@ -567,7 +572,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop memory graph` | Knowledge-graph stats (requires `use_graph`) |
 | `lmloop memory reconcile` | Review `contradicts` clusters (requires `use_graph`) |
 | `lmloop decisions` | Peek durable decisions |
-| `lmloop history` | List session transcripts |
+| `lmloop history [n]` | List session transcripts (bare paths; `n` > 0, default 15) |
 | `lmloop models` | List models on server |
 | `lmloop config get\|set\|show` | Manage settings |
 | `lmloop completion zsh` | Print zsh completion script |

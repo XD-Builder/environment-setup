@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import memory
+from .commands import FlowRequest
 from .config import cfg_int, project_dir
 
 
@@ -125,6 +126,13 @@ def flow_rules(stats: FlowStats, cfg: dict) -> list[str]:
             "checker-only: many runs finish without deterministic checks — document a gate"
         )
     return out
+
+
+def render_flow(stats: FlowStats, cfg: dict, request: FlowRequest) -> str:
+    """Text or JSON body for ``lmloop flow`` and ``/flow``."""
+    if request.as_json:
+        return json.dumps(stats.to_dict(), indent=2)
+    return format_flow_report(stats, cfg)
 
 
 def company_prefix_note(slug: "str | None" = None) -> str:
