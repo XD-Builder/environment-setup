@@ -369,7 +369,8 @@ class SpiritTests(unittest.TestCase):
                  patch("lmloop.steer.steering_block", return_value=""), \
                  patch("lmloop.memory.project_dir", return_value=state):
                 prompt = skills.system_prompt(_cfg(base_url="http://127.0.0.1:1234/v1"))
-            self.assertLess(prompt.find("## Spirit"), prompt.find("Context recovery"))
+            heading = "## Context recovery (from project memory)"
+            self.assertLess(prompt.find("## Spirit"), prompt.find(heading))
             self.assertIn("MEM", prompt)
 
 
