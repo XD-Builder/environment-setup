@@ -6,7 +6,7 @@ Docker execution** on the host (see [Status](#docker-sandbox-status) below).
 Design references:
 
 - [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) — `--docker`, checks, snapshots
-- [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) — multi-worker company on Docker + OpenRouter
+- [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) — multi-worker company on Docker + OpenRouter
 - [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) — `model_concurrency`, remote spend
 
 ---
@@ -83,12 +83,12 @@ in lmloop yet; they document intent for OpenRouter-heavy workflows:
 
 ### 6. Multi-agent company (planned)
 
-[DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) describes `lmloop company run
+[DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) describes `lmloop company run
 --docker` with an OpenRouter **model allowlist** (`company_models_allowlist`). The default
 tier list lives in [`../company/openrouter_autonomous.yaml`](../company/openrouter_autonomous.yaml)
 (illustrative IDs — validate against OpenRouter before autonomous use).
 
-**Multi-day runs:** [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md)
+**Multi-day runs:** [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md)
 defines **campaigns** (durable plan + board + daily reflection) resumed by an OS supervisor
 with `lmloop campaign resume … --docker-persist`, optionally bound to `company run --campaign`.
 

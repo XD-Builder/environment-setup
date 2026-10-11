@@ -1,7 +1,7 @@
 """Local eval signals from ``usage.jsonl`` — aggregate, validate, surface gaps.
 
 Read-only analysis; no network. Feeds human and agent improvement loops
-(see ``docs/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md``).
+(see ``docs/archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md``).
 """
 
 from __future__ import annotations
@@ -45,6 +45,8 @@ _ROW_DETAIL = "detail"
 _DEFAULT_MIN_SAMPLES = 8
 _TOOL_ERROR_RATE = 0.25
 _HIGH_ROUNDS = 12
+_UNTIL_LOW_UTILIZATION = 0.25
+_UNTIL_BUDGET_MIN_SAMPLES = 5
 ABSTAIN_FLOOR = 0.7
 # HERA batch admission: new mutations only when Abstain is still failing often.
 ABSTAIN_ADMISSION_TAU = 0.4
@@ -79,6 +81,7 @@ class EvalStats:
     blocked_checks: int = 0
     abstains: int = 0
     bridge_untrusted: int = 0
+    until_budget_rows: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -141,6 +144,8 @@ def aggregate(events: list[dict]) -> EvalStats:
             stats.blocked_checks += 1
         elif feature == "until.abstain":
             stats.abstains += 1
+        elif feature == "until.budget":
+            stats.until_budget_rows.append(dict(detail))
         elif feature == "sandbox.preflight":
             if detail.get("network") == "bridge" and detail.get("untrusted"):
                 stats.bridge_untrusted += 1
@@ -175,7 +180,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             severity="watch",
             title="No usage events yet",
             evidence="usage.jsonl is empty or all rows invalid",
-            design_hook="DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md § bootstrap",
+            design_hook="archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md § bootstrap",
         ))
 
     tool_calls = sum(stats.tools.values())
@@ -243,7 +248,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
                     f"Act={metrics['act']:.2f} Abstain={metrics['abstain']:.2f} "
                     f"Pair={metrics['pair']:.2f} n={metrics['n']}"
                 ),
-                design_hook="DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md §V5",
+                design_hook="archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md §V5",
             ))
 
     if stats.act_finished >= min_samples:
@@ -312,8 +317,65 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             severity="watch",
             title="run_shell errors coincide with paused until runs",
             evidence=f"tool.error run_shell={shell_errs}; until paused={paused}",
-            design_hook="DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md § V1",
+            design_hook="archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md § V1",
         ))
+
+    all_budget = stats.until_budget_rows
+    tok_rows = [
+        row for row in all_budget if int(row.get("token_budget") or 0) > 0
+    ]
+    low_util = False
+    evidence_parts: list[str] = []
+    if len(tok_rows) >= _UNTIL_BUDGET_MIN_SAMPLES:
+        low_tok = sum(
+            1 for row in tok_rows
+            if float(row.get("utilization_tok") or 0) < _UNTIL_LOW_UTILIZATION
+        )
+        if low_tok / len(tok_rows) >= 0.5:
+            low_util = True
+            evidence_parts.append(
+                f"token_budget runs={len(tok_rows)} low utilization_tok={low_tok}"
+            )
+    if len(all_budget) >= _UNTIL_BUDGET_MIN_SAMPLES:
+        low_steps = sum(
+            1 for row in all_budget
+            if float(row.get("utilization_steps") or 0) < _UNTIL_LOW_UTILIZATION
+        )
+        if low_steps / len(all_budget) >= 0.5:
+            low_util = True
+            evidence_parts.append(
+                f"until.budget n={len(all_budget)} low utilization_steps={low_steps}"
+            )
+    if low_util:
+        gaps.append(EvalGap(
+            id="until-low-utilization",
+            severity="watch",
+            title="Until runs finish with much budget left",
+            evidence="; ".join(evidence_parts),
+            design_hook="archived/DESIGN_META_CONTROL_AND_BUDGET.md §7",
+        ))
+    if len(all_budget) >= _UNTIL_BUDGET_MIN_SAMPLES:
+        reuse_candidates = [
+            row for row in all_budget
+            if int(row.get("artifact_count") or 0) >= 3
+            and str(row.get("control_mode") or "off") in ("budget", "meta")
+        ]
+        if len(reuse_candidates) >= _UNTIL_BUDGET_MIN_SAMPLES:
+            no_reuse = sum(
+                1 for row in reuse_candidates
+                if int(row.get("reuse_edges") or 0) == 0
+            )
+            if no_reuse / len(reuse_candidates) >= 0.5:
+                gaps.append(EvalGap(
+                    id="until-low-reuse",
+                    severity="watch",
+                    title="Budget/meta until runs rarely reference prior artifacts",
+                    evidence=(
+                        f"runs with artifacts≥3: {len(reuse_candidates)}; "
+                        f"reuse_edges=0 on {no_reuse}"
+                    ),
+                    design_hook="archived/DESIGN_META_CONTROL_AND_BUDGET.md §7",
+                ))
 
     return gaps
 

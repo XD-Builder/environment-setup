@@ -1,7 +1,7 @@
 # Implementation plan (all `docs/` specs)
 
 **Status:** living — update when a phase ships or is cut.  
-**Date:** 2026-10-10  
+**Date:** 2026-10-11  
 **Index:** [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) (cuts, config budget, deferred triggers)  
 **Archive:** [archived/](archived/) (fully shipped design docs)
 
@@ -19,22 +19,22 @@ and what to move to `archived/` when done.
 | [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md) | User guide | Update with Phase S / company | Always `docs/` |
 | [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) | Research input | Not a build track | `docs/` (reference) |
 | [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) | Meta APED research | Reference | `docs/` (reference) |
-| [DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md) | Budget + artifact control for `until`/graph/company | **M0–M2 shipped**; M3–M5 open | Stay in `docs/` until M3–M5 ship or defer |
+| [DESIGN_META_CONTROL_AND_BUDGET.md](archived/DESIGN_META_CONTROL_AND_BUDGET.md) | Budget + artifact control for `until`/graph/company | **Shipped** (M0–M5) | `archived/` |
 | [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_FILE_READING.md](archived/DESIGN_FILE_READING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_GRAPH_ENGINEERING.md](archived/DESIGN_GRAPH_ENGINEERING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Spec | **Phase S shipped**; probe deferred | Stay in `docs/` while §2.9 is deferred |
-| [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Spec | Partial — D minimal, E deferred | Archive when D1–D8 + open A* done |
+| [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Spec | **Layers A–D shipped**; A1 harness + Layer E deferred | Stay in `docs/` until E ships or is cut |
 | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Spec | **C2–C3 shipped**; parallel agents deferred | Stay in `docs/` while Part 5 is deferred |
-| [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | Phases A–C shipped (Wave 1) | Stay until Phase D is cut to Non-goals |
-| [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | **V0–V5 shipped** | Stay in `docs/` while open questions remain |
+| [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | **Phases A–C shipped**; Phase D cut | `docs/` (Phase D in Non-goals) |
+| [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | **V0–V5 shipped** | `archived/` |
 | [DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md) | Spec | **Shipped** — deterministic pyramid, local traces, CI gates | `archived/` |
 | [DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md](archived/DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md) | Spec | **Shipped** — BL-1–BL-6 | `archived/` |
 | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | **S11–S13 + V5 shipped**; optimizer not built | Stay in `docs/` (human-gated) |
-| [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | Stay while open questions remain |
-| [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | Stay while open questions remain |
-| [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spec | **P0–P5 shipped** | Stay while open questions remain |
+| [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | `archived/` |
+| [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | `archived/` |
+| [DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) | Spec | **P0–P5 shipped** | `archived/` |
 | [DESIGN_CLAUDE_CODE_PARITY.md](DESIGN_CLAUDE_CODE_PARITY.md) | Spec | **Proposed** — MCP + harness parity | Stay in `docs/` until M0–M2 ship |
 
 **Archival rule:** When a design doc’s **user-facing** behavior is in README + ARCHITECTURE and
@@ -124,7 +124,7 @@ Do these in parallel where convenient; suggested **serial** order for one contri
 | 1.1 | Memory index | **A5** parse cache; **D3–D8** incremental sync, query, wiring, `memory reindex`, check-inference candidates | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | **Shipped** |
 | 1.2 | Flow / KG | **W6** run/goal nodes in knowledge graph | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | **Shipped** (`record_workflow_run`) |
 | 1.3 | UX vocabulary | **Phase C** — `mine_on_exit`, submit-line mine routes, `/memory audit` | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | **Shipped** |
-| 1.4 | Self-improvement loop | **V1–V4** — join until logs, align `flow`, human-gated agent patches, locked regressions | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | **Shipped** (V5 landed in Wave 2) |
+| 1.4 | Self-improvement loop | **V1–V4** — join until logs, align `flow`, human-gated agent patches, locked regressions | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | **Shipped** (V5 landed in Wave 2) |
 
 Optional in Wave 1: **A1** perf harness (skipped-by-default tests) when touching memory hot paths.
 
@@ -151,9 +151,9 @@ section (probe, parallel agents, or the unattended optimizer).
 
 | Order | Track | Doc | Status |
 |-------|--------|-----|--------|
-| 3.1 | Multi-agent company | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | **Shipped.** `lmloop --docker company run`. JSON manifest (stdlib; no YAML parser). Allowlist is the packaged file plus `company_models_allowlist`. At most two workers, and only with distinct worktrees. `ceo` / `retro` / `plan` / `mine` stay on the host. Local sequential mode is unchanged |
-| 3.2 | Evolving spirit | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | **Shipped.** Seed, actions, thoughts, traits, `self.md`, `/spirit distill --patch`. `spirit_self_max_chars` is the constant 4000 |
-| 3.3 | Long-horizon campaigns | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | **Shipped.** `lmloop campaign` store, plan block, board, daily tick, end-of-day hour, `campaign_max_days`. The `plan` skill's JSON is validated before it touches the plan |
+| 3.1 | Multi-agent company | [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) | **Shipped.** `lmloop --docker company run`. JSON manifest (stdlib; no YAML parser). Allowlist is the packaged file plus `company_models_allowlist`. At most two workers, and only with distinct worktrees. `ceo` / `retro` / `plan` / `mine` stay on the host. Local sequential mode is unchanged |
+| 3.2 | Evolving spirit | [DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) | **Shipped.** Seed, actions, thoughts, traits, `self.md`, `/spirit distill --patch`. `spirit_self_max_chars` is the constant 4000 |
+| 3.3 | Long-horizon campaigns | [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) | **Shipped.** `lmloop campaign` store, plan block, board, daily tick, end-of-day hour, `campaign_max_days`. The `plan` skill's JSON is validated before it touches the plan |
 
 Constants, not config keys: `COMPANY_MAX_PARALLEL = 2`, orchestrator model = `eval_model` or the manifest, spirit injection cap 4000, plan injection cap 4000. Parallel **local** agents stay deferred.
 
@@ -169,7 +169,7 @@ designing **V3/V5** and spirit reflection — research, not a gating dependency.
 | Parallel local agents | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), roadmap | `lmloop flow` shows remote frontier wait dominates |
 | Per-cycle eval probe | Sandbox | Runs pass on checker-only then regress |
 | Memory Layer E | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | FTS5 recall misses user paraphrases |
-| Command Phase D items | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Marked “not merged” — only if product asks |
+| Command Phase D items | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Cut to Non-goals — only if product asks |
 
 ---
 

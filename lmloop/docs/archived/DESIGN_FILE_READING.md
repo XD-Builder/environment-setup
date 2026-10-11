@@ -3,7 +3,7 @@
 **Status:** shipped
 **Date:** 2026-10-07
 **Depends on:** `files_index.py`, `extract.py`, `tools.read_file`, `context.py`, `prompt.py`
-**Companions:** [ARCHITECTURE.md](ARCHITECTURE.md) (tools table) · [DEVELOPMENT.md](../DEVELOPMENT.md) (module ownership)
+**Companions:** [ARCHITECTURE.md](../ARCHITECTURE.md) (tools table) · [DEVELOPMENT.md](../../DEVELOPMENT.md) (module ownership)
 
 Users attach files with `@path` on submit and the model reads them with `read_file`.
 This doc is the contract for **how paths resolve**, **what gets inlined into the user
@@ -66,7 +66,7 @@ Steer and `skills/system.md` tell the model to use the header instead of guessin
 
 ## Non-goals (stay out of this module)
 
-- Embedding or semantic search over file contents (see [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md)).
+- Embedding or semantic search over file contents (see [DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md)).
 - Watching the tree for auto-attach (user must `@` or the model must `read_file`).
 - Reading arbitrary host paths without an @ gift or workspace scope.
 - A second path alias syntax (only `@`, not `$file` or drag-drop IDs).

@@ -1,6 +1,6 @@
 # Design: Command consolidation (memory and neighbors)
 
-**Status:** partial — Phases A–C shipped (`mine_on_exit`, submit-line mine routes, `/memory audit`). Phase D not merged.
+**Status:** shipped — Phases A–C (`mine_on_exit`, submit-line mine routes, `/memory audit`). Phase D cut (see Non-goals).
 **Date:** 2026-10-07
 **Companions:** [ARCHITECTURE.md](ARCHITECTURE.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md)
 
@@ -66,12 +66,6 @@ behavior that can evolve without new slash commands.
   `test_cli.py` / REPL).
 - **`/memory audit`** → `learn.md` skill in a side session (live thread unchanged); `/learn` is the same path, hidden from default completion.
 
-### Phase D — Not merged
-
-- `remember` vs `log_decision` (different stores).
-- `/until` / `/graph` workflow control (only post-pass mine stays automatic).
-- CLI `lmloop memory mine N` for scripting.
-
 ## Command tiers (REPL)
 
 | Tier | Examples |
@@ -85,3 +79,11 @@ behavior that can evolve without new slash commands.
 - Default `/help` line count stable or decreasing as features move to orchestration.
 - New memory features land as skill/steer/config changes before new `CommandMeta` rows.
 - README “Project memory” table fits **peek | write | reload** without duplicate stems.
+
+## Non-goals (Phase D cut)
+
+| Item | Reason |
+|------|--------|
+| Merge `remember` and `log_decision` | Different stores and semantics; steer covers when to use each |
+| Slash `/until` / `/graph` workflow control | Authored graphs and CLI flags remain canonical; post-pass mine stays automatic |
+| CLI `lmloop memory mine N` | REPL `/memory mine` and submit-line routes cover the workflow; add only if scripting demand appears |

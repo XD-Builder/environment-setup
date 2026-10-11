@@ -285,8 +285,8 @@ local, single-user research loop needs.
 |-------|--------|-----|
 | **OpenRouter** / any remote OpenAI-compatible API | **Supported** via `base_url` + `api_key` / env | [GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md) |
 | **`--docker` execution sandbox** | **Opt-in** (host shell remains the default; no config key enables it) | Same guide + [DESIGN_SANDBOX_AND_VERIFICATION.md](docs/DESIGN_SANDBOX_AND_VERIFICATION.md) |
-| **Multi-agent company** on Docker + allowlisted OpenRouter models | **Proposed** | [DESIGN_MULTI_AGENT_COMPANY.md](docs/DESIGN_MULTI_AGENT_COMPANY.md) |
-| **Long-horizon campaigns** (multi-day plan, reflection, coordination) | **Proposed** | [DESIGN_LONG_HORIZON_PLANNING.md](docs/DESIGN_LONG_HORIZON_PLANNING.md) |
+| **Multi-agent company** on Docker + allowlisted OpenRouter models | **Shipped** (`lmloop --docker company run`) | [DESIGN_MULTI_AGENT_COMPANY.md](docs/archived/DESIGN_MULTI_AGENT_COMPANY.md) |
+| **Long-horizon campaigns** (multi-day plan, reflection, coordination) | **Shipped** (`lmloop campaign`) | [DESIGN_LONG_HORIZON_PLANNING.md](docs/archived/DESIGN_LONG_HORIZON_PLANNING.md) |
 
 Reference files (build / allowlist templates): `lmloop/sandbox/Dockerfile`,
 `lmloop/company/openrouter_autonomous.yaml`.

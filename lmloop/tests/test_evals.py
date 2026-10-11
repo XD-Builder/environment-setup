@@ -73,6 +73,38 @@ class GapTests(unittest.TestCase):
         gaps = evals.find_gaps(evals.aggregate(events), min_samples=5)
         self.assertIn("until-pause-heavy", {g.id for g in gaps})
 
+    def test_until_low_utilization_gap(self):
+        events = [
+            _row(
+                "until.budget",
+                token_budget=100_000,
+                utilization_tok=0.05,
+                utilization_steps=0.1,
+                control_mode="budget",
+                reuse_edges=0,
+                artifact_count=1,
+            )
+            for _ in range(5)
+        ]
+        gaps = evals.find_gaps(evals.aggregate(events))
+        self.assertIn("until-low-utilization", {g.id for g in gaps})
+
+    def test_until_low_reuse_gap(self):
+        events = [
+            _row(
+                "until.budget",
+                token_budget=0,
+                utilization_tok=0.0,
+                utilization_steps=0.5,
+                control_mode="meta",
+                reuse_edges=0,
+                artifact_count=4,
+            )
+            for _ in range(5)
+        ]
+        gaps = evals.find_gaps(evals.aggregate(events))
+        self.assertIn("until-low-reuse", {g.id for g in gaps})
+
 
 class ReportTests(unittest.TestCase):
     def test_json_round_trip(self):

@@ -2,7 +2,7 @@
 
 **Status:** shipped — JSON manifest, allowlist, worktrees, worker envelopes, milestone gates. Parallel width is the constant 2. Open questions in §15 remain.  
 **Date:** 2026-10-05  
-**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_GRAPH_ENGINEERING.md](archived/DESIGN_GRAPH_ENGINEERING.md), [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md), [ARCHITECTURE.md](ARCHITECTURE.md)  
+**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](../DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md), [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md), [ARCHITECTURE.md](../ARCHITECTURE.md)  
 **Supersedes (when built):** “Parallel agents — deferred” in DAG Part 5 for the **Docker + remote allowlist** path only; sequential local LM Studio stays the default.
 
 ---
@@ -245,7 +245,7 @@ Each worktree’s `.git` **file** references `.git/worktrees/<name>/`, both unde
 
 ## 7. Orchestration loop (MetaGPT-like, but gated)
 
-Reuse **DAG frontier** from [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) Part 2:
+Reuse **DAG frontier** from [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) Part 2:
 
 1. Load manifest + graph → compute **runnable frontier** (`needs` satisfied).  
 2. While frontier non-empty and budgets allow:  
@@ -297,14 +297,14 @@ Orchestrator stores full transcripts in **per-worker session logs** under `~/.lm
 Design for **stable prefixes** (aligns with DAG doc “cache-stable prefixes”):
 
 1. **Tier A — static:** packaged `system.md` + role skill + steering (hash per role).  
-2. **Tier B — run-stable:** manifest sha, check plan text, frozen memory block ([DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) Layer C).  
+2. **Tier B — run-stable:** manifest sha, check plan text, frozen memory block ([DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md) Layer C).  
 3. **Tier C — volatile:** handoff, user goal, tool results.
 
 Orchestrator orders messages so Tier A+B are identical across cycles for a given role. Optional future: explicit cache breakpoint API when measured savings &gt; complexity.
 
 ### 8.5 Concurrency and slots
 
-Reuse **`ModelSlots`** with `model_concurrency: auto` → **4** on OpenRouter ([DAG doc §1.2](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)). Cap parallel workers at `min(max_parallel_workers, model_concurrency - orchestrator_reserve)`.
+Reuse **`ModelSlots`** with `model_concurrency: auto` → **4** on OpenRouter ([DAG doc §1.2](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)). Cap parallel workers at `min(max_parallel_workers, model_concurrency - orchestrator_reserve)`.
 
 ---
 
@@ -391,7 +391,7 @@ lmloop/lmloop/
 
 | Phase | Delivers | Depends on |
 |-------|----------|------------|
-| **P0** | Shipped defects (env errors → blocked, derived checks, snapshots) | [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) step 0–2 |
+| **P0** | Shipped defects (env errors → blocked, derived checks, snapshots) | [DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md) step 0–2 |
 | **P1** | Manifest parse + validate; example manifest in monorepo; no workers | — |
 | **P2** | Worktree lifecycle on host; single-worker `--docker` running one graph node | Sandbox S1–S6, DAG D1–D3 |
 | **P3** | `ModelSlots` + OpenRouter allowlist enforcement + `run_token_budget` | DAG K1–K3 |
@@ -448,10 +448,10 @@ Existing keys reused: `run_token_budget`, `eval_model`, `model_concurrency`, `sa
 
 | Doc | Change when this ships |
 |-----|-------------------------|
-| [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) Part 5 | Mark parallel **workers** as “shipped for `--company` + Docker + remote only”; sequential default unchanged |
-| [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Add one-container-per-worker naming; loopback publish unchanged |
-| [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) | New build track “Company multi-agent” after sandbox + DAG fan-out |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Trust boundary diagram for orchestrator/worker |
+| [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) Part 5 | Mark parallel **workers** as “shipped for `--company` + Docker + remote only”; sequential default unchanged |
+| [DESIGN_SANDBOX_AND_VERIFICATION.md](../DESIGN_SANDBOX_AND_VERIFICATION.md) | Add one-container-per-worker naming; loopback publish unchanged |
+| [DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md) | New build track “Company multi-agent” after sandbox + DAG fan-out |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) | Trust boundary diagram for orchestrator/worker |
 | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | `--campaign`, plan store, board, supervisor multi-day flow |
 
 ---

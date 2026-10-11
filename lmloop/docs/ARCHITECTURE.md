@@ -17,18 +17,12 @@ lmloop/
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
 │   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
-│   ├── archived/               # shipped design specs (see archived/README.md)
-│   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (partial)
+│   ├── archived/               # shipped design specs (usage evals, assertion pyramid, business/workflow split, meta control, company, campaigns, spirit, … — see archived/README.md)
+│   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (Phases A–C shipped)
 │   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker shipped
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, canvas TUI shipped; parallel agents deferred
-│   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
+│   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; Layer E deferred
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
-│   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
-│   ├── archived/DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates (shipped)
-│   ├── archived/DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md  # business vs workflow split (shipped)
-│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
-│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
-│   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
 │   ├── DESIGN_CLAUDE_CODE_PARITY.md  # proposed: MCP + Claude Code–class harness parity
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/

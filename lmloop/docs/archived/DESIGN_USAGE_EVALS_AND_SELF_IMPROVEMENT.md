@@ -3,11 +3,11 @@
 **Status:** V0–V5 shipped. `lmloop eval --abstention` scores Act / Abstain / Pair from fixture pairs. Automated harness search stays human-gated.
 **Date:** 2026-10-07 · **Revised:** 2026-10-09 (HERA co-evolution + abstention metrics)
 **Depends on:** `usage.py`, `evals.py`, `loop.py`, `agent.py`, `tools.py`
-**Companions:** [archived/DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md) (contract gates; separate from usage gaps) ·
-[DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) (`lmloop flow`) ·
-[DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) ·
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
-[DEVELOPMENT.md](../DEVELOPMENT.md)
+**Companions:** [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) (contract gates; separate from usage gaps) ·
+[DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) (`lmloop flow`) ·
+[DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](../DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
+[DEVELOPMENT.md](../../DEVELOPMENT.md)
 
 ## Problem
 
@@ -136,7 +136,7 @@ Emit gaps with **project-relative evidence** (command strings, not env secrets).
 
 ### V2 — `lmloop flow` alignment
 
-When [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ships
+When [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ships
 `workflow.FlowStats`, **one printer** should read both usage.jsonl and run logs so
 product metrics and eval gaps do not diverge.
 
@@ -163,7 +163,7 @@ This mirrors BDK defineEval without adding pytest or network.
 ### V5 — Harness–environment co-evolution (HERA-inspired)
 
 Full methodology:
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](../DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
 Reference: [HERA (arxiv 2610.06563)](https://arxiv.org/html/2610.06563v1).
 
 **Problem HERA names:** agents continue acting when a task is **infeasible** (missing
