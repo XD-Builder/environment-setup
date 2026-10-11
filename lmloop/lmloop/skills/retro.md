@@ -36,4 +36,11 @@ logged, call `log_decision` for it.
 ## Step 4 — Report
 List what you saved (key + one line each) and what you deliberately skipped
 and why. End with one sentence on the overall pattern of the session(s).
+
+## Step 5 — Thought candidates
+If a repeated judgment would change how you work in this repo (not a new fact),
+name it in the report as a thought candidate: kind `meta` or `style`, one
+sentence, and the evidence you would cite. Do not rewrite `self.md` from retro.
+`/spirit distill` promotes those candidates later.
+
 Stop. Do not offer to pick the work back up.

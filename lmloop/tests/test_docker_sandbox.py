@@ -1,10 +1,10 @@
 """Reference sandbox image contract (docker local).
 
-``--docker`` is not a CLI flag yet. This test builds
-``lmloop/sandbox/Dockerfile`` and checks the image the agentic suite runs
-inside: Python 3.14, git, ripgrep, and curl, plus a workspace command
-(``rg``) executed in that container. Opt in with ``LMLOOP_DOCKER_E2E=1``.
-``LMLOOP_SANDBOX_IMAGE`` skips the build when CI already tagged the image.
+Builds ``lmloop/sandbox/Dockerfile`` and checks Python 3.14, git, ripgrep,
+and curl, plus ``rg`` on a bind-mounted workspace. Opt in with
+``LMLOOP_DOCKER_E2E=1``. ``--docker`` / ``DockerBackend`` is covered by
+``tests/test_wave2.py``. ``LMLOOP_SANDBOX_IMAGE`` skips rebuild when CI
+already tagged the image.
 """
 
 from __future__ import annotations

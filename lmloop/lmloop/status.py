@@ -74,6 +74,13 @@ def msg_until_blocked() -> str:
     return status("until checker is blocked — need a yes/no")
 
 
+def msg_until_abstain(reason: str) -> str:
+    detail = f" · {reason}" if reason else ""
+    return status(
+        f"until abstain{detail} — the goal is infeasible here; not starting a maker step"
+    )
+
+
 def msg_until_baseline() -> str:
     return status("until baseline · running the check plan once before any work")
 

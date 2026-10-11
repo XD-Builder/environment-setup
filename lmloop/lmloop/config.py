@@ -69,6 +69,8 @@ DEFAULTS = {
     "mine_on_exit": False,  # REPL exit mines the current session when true
     "check_inference": "auto",  # auto: derive a check plan when no --check/--keep; off: eval only
     "until_baseline": "auto",  # auto: baseline and reclassify a non-empty plan; off: checks gate directly
+    "sandbox_image": "",  # digest-pinned image; inert unless --docker
+    "sandbox_network": "bridge",  # bridge | none | host — inert unless --docker
     "model_concurrency": "auto",  # auto: 1 local / 4 remote; or int 1..8
     "run_token_budget": 0,  # pause run after this many tokens; 0 = off
     "eval_model": "",  # checker / proposals / mining; empty = main model
@@ -78,6 +80,16 @@ DEFAULTS = {
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings
     "use_graph": False,  # opt-in knowledge-graph memory (JSONL nodes/edges)
     "vision": "auto",  # auto = LM Studio VLM flag; true/false override
+    # Wave 3. Parallel width, self size, and plan injection stay constants.
+    "company_remote": False,  # allow --company against loopback or a non-OpenRouter host
+    "company_models_allowlist": "",  # comma-separated ids added to the packaged list
+    "use_spirit": True,
+    "spirit_actions": True,  # append actions.jsonl; turn off on a shared machine
+    "spirit_distill_after_mine": False,
+    "spirit_remote": False,  # send self.md to a remote base_url
+    "campaign_daily_reflect": True,
+    "campaign_end_of_day_utc": "",  # empty = off; else hour 0-23 UTC
+    "campaign_max_days": 30,
 }
 
 _CONFIG_WARNED = False
@@ -125,12 +137,33 @@ def coerce_config_value(key: str, value):
             except ValueError:
                 return None
         return None
+    if key == "campaign_end_of_day_utc":
+        if isinstance(value, str):
+            low = value.strip()
+            if low == "":
+                return ""
+            if low.isdigit() and 0 <= int(low) <= 23:
+                return str(int(low))
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 23:
+            return str(value)
+        return None
     if key == "autonomous_snapshot":
         if isinstance(value, str):
             low = value.strip().lower()
             if low in ("git", "off"):
                 return low
         return None
+    if key == "sandbox_network":
+        if isinstance(value, str) and value.strip().lower() in ("bridge", "none", "host"):
+            return value.strip().lower()
+        return None
+    if key == "sandbox_image":
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if text and "@sha256:" not in text:
+            return None
+        return text
     if key == "vision":
         if isinstance(value, bool):
             return "true" if value else "false"

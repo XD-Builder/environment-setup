@@ -116,16 +116,19 @@ class ComponentContractTests(unittest.TestCase):
             backend = LocalBackend()
             ok = backend.run(
                 f"{sys.executable} -c \"open('marker.txt','w').write('4242')\"",
-                workspace_root=root,
+                cwd=root,
+                timeout_s=30,
             )
             missing = backend.run(
                 "lmloop-binary-not-installed",
-                workspace_root=root,
+                cwd=root,
+                timeout_s=30,
             )
-            self.assertEqual(ok.exit_code, 0, ok.output)
+            self.assertEqual(ok.exit_code, 0, ok.stdout + ok.stderr)
+            self.assertEqual(ok.backend, "local")
             self.assertEqual((root / "marker.txt").read_text(), "4242")
-            self.assertIn("[exit code: 0]", ok.output)
             self.assertEqual(missing.exit_code, 127)
+            self.assertTrue(missing.spawn_error)
 
     @baseline("snapshot", "dirty tree is stored under refs/lmloop")
     def test_snapshot_ref(self):

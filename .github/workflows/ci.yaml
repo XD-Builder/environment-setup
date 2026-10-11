@@ -7,8 +7,8 @@
 # shell                 setup.sh / shell syntax (no package install)
 #
 # Agent scenarios talk to a localhost OpenAI-compatible stub. They do not call
-# LM Studio or OpenRouter. `--docker` is still not a CLI flag; docker-local
-# runs LocalBackend inside lmloop/sandbox/Dockerfile.
+# LM Studio or OpenRouter. docker-local runs LocalBackend inside the sandbox
+# image (bind-mounted repo); --docker / DockerBackend is covered by test_wave2.py.
 
 name: ci
 

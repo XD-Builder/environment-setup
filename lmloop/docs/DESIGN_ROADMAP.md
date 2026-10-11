@@ -1,6 +1,6 @@
 # Design roadmap: final review of the proposals
 
-**Status:** living build order — steps 0–4 and most of 5–7 shipped on the host path; Phase S (Docker sandbox), memory Layer E (embeddings rerank), parallel agents, and eval doc V1–V4 remain open. This file still adds no feature of its own.
+**Status:** living build order — steps 0–9 shipped on the host path, including opt-in Phase S (`--docker`). Memory Layer E (embeddings rerank), parallel agents, and the per-cycle probe remain deferred. This file still adds no feature of its own.
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: cuts applied to the design docs)
 **Covers:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
@@ -195,7 +195,7 @@ Dotted edges point at deferred work and name what it would build on.
 | 5 · Concurrency lock + spend | **Shipped** | K1–K3 |
 | 6 · Fan-out + joins, flow mining | **Mostly shipped** | D1–D3, W1–W5; **W6** KG run nodes open |
 | 7 · FTS5 + canvas | **Partial** | Minimal index + text canvas; full D spec + TUI open |
-| 8 · Sandbox | **Open** | Phase S; `exec.py` has LocalBackend only |
+| 8 · Sandbox | **Shipped (opt-in)** | S1–S13: `--docker` / `--docker-persist`, preflight, shadow volumes, egress allowlist, scoped secrets, policy-bundle hash. Default remains host execution. Per-cycle probe still deferred |
 | 9 · `graph propose` | **Shipped** | W5 |
 
 **Deferred work and its revisit trigger:**
@@ -203,8 +203,8 @@ Dotted edges point at deferred work and name what it would build on.
 | Deferred | Revisit when |
 |---|---|
 | Parallel agents (default local path) | `lmloop flow` shows, on a remote endpoint, frequent moments with ≥ 2 runnable frontier nodes and sequential waiting dominating wall-clock |
-| Multi-agent company (`--docker --company`, manifest, worktrees) | See [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md); build after sandbox S1–S6 + DAG fan-out D1–D3 + OpenRouter allowlist |
-| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | See [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md); H0–H2 after sandbox persist; H3+ with company P4 |
+| Multi-agent company (`--docker --company`, manifest, worktrees) | **Shipped** for Docker + remote allowlist only. Sequential local LM Studio is unchanged. See [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) |
+| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | **Shipped.** See [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) |
 | Per-cycle probe | Runs finish on checker-only `pass` and later regress |
 | Embeddings rerank | FTS5 recall demonstrably misses paraphrases users search for |
 

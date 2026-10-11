@@ -1,9 +1,11 @@
 """Single command table for CLI stems, slash stems, and reserved skill names.
 
 Handlers stay in cli.py / repl.py; this module owns names and metadata only.
+Memory and flow argument shapes live here so both surfaces parse the same way.
 """
 
 from dataclasses import dataclass
+from typing import Literal, cast
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,10 @@ MEMORY_ARG_CHOICES = (
     "list", "decisions", "dump", "mine", "kg", "graph", "reconcile",
     "index", "reindex", "canvas", "audit",
 )
+MEMORY_ARG_HINT = (
+    "[list | decisions | dump | query | mine [n] | kg | index | reindex | "
+    "canvas | audit | reconcile]"
+)
 # Subverbs offered in ``/`` completion (``graph`` kept as runtime alias only).
 MEMORY_ARG_COMPLETION = (
     "list", "decisions", "dump", "mine", "kg", "reconcile", "index", "reindex",
@@ -42,6 +48,220 @@ MSG_DEPRECATE_MEMORY_GRAPH = (
     "[deprecated: use /memory kg — workflow graphs are /graph <name>]"
 )
 MSG_DEPRECATE_RETRO = "[deprecated: use /memory mine]"
+
+MemoryVerb = Literal[
+    "list", "decisions", "dump", "mine", "kg", "index", "reindex",
+    "canvas", "audit", "reconcile", "search",
+]
+# Verbs ``memory.render_memory_view`` can print without a model.
+MEMORY_VIEW_VERBS = frozenset({
+    "list", "decisions", "dump", "kg", "index", "reindex", "canvas", "search",
+})
+
+
+def parse_positive_count(token: str) -> int | None:
+    """A positive integer token, or None when ``token`` is not one."""
+    if token.isdigit() and int(token) > 0:
+        return int(token)
+    return None
+
+
+@dataclass(frozen=True)
+class MemoryRequest:
+    """Parsed ``memory`` / ``/memory`` invocation. ``error`` means do not run."""
+
+    verb: MemoryVerb
+    rest: tuple[str, ...] = ()
+    query: str = ""
+    mine_count: int | None = None
+    error: str = ""
+    detail: str = ""
+    hint: str = ""
+
+
+def parse_memory_words(
+    words: list[str],
+    *,
+    mine_default: int | None,
+    mine_usage: str,
+    mine_detail: str = "",
+) -> MemoryRequest:
+    """Parse memory words.
+
+    ``mine_default`` is the count when ``mine`` has no argument (CLI uses 3).
+    ``None`` means mine this session (REPL). A non-positive or extra token
+    sets ``error`` and does not invent a count.
+    """
+    if not words or words[0] == "list":
+        return MemoryRequest(verb="list")
+    verb = words[0]
+    rest = tuple(words[1:])
+    if verb == "graph":
+        return MemoryRequest(verb="kg", hint=MSG_DEPRECATE_MEMORY_GRAPH)
+    if verb == "mine":
+        if not rest:
+            return MemoryRequest(verb="mine", mine_count=mine_default)
+        if len(rest) == 1:
+            count = parse_positive_count(rest[0])
+            if count is not None:
+                return MemoryRequest(verb="mine", mine_count=count, rest=rest)
+        return MemoryRequest(verb="mine", error=mine_usage, detail=mine_detail)
+    if verb in MEMORY_ARG_CHOICES:
+        return MemoryRequest(verb=cast(MemoryVerb, verb), rest=rest, query=" ".join(rest))
+    return MemoryRequest(verb="search", rest=tuple(words), query=" ".join(words))
+
+
+def flow_usage(invocation: str) -> str:
+    """Usage line for ``lmloop flow`` and ``/flow``."""
+    return f"usage: {invocation} [--json]"
+
+
+@dataclass(frozen=True)
+class FlowRequest:
+    """Parsed ``flow`` / ``/flow`` invocation."""
+
+    as_json: bool = False
+    error: str = ""
+
+
+def parse_flow_words(words: list[str], *, invocation: str) -> FlowRequest:
+    """Accept no args or a single ``--json``. Anything else is ``error``."""
+    if not words:
+        return FlowRequest(as_json=False)
+    if words == ["--json"]:
+        return FlowRequest(as_json=True)
+    return FlowRequest(error=flow_usage(invocation))
+
+
+# Window sizes when ``history`` / ``checkpoints`` are given no count.
+HISTORY_DEFAULT_CLI = 15
+HISTORY_DEFAULT_REPL = 10
+CHECKPOINT_DEFAULT = 10
+
+
+def count_usage(invocation: str) -> str:
+    """Usage line for a command that takes an optional positive count."""
+    return f"usage: {invocation} [n]"
+
+
+@dataclass(frozen=True)
+class CountRequest:
+    """Parsed optional positive count. ``error`` means do not list."""
+
+    count: int = 0
+    error: str = ""
+
+
+def parse_count_words(
+    words: list[str],
+    *,
+    default: int,
+    usage: str,
+) -> CountRequest:
+    """No tokens → ``default``. One positive integer → that count. Else ``error``."""
+    tokens = [word for word in words if word]
+    if not tokens:
+        return CountRequest(count=default)
+    if len(tokens) == 1:
+        count = parse_positive_count(tokens[0])
+        if count is not None:
+            return CountRequest(count=count)
+    return CountRequest(error=usage)
+
+
+EvalMode = Literal["text", "json", "design", "abstention"]
+EVAL_JSON_FLAG = "--json"
+EVAL_DESIGN_FLAGS = ("--design", "--design-doc")
+EVAL_ABSTENTION_FLAG = "--abstention"
+EVAL_FLAGS = (EVAL_JSON_FLAG, *EVAL_DESIGN_FLAGS, EVAL_ABSTENTION_FLAG)
+
+
+def eval_usage(invocation: str = "lmloop eval") -> str:
+    """Usage line for ``lmloop eval``. ``--design-doc`` is an alias of ``--design``."""
+    return f"usage: {invocation} [--json | --design | --abstention]"
+
+
+@dataclass(frozen=True)
+class EvalRequest:
+    """Parsed ``lmloop eval`` invocation.
+
+    ``--json`` and ``--design`` are exclusive. ``--abstention`` may also take
+    ``--json``. ``as_json`` is that combination.
+    """
+
+    mode: EvalMode = "text"
+    as_json: bool = False
+    error: str = ""
+
+
+def parse_eval_words(
+    words: list[str],
+    *,
+    invocation: str = "lmloop eval",
+) -> EvalRequest:
+    """Text, json, design, or abstention. A second flag is an error except abstention+json."""
+    seen: list[str] = []
+    for word in words:
+        if word == EVAL_JSON_FLAG:
+            kind = "json"
+        elif word in EVAL_DESIGN_FLAGS:
+            kind = "design"
+        elif word == EVAL_ABSTENTION_FLAG:
+            kind = "abstention"
+        else:
+            return EvalRequest(error=eval_usage(invocation))
+        if kind in seen:
+            return EvalRequest(error=eval_usage(invocation))
+        seen.append(kind)
+    kinds = set(seen)
+    if "design" in kinds and kinds != {"design"}:
+        return EvalRequest(error=eval_usage(invocation))
+    if kinds == {"abstention", "json"}:
+        return EvalRequest(mode="abstention", as_json=True)
+    if kinds == {"abstention"}:
+        return EvalRequest(mode="abstention")
+    if kinds == {"json"}:
+        return EvalRequest(mode="json")
+    if kinds == {"design"}:
+        return EvalRequest(mode="design")
+    return EvalRequest(mode="text")
+
+
+GRAPH_PROPOSE_VERB = "propose"
+GraphAction = Literal["resume", "run", "propose"]
+
+MSG_RECONCILE_INCOMPLETE = "memory reconcile did not finish"
+
+
+@dataclass(frozen=True)
+class GraphRequest:
+    """Parsed ``graph`` / ``/graph`` invocation.
+
+    Empty words are ``resume``. The CLI resumes the latest open run; the REPL
+    prints usage and leaves resume to ``/continue``.
+    """
+
+    action: GraphAction
+    name: str = ""
+    error: str = ""
+
+
+def parse_graph_words(
+    words: list[str],
+    *,
+    run_usage: str,
+    propose_usage: str,
+) -> GraphRequest:
+    """``propose <name>``, a single graph name, or no words (resume)."""
+    if not words:
+        return GraphRequest(action="resume")
+    if words[0] == GRAPH_PROPOSE_VERB:
+        if len(words) != 2 or not words[1].strip():
+            return GraphRequest(action="propose", error=propose_usage)
+        return GraphRequest(action="propose", name=words[1])
+    if len(words) != 1 or not words[0].strip():
+        return GraphRequest(action="run", error=run_usage)
+    return GraphRequest(action="run", name=words[0])
 
 
 # Core commands. Skill shortcuts (/investigate, …) are added dynamically in repl.
@@ -79,7 +299,7 @@ COMMANDS: tuple = (
     CommandMeta("models", "list models on the server", slash=False, cli=True),
     CommandMeta("memory", "project memory dashboard; subverbs: dump | mine | kg | …",
                 accepts_arg=True,
-                arg_hint="[list | decisions | dump | query | mine [n] | kg | reconcile]",
+                arg_hint=MEMORY_ARG_HINT,
                 arg_choices=MEMORY_ARG_CHOICES, cli=True),
     CommandMeta("until", "work toward a goal until a check or evaluator passes",
                 accepts_arg=True, arg_hint="[--check cmd] [--keep cmd] <goal>", cli=True),
@@ -98,8 +318,26 @@ COMMANDS: tuple = (
     CommandMeta("completion", "shell completion script",
                 accepts_arg=True, arg_hint="zsh", slash=False, cli=True),
     CommandMeta("eval", "summarize local usage evals and improvement gaps",
-                accepts_arg=True, arg_hint="[--json | --design]",
+                accepts_arg=True, arg_hint="[--json | --design | --abstention]",
                 slash=False, cli=True, reserve_skill=False),
+    CommandMeta("sandbox", "Docker sandbox status, build, reset (opt-in --docker)",
+                accepts_arg=True,
+                arg_hint="[status | build | shell | reset [--deps] | rm]",
+                arg_choices=("build", "status", "shell", "reset", "rm"),
+                cli=True),
+    CommandMeta("company", "opt-in multi-agent company (needs --docker and a remote model)",
+                accepts_arg=True, arg_hint="run --goal TEXT [--campaign ID] | manifest",
+                arg_choices=("run", "manifest"), cli=True),
+    CommandMeta("worker", "headless company worker (stdin packet, stdout envelope)",
+                accepts_arg=True, arg_hint="run", slash=False, cli=True),
+    CommandMeta("campaign", "multi-day campaign: start, resume, status, board, extend",
+                accepts_arg=True,
+                arg_hint="start --goal TEXT | resume | status | board | extend",
+                arg_choices=("start", "resume", "status", "board", "extend"),
+                cli=True),
+    CommandMeta("spirit", "project spirit: log, review, or distill thoughts into self",
+                accepts_arg=True, arg_hint="log | review | distill [--patch file]",
+                arg_choices=("log", "review", "distill"), cli=True),
     CommandMeta("quit", "exit", exits=True),
     CommandMeta("exit", "exit", exits=True),
     CommandMeta("q", "exit", exits=True),

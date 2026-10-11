@@ -82,11 +82,30 @@ class SkillsDiscoveryTests(unittest.TestCase):
                 self.assertIn("demo", skills.list_skills())
 
 
+class SkillPromptTests(unittest.TestCase):
+    def test_skill_prompt_appends_task_once(self):
+        body = skills.skill_prompt("learn", "", public_only=True)
+        with_task = skills.skill_prompt("learn", " tidy ", public_only=True)
+        self.assertTrue(body.startswith("#"))
+        self.assertEqual(with_task, body + "\n\nTask: tidy")
+        self.assertEqual(with_task.count("Task:"), 1)
+
+
 class SystemPromptMemoryTests(unittest.TestCase):
     def test_system_prompt_requires_memory_disclosure(self):
         text = skills.load_skill("system")
         self.assertIn("Prior learning applied: <key>", text)
         self.assertIn("Decision referenced: [id]", text)
+
+    def test_standing_harness_is_curiosity_learning_growth(self):
+        text = skills.load_skill("system")
+        self.assertIn("curiosity, learning, and growth", text)
+        self.assertIn("Repo-specific practice is learned", text)
+        self.assertIn("## Safety floor", text)
+        seed = (skills.SKILLS_DIR.parent / "spirit" / "seed.md").read_text()
+        self.assertIn("Be curious, learn, and grow", seed)
+        improve = skills.load_skill("improve")
+        self.assertIn("delete one", improve)
 
 
 if __name__ == "__main__":

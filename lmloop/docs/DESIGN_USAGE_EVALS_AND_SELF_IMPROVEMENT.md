@@ -1,6 +1,6 @@
 # Design: Usage evals and the self-improvement loop
 
-**Status:** partial — V0–V4 shipped (run-log join, flow section on `lmloop eval`, `/skill improve`, locked fixture). V5 abstention remains proposed.
+**Status:** V0–V5 shipped. `lmloop eval --abstention` scores Act / Abstain / Pair from fixture pairs. Automated harness search stays human-gated.
 **Date:** 2026-10-07 · **Revised:** 2026-10-09 (HERA co-evolution + abstention metrics)
 **Depends on:** `usage.py`, `evals.py`, `loop.py`, `agent.py`, `tools.py`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) (`lmloop flow`) ·

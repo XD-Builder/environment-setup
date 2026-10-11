@@ -3,7 +3,14 @@
 import unittest
 from unittest.mock import patch
 
-from lmloop.server import LmsClient, ServerError, ensure_server, model_has_vision
+from lmloop.server import (
+    LmsClient,
+    ServerError,
+    ensure_server,
+    model_has_vision,
+    require_model,
+    server_error_text,
+)
 
 
 class EnsureServerTests(unittest.TestCase):
@@ -39,6 +46,26 @@ class EnsureServerTests(unittest.TestCase):
             with self.assertRaises(ServerError) as ctx:
                 ensure_server(cfg, echo=lambda *_a: None)
             self.assertIn("No models available", str(ctx.exception))
+
+    def test_require_model_reports_and_returns_none(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "",
+               "auto_start_server": False}
+        errors = []
+        with patch("lmloop.server.list_models", return_value=[]), \
+             patch("lmloop.server.shutil.which", return_value=None):
+            model = require_model(cfg, echo=lambda *_a: None, on_error=errors.append)
+        self.assertIsNone(model)
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(errors[0].startswith("error:"))
+        self.assertIn("No models available", errors[0])
+        self.assertEqual(errors[0], server_error_text(ServerError(errors[0].removeprefix("error: "))))
+
+    def test_require_model_returns_loaded_model(self):
+        cfg = {"base_url": "http://127.0.0.1:1234/v1", "model": "mine",
+               "auto_start_server": False}
+        with patch("lmloop.server.list_models", return_value=["mine"]):
+            model = require_model(cfg, echo=lambda *_a: None, on_error=lambda *_a: None)
+        self.assertEqual(model, "mine")
 
 
 class VisionCapabilityTests(unittest.TestCase):
