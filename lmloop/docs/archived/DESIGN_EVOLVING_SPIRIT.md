@@ -3,7 +3,7 @@
 **Status:** shipped — seed, actions, thoughts, traits, self, distill patch, FTS kinds. `spirit_self_max_chars` is a constant (4000). Open questions in §14 remain.
 **Date:** 2026-10-07
 **Depends on:** `memory.py`, `knowledge_graph.py` (opt-in), `steer.py`, `skills/retro.md`, `skills/learn.md`, `loop.py` (`until_mine`)
-**Companions:** [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
+**Companions:** [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md) · [DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md) · [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
 
@@ -212,7 +212,7 @@ Learnings remain **untrusted data** in the memory fence ([`memory.py`](../lmloop
 ### 6.1 Online (every session)
 
 1. **Act** with tools; actions logged.
-2. **Context build:** inject `spirit_block()` = seed + compressed self + top traits (frozen per run, same stability idea as [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) §0.2 R-STABLE).
+2. **Context build:** inject `spirit_block()` = seed + compressed self + top traits (frozen per run, same stability idea as [DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md) §0.2 R-STABLE).
 3. Optional: after significant user feedback, allow one **`reflect_thought`** tool call (bounded) — not required every turn.
 
 ### 6.2 Offline (existing hooks extended)
@@ -326,7 +326,7 @@ Constants in code: promotion thresholds, action retention window, max open thoug
 | **P2** | `reflect_thought` tool + `thoughts.jsonl`; extend `retro.md` | Thoughts stay local |
 | **P3** | `spirit.md` distill skill + `traits.jsonl` + self snapshots | User review step |
 | **P4** | Graph node types; `spirit_distill_after_mine` hook in `loop.py` | Opt-in automation |
-| **P5** | FTS5 index includes thoughts/actions ([DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md)) | Search “why we do X” |
+| **P5** | FTS5 index includes thoughts/actions ([DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md)) | Search “why we do X” |
 
 Each phase is shippable alone. P0 already improves continuity for users who hand-write `self.md`.
 
@@ -385,4 +385,4 @@ Lead with evidence; keep summaries to 2–5 sentences; disclose when learnings o
 - Whether FTS5 indexing should include trait text by default.
 ```
 
-This document is the target architecture; implementation should follow [DEVELOPMENT.md](../DEVELOPMENT.md) (tests per phase, no parallel registries, append-only truth).
+This document is the target architecture; implementation should follow [DEVELOPMENT.md](../../DEVELOPMENT.md) (tests per phase, no parallel registries, append-only truth).

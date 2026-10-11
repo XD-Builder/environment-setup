@@ -1192,6 +1192,13 @@ def _record_until_budget_usage(run: UntilRun, cfg: dict) -> None:
     maker_count = _maker_event_count(run.events)
     util_tok = (run_tokens / token_budget) if token_budget > 0 else 0.0
     util_steps = maker_count / max_steps if max_steps else 0.0
+    reuse_edges = 0
+    artifact_count = 0
+    if run.path and run.path.is_file():
+        store = UntilArtifactStore(run.path)
+        artifacts = store.load_artifacts()
+        artifact_count = len(artifacts)
+        reuse_edges = sum(1 for row in artifacts if row.get("refs"))
     usage.record(
         "until.budget",
         utilization_tok=round(util_tok, 4),
@@ -1199,6 +1206,9 @@ def _record_until_budget_usage(run: UntilRun, cfg: dict) -> None:
         control_mode=run.until_control(cfg),
         paused=run.is_paused(),
         done=run.is_done(),
+        token_budget=token_budget,
+        reuse_edges=reuse_edges,
+        artifact_count=artifact_count,
     )
 
 

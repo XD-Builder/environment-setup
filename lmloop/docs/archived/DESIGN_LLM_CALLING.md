@@ -8,7 +8,7 @@ This is the **completions calling** spec: which HTTP goes to the model, how one
 `act()` turn gather/answers, and how outer loops budget those turns. Control-flow
 graphs are [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md). Knowledge-graph
 memory is [DESIGN_LOOP_AND_GRAPH.md](DESIGN_LOOP_AND_GRAPH.md). Internals overview:
-[ARCHITECTURE.md](ARCHITECTURE.md).
+[ARCHITECTURE.md](../ARCHITECTURE.md).
 
 Do not add an LLM router, LangGraph, or the OpenAI SDK.
 

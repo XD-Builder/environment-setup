@@ -17,17 +17,12 @@ lmloop/
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
 │   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
-│   ├── archived/               # shipped design specs (see archived/README.md)
-│   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (partial)
+│   ├── archived/               # shipped design specs (usage evals, company, campaigns, spirit, assertion pyramid, meta control, … — see archived/README.md)
+│   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (Phases A–C shipped)
 │   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker shipped
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, canvas TUI shipped; parallel agents deferred
-│   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
+│   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; Layer E deferred
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
-│   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
-│   ├── DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates, local traces (shipped)
-│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
-│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
-│   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
 │   ├── DESIGN_CLAUDE_CODE_PARITY.md  # proposed: MCP + Claude Code–class harness parity
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
@@ -604,7 +599,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 - **pr** — layers 1–3 (invariants, ROUGE-1 / BLEU-1 / bag-of-words cosine, rubric citation, tool order, redundant calls, rollback, abstention). A pass-rate drop greater than 2% fails.
 - **nightly** — layers 1–4 (distractors and schema mutations). A miss fails the scheduled job as an alert and does not set `blocks_merge`.
 
-`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md).
+`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md).
 
 ---
 

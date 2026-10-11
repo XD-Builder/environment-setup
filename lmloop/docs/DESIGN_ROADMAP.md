@@ -5,11 +5,12 @@
 **Covers:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
 [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
-[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) (partial) ·
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (proposed) ·
+[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) (shipped) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (partial) ·
 [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (research) ·
-[DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) (proposed) ·
-[DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) (proposed)
+[DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (shipped) ·
+[DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) (shipped) ·
+[DESIGN_META_CONTROL_AND_BUDGET.md](archived/DESIGN_META_CONTROL_AND_BUDGET.md) (shipped)
 
 ## Verdict
 
@@ -190,7 +191,7 @@ Dotted edges point at deferred work and name what it would build on.
 | 0 · Shipped defects | **Shipped** | V0 blocked classification, `until_max_steps`, GraphView hot path, `company` graph |
 | 1 · Snapshots | **Shipped** | R1–R2 |
 | 2 · Derived checks | **Shipped** | V0–V10 including V7–V9 |
-| 3 · Frozen block + matching | **Shipped** | C1, B1–B3, A2–A4; A5 parse cache still open |
+| 3 · Frozen block + matching | **Shipped** | C1, B1–B3, A2–A5 |
 | 4 · Faster inner loop | **Shipped** | V7 targeted tests, V8 proposals |
 | 5 · Concurrency lock + spend | **Shipped** | K1–K3 |
 | 6 · Fan-out + joins, flow mining | **Mostly shipped** | D1–D3, W1–W5; **W6** KG run nodes open |
@@ -203,8 +204,8 @@ Dotted edges point at deferred work and name what it would build on.
 | Deferred | Revisit when |
 |---|---|
 | Parallel agents (default local path) | `lmloop flow` shows, on a remote endpoint, frequent moments with ≥ 2 runnable frontier nodes and sequential waiting dominating wall-clock |
-| Multi-agent company (`--docker --company`, manifest, worktrees) | **Shipped** for Docker + remote allowlist only. Sequential local LM Studio is unchanged. See [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) |
-| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | **Shipped.** See [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) |
+| Multi-agent company (`--docker --company`, manifest, worktrees) | **Shipped** for Docker + remote allowlist only. Sequential local LM Studio is unchanged. See [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) |
+| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | **Shipped.** See [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) |
 | Per-cycle probe | Runs finish on checker-only `pass` and later regress |
 | Embeddings rerank | FTS5 recall demonstrably misses paraphrases users search for |
 

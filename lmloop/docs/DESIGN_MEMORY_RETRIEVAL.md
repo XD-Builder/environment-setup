@@ -32,8 +32,8 @@ none of them changes the source of truth.
 | D (minimal) FTS5/scan index, `memory index` / `reindex`, `/stats` line | `memory_index.py`, `cli.py`, `repl.py` |
 | Canvas layout helper (cross-doc) | `knowledge_graph.canvas_view`, text via `format_canvas_text` |
 
-**Not shipped yet:** A1 perf harness, Layer E (E1–E3). A5 and D3–D8 are shipped.
-`canvas_tui.py` full-screen UI.
+**Not shipped yet:** A1 perf harness (skipped-by-default tests), Layer E (E1–E3 embeddings rerank).
+**Also shipped (cross-doc):** `canvas_tui.py` full-screen canvas ([DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)).
 
 ---
 

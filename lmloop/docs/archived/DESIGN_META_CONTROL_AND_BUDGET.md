@@ -1,9 +1,9 @@
 # Design: Meta-style control and budget-aware `until`
 
-**Status:** partial — **M0–M5** shipped except **M4.2** (eval gap rules); **M3** APED for ``until_control: meta``  
+**Status:** shipped — **M0–M5** including **M4.2** eval gap rules (`until.low_utilization`, `until.low_reuse`); open questions in §10 remain.  
 **Date:** 2026-10-11  
 **Sources:** [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) · Meta arXiv [2609.38147](https://arxiv.org/abs/2609.38147) · BATS [2511.17006](https://arxiv.org/abs/2511.17006)  
-**Depends on:** [ARCHITECTURE.md](ARCHITECTURE.md) · `loop.py` · `graph.py` · `checks.py` · `traces.py` · `campaign.py` · `company/orchestrator.py`  
+**Depends on:** [ARCHITECTURE.md](../ARCHITECTURE.md) · `loop.py` · `graph.py` · `checks.py` · `traces.py` · `campaign.py` · `company/orchestrator.py`  
 **Does not replace:** external check/eval pass-fail ([`loop.py`](../lmloop/loop.py) invariant), authored graphs, or harness evolution evals.
 
 ---
@@ -349,7 +349,7 @@ Wire into [`evals.py`](../../lmloop/lmloop/evals.py) gap lines: `until.low_utili
 | **M3.2** | `next_role` / fail-path integration | `loop.py` | M3.1 | yes |
 | **M3.3** | Single-action shortcut (skip APED) | `loop.py` | M3.1 | yes |
 | **M4.1** | `lmloop until analyze <run>` metrics CLI | `cli.py`, `workflow.py` | M1.1 | yes |
-| **M4.2** | Eval gap rules for utilization | `evals.py` | M0.2 | optional |
+| **M4.2** | Eval gap rules for utilization | `evals.py` | M0.2 | **Shipped** |
 | **M5.1** | Graph node `control:` | `graph.py` | M0.3 | yes |
 | **M5.2** | Company packet + orchestrator assess | `company/*` | M1.* | yes |
 

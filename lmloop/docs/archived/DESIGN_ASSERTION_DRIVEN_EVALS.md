@@ -4,7 +4,7 @@
 **Date:** 2026-10-11
 **Depends on:** `contracts.py`, `traces.py`, `tools.validate_tool_arguments`, `agent.act`, `evals/golden/`
 **Companions:** [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
-[ARCHITECTURE.md](ARCHITECTURE.md) · [DEVELOPMENT.md](../DEVELOPMENT.md)
+[ARCHITECTURE.md](../ARCHITECTURE.md) · [DEVELOPMENT.md](../../DEVELOPMENT.md)
 
 This is the change record for treating lmloop generations like deterministic software:
 a four-layer assertion pyramid, three CI gates, and a local trace queue. Usage-gap

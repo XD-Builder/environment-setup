@@ -5,8 +5,8 @@
 **Focus:** Harness design (especially **prompts**), **harness evolution** loops, and patterns that yield the highest **performance ROI** per token and per engineering hour  
 **Audience lenses:** CTO / Distinguished Engineer · Chief Scientist / AI Architect · General AGI resolution (deep reflection + output framework)  
 **Companions:** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
-[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
-[DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) ·
+[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
+[DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) ·
 [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md)
 
 ---
