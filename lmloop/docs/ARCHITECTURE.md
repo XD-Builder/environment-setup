@@ -71,7 +71,7 @@ lmloop/
 │   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
-│   │   ├── system.md           # system prompt: how to work, memory, safety
+│   │   ├── system.md           # standing harness: curiosity, learning, growth, safety floor
 │   │   ├── _author.md          # meta-prompt for skill drafting (not user-facing)
 │   │   ├── _graph_mine.md      # mine phase: propose graph edges (private)
 │   │   ├── _reconcile.md       # review contradicts edges (private)
@@ -505,11 +505,12 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 
 At session start (and each isolated `/until` or graph `act()`), the system prompt is assembled from:
 
-1. `skills/system.md` — core instructions (how to work, memory discipline, safety, style)
+1. `skills/system.md` — standing harness: curiosity, learning, growth, and the safety floor. Repo-specific practice is learned, not added as more lines here.
 2. Live tool name list
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
-5. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old)
+5. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
+6. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
 
 `/context` is the audit view of what the model is holding. It prints two sections, colored when stdout is a TTY (`Console.write_lines`):
 

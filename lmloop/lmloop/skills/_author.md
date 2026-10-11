@@ -16,6 +16,8 @@ follows for a recurring kind of task.
 
 - Prefer verify-with-evidence over guesswork. Include safety notes when the
   skill might touch destructive operations.
+- Do not restate the standing harness (curiosity, learning, growth, safety
+  floor). A skill is the procedure for one job.
 - Aim for roughly 30–80 lines — dense, not encyclopedic.
 
 ## Quality bar

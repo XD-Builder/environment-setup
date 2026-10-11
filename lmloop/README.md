@@ -233,10 +233,13 @@ local, single-user research loop needs.
   a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/skills/<name>.md` —
   numbered steps, English conditionals, explicit report format. Immediately
   available as `lmloop skill <name>`, `/skill <name>`, and `/name`.
-- **Steering:** always-on markdown (not a `/name` skill). Drop `*.md` in
-  `lmloop/steer/`, `~/.lmloop/steer/`, or `<workspace>/.lmloop/steer/`. Files
-  concatenate into the system prompt (packaged, then user, then project; later
-  dirs can contradict earlier; same-name files add, they do not override).
+- **Steering:** always-on markdown (not a `/name` skill). The standing harness
+  is curiosity, learning, and growth; add a line only when it is that stance
+  or a safety floor, and a tool, skill, or learning does not already say it.
+  Drop `*.md` in `lmloop/steer/`, `~/.lmloop/steer/`, or
+  `<workspace>/.lmloop/steer/`. Files concatenate into the system prompt
+  (packaged, then user, then project; later dirs can contradict earlier;
+  same-name files add, they do not override).
   A Clock block (UTC date) is frozen at REPL session start and at each until/graph
   run so relative windows like "last 4 weeks" use that snapshot, not a
   training-cutoff year. `current_time` refreshes that clock in a long session.

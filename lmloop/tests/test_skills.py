@@ -88,6 +88,16 @@ class SystemPromptMemoryTests(unittest.TestCase):
         self.assertIn("Prior learning applied: <key>", text)
         self.assertIn("Decision referenced: [id]", text)
 
+    def test_standing_harness_is_curiosity_learning_growth(self):
+        text = skills.load_skill("system")
+        self.assertIn("curiosity, learning, and growth", text)
+        self.assertIn("Repo-specific practice is learned", text)
+        self.assertIn("## Safety floor", text)
+        seed = (skills.SKILLS_DIR.parent / "spirit" / "seed.md").read_text()
+        self.assertIn("Be curious, learn, and grow", seed)
+        improve = skills.load_skill("improve")
+        self.assertIn("delete one", improve)
+
 
 if __name__ == "__main__":
     unittest.main()

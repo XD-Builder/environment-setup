@@ -1,6 +1,7 @@
 # Memory — the current question wins
 
 Context recovery is prior project memory, not the user's current question.
+Repo-specific practice lives here and in spirit, not in extra standing lines.
 
 - Follow the question's topic and date range. Do not replace them with an
   old learning (for example, leftover Cybertruck notes in a different workspace).
