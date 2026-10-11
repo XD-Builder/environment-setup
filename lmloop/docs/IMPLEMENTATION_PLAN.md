@@ -32,6 +32,7 @@ and what to move to `archived/` when done.
 | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | Stay while open questions remain |
 | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | Stay while open questions remain |
 | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spec | **P0–P5 shipped** | Stay while open questions remain |
+| [DESIGN_CLAUDE_CODE_PARITY.md](DESIGN_CLAUDE_CODE_PARITY.md) | Spec | **Proposed** — MCP + harness parity | Stay in `docs/` until M0–M2 ship |
 
 **Archival rule:** When a design doc’s **user-facing** behavior is in README + ARCHITECTURE and
 remaining ideas live only in Non-goals, set `Status: shipped`, move the file to
@@ -66,6 +67,7 @@ flowchart TD
   company["Multi-agent company"]:::done
   spirit["Evolving spirit"]:::done
   horizon["Long-horizon campaigns"]:::done
+  mcp["Claude Code parity M0–M2 MCP"]:::wave4
   emb["Memory Layer E embeddings"]:::defer
   par["Parallel local agents"]:::defer
 
@@ -80,9 +82,24 @@ flowchart TD
   dag --> company
   mem --> spirit
   company --> horizon
+  horizon --> mcp
+  sandbox --> mcp
   mem -.-> emb
   dag -.-> par
 ```
+
+### Wave 4 — MCP and Claude Code–class harness (proposed)
+
+See [DESIGN_CLAUDE_CODE_PARITY.md](DESIGN_CLAUDE_CODE_PARITY.md). Suggested serial order:
+
+| Order | Track | Tasks | Depends on |
+|-------|--------|-------|------------|
+| 4.1 | MCP config + CLI | **M0.1–M0.3** | — |
+| 4.2 | Stdio + lazy meta-tools | **M1.1–M1.4** | M0 |
+| 4.3 | HTTP, OAuth, gates | **M2.1–M2.4** | M1, `GatePolicy` |
+| 4.4 | Hooks, task tool, REPL UX | **M3–M4** | M2 |
+
+Wave 4 is **latency-neutral** for users with `mcp_enabled: false`. Revisit eager MCP schemas only for remote/frontier endpoints.
 
 ### Wave 0 — Already shipped (archive only)
 
