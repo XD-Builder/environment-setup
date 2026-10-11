@@ -297,6 +297,7 @@ def _run_skill_node(
         handoff=summary or "(none)",
         check_output="(none)",
         shell_evidence="(none)",
+        budget_block="(not an until run)",
     )
     ev = graph_facade.isolated_act(
         cfg, model, eval_prompt,
@@ -347,8 +348,10 @@ def _run_until_node(
     if resume_until:
         urun = UntilRun.load(Path(resume_until))
     else:
+        from .config import cfg_str
         urun = UntilRun.create(
             node.goal, checks=node.checks, keeps=node.keeps,
+            until_control=node.control or cfg_str(cfg, "until_control"),
         )
     from . import graph as graph_facade
     result = graph_facade.run_until(

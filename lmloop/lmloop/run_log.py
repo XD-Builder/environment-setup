@@ -52,17 +52,28 @@ class UntilRun:
     events: list = field(default_factory=list)
 
     @classmethod
-    def open_new(cls, path: Path, *, goal: str, check_cmd: "str | None",
-                 meta_checks: list, explicit: bool) -> "UntilRun":
+    def open_new(
+        cls,
+        path: Path,
+        *,
+        goal: str,
+        check_cmd: "str | None",
+        meta_checks: list,
+        explicit: bool,
+        until_control: "str | None" = None,
+    ) -> "UntilRun":
         run = cls(path=path, goal=goal, check_cmd=check_cmd or None, events=[])
-        run._write({
+        meta: dict = {
             "ts": utc_now(),
             "role": META_ROLE,
             "goal": goal,
             "check_cmd": check_cmd or "",
             "checks": meta_checks,
             "explicit": explicit,
-        })
+        }
+        if until_control:
+            meta["until_control"] = until_control
+        run._write(meta)
         return run
 
     @classmethod

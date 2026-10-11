@@ -54,6 +54,7 @@ lmloop "why does setup.sh fail on linux?"   # one-shot task
 lmloop until make the tests pass          # derive a check plan from the project
 lmloop until --check 'pytest -q' make tests pass
 lmloop until --keep 'npm run lint' tidy the parser
+lmloop until --control budget --check 'pytest -q' fix the failing test
 lmloop until                            # resume latest open until-run
 lmloop graph company
 lmloop graph                            # resume latest open graph-run
@@ -321,6 +322,7 @@ zsh completion for `config set` is generated from these keys.
 | `context_length` | `0` | `0` = auto-detect from LM Studio; else token window override |
 | `context_reserve` | `2048` | Tokens reserved for the model reply on the fill bar |
 | `until_max_steps` | `12` | Maker cycles per `until` invocation before pause (`/continue` or `lmloop until` with no goal resumes) |
+| `until_control` | `off` | `off`, `budget`, or `meta` — budget visibility and compact run state for long until goals (`--control` overrides per run) |
 | `until_mine` | `true` | After an until-run passes, mine learnings from its transcripts |
 | `mine_on_exit` | `false` | When true, leaving the REPL mines the current session |
 | `check_inference` | `auto` | `auto`: when `until` has no `--check` or `--keep`, derive a check plan from the goal, project files, repo docs, memory, and earlier runs. `off`: plain-language goals go straight to the evaluator |

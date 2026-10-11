@@ -1,6 +1,6 @@
 """Facade for the until workflow (``until_runner`` + shared run log)."""
 
-from . import agent, skills
+from . import agent, skills, snapshot
 from .config import project_dir
 from .run_log import DONE_ROLES, META_ROLE, PAUSE_ROLE
 from .tools import run_shell
@@ -69,6 +69,7 @@ __all__ = [
     "run_shell",
     "run_until",
     "skills",
+    "snapshot",
     "split_check_flags",
     "superseded_until_hint",
     "until_dir",

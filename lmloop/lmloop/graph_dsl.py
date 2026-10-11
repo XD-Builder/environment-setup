@@ -33,6 +33,7 @@ class NodeDef:
     checks: tuple = ()
     keeps: tuple = ()
     needs: tuple = ()
+    control: "str | None" = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def _parse_node(tokens: list) -> NodeDef:
             name=name, kind=kind, goal=parsed.goal,
             check_cmd=parsed.check_cmd, checks=parsed.checks, keeps=parsed.keeps,
             needs=needs,
+            control=parsed.control,
         )
     skill, task, checks, keeps = _parse_skill_rest(rest)
     return NodeDef(
@@ -154,7 +156,7 @@ def _parse_node(tokens: list) -> NodeDef:
 
 
 def _parse_skill_rest(words: list) -> "tuple[str, str, tuple, tuple]":
-    checks, keeps, rest, err = split_check_flags(words)
+    checks, keeps, _control, rest, err = split_check_flags(words)
     if err:
         raise GraphError("skill node --check/--keep needs a command")
     if not rest:

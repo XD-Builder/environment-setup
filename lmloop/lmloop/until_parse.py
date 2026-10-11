@@ -5,7 +5,11 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 
-_UNTIL_USAGE = "usage: until [--check <cmd>] [--keep <cmd>] <goal>"
+from .run_artifacts import normalize_until_control
+
+_UNTIL_USAGE = (
+    "usage: until [--check <cmd>] [--keep <cmd>] [--control off|budget|meta] <goal>"
+)
 
 
 @dataclass(frozen=True)
@@ -15,6 +19,7 @@ class UntilArgs:
     goal: str = ""
     checks: tuple = ()
     keeps: tuple = ()
+    control: "str | None" = None
     err: "str | None" = None
 
     @property
@@ -22,41 +27,46 @@ class UntilArgs:
         return self.checks[0] if self.checks else None
 
 
-def split_check_flags(words: list) -> "tuple[tuple, tuple, list, str | None]":
-    """Pull repeatable ``--check`` / ``--keep`` off ``words``. Fail closed."""
+def split_check_flags(words: list) -> "tuple[tuple, tuple, str | None, list, str | None]":
+    """Pull ``--check`` / ``--keep`` / ``--control`` off ``words``. Fail closed."""
     checks: list[str] = []
     keeps: list[str] = []
+    control: "str | None" = None
     rest: list[str] = []
     i = 0
     while i < len(words):
         word = words[i]
+        if word == "--control":
+            if i + 1 >= len(words) or str(words[i + 1]).startswith("--"):
+                return (), (), None, [], _UNTIL_USAGE
+            control = normalize_until_control(str(words[i + 1]))
+            i += 2
+            continue
         if word in ("--check", "--keep"):
             if i + 1 >= len(words) or str(words[i + 1]).startswith("--"):
-                return (), (), [], _UNTIL_USAGE
+                return (), (), None, [], _UNTIL_USAGE
             cmd = str(words[i + 1]).strip()
             if not cmd:
-                return (), (), [], _UNTIL_USAGE
+                return (), (), None, [], _UNTIL_USAGE
             (checks if word == "--check" else keeps).append(cmd)
             i += 2
             continue
         rest.append(word)
         i += 1
-    return tuple(checks), tuple(keeps), rest, None
+    return tuple(checks), tuple(keeps), control, rest, None
 
 
 def parse_until_args(words: list) -> UntilArgs:
-    """Parse an until goal. ``err`` is set when the line is invalid."""
-    checks, keeps, rest, err = split_check_flags(words)
+    checks, keeps, control, rest, err = split_check_flags(words)
     if err:
         return UntilArgs(err=err)
     goal = " ".join(rest).strip()
     if not goal:
-        return UntilArgs(checks=checks, keeps=keeps, err=_UNTIL_USAGE)
-    return UntilArgs(goal=goal, checks=checks, keeps=keeps)
+        return UntilArgs(checks=checks, keeps=keeps, control=control, err=_UNTIL_USAGE)
+    return UntilArgs(goal=goal, checks=checks, keeps=keeps, control=control)
 
 
 def parse_until_arg_line(arg: str) -> UntilArgs:
-    """Parse a REPL /until argument line with shlex (quoted --check)."""
     try:
         words = shlex.split(arg or "")
     except ValueError as e:

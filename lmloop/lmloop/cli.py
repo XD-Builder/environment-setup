@@ -2,7 +2,8 @@
 
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
-    lmloop until [--check cmd] [--keep cmd] goal  work until checks or an evaluator pass; REPL on a TTY
+    lmloop until [--check cmd] [--keep cmd] [--control off|budget|meta] goal  until checks/eval pass; REPL on a TTY
+    lmloop until analyze [run] [--json]   offline metrics for one until run
     lmloop until                    resume latest open until-run
     lmloop graph <name>             run an authored workflow graph; REPL on a TTY
     lmloop graph                    resume latest open graph-run
@@ -82,6 +83,7 @@ from .config import (
     DEFAULTS,
     cfg_bool,
     cfg_int,
+    cfg_str,
     coerce_config_value,
     load_config,
     save_config,
@@ -430,11 +432,48 @@ def cmd_models(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
+def cmd_until_analyze(cfg: dict, words: list, console: Console) -> int:
+    from .run_artifacts import analyze_until_run, format_until_analyze
+
+    as_json = False
+    rest: list[str] = []
+    for word in words:
+        if word == "--json":
+            as_json = True
+        else:
+            rest.append(word)
+    run_key = rest[0] if rest else ""
+    until_dir = loop_mod.until_dir()
+    if run_key:
+        candidate = until_dir / run_key
+        if not candidate.suffix:
+            candidate = until_dir / f"{run_key}.jsonl"
+        path = candidate
+    else:
+        runs = loop_mod.all_until_runs()
+        if not runs:
+            console.error("no until runs to analyze")
+            return 1
+        path = runs[-1]
+    try:
+        metrics = analyze_until_run(path, cfg)
+    except (OSError, FileNotFoundError) as exc:
+        console.error(str(exc))
+        return 1
+    console.info(format_until_analyze(metrics, as_json=as_json))
+    return 0
+
+
 def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
+    if words and words[0] == "analyze":
+        return cmd_until_analyze(cfg, words[1:], console)
     if not words:
         run = loop_mod.latest_open_until_run()
         if run is None:
-            console.error("usage: lmloop until [--check <cmd>] [--keep <cmd>] <goal>")
+            console.error(
+                "usage: lmloop until [--check <cmd>] [--keep <cmd>] "
+                "[--control off|budget|meta] <goal>"
+            )
             console.info("  no open until-run to resume")
             return 1
         return _cli_run_until(cfg, console, run)
@@ -446,8 +485,10 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
     if model is None:
         return 1
     hint = loop_mod.superseded_until_hint()
+    control = parsed.control or cfg_str(cfg, "until_control")
     run = loop_mod.UntilRun.create(
         parsed.goal, checks=parsed.checks, keeps=parsed.keeps,
+        until_control=control,
     )
     console.hint(f"[until · {parsed.goal}]")
     if hint:

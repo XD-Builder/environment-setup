@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmloop import memory, workflow
+from lmloop import workflow
 from lmloop.commands import parse_flow_words
 from lmloop.config import DEFAULTS
 

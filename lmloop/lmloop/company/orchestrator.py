@@ -101,7 +101,9 @@ def _launch_many(launcher, packets: list) -> list:
 def _packet(manifest: Manifest, *, run_id: str, node, role, model: str, handoff: str,
             worktree: str, base_sha: str, campaign_id: str, plan_revision: int,
             plan_block: str, memory_block: str, token_budget: int,
-            board: str = "") -> dict:
+            board: str = "", assignment: str = "",
+            artifact_ids: "list | None" = None,
+            artifacts_uri: str = "") -> dict:
     checks = [{"cmd": cmd, "role": "check"} for cmd in (node.checks or ())]
     skill_text = ""
     if node.kind == "skill" and node.skill:
@@ -115,7 +117,7 @@ def _packet(manifest: Manifest, *, run_id: str, node, role, model: str, handoff:
         checks=checks, memory_block=memory_block,
     )
     goal = node.goal or node.task or node.skill or node.name
-    return {
+    packet = {
         "manifest_sha": manifest.sha,
         "manifest_path": str(manifest.path),
         "run_id": run_id,
@@ -136,6 +138,13 @@ def _packet(manifest: Manifest, *, run_id: str, node, role, model: str, handoff:
         "prefix_hash": prefix_hash(prefix),
         "host": _is_host(node),
     }
+    if assignment:
+        packet["assignment"] = assignment
+    if artifact_ids:
+        packet["artifact_ids"] = list(artifact_ids)
+    if artifacts_uri:
+        packet["artifacts_uri"] = artifacts_uri
+    return packet
 
 
 def run_company(
@@ -259,14 +268,24 @@ def run_company(
             elif campaign_id:
                 from ..campaign import board_clip
                 board = board_clip(campaign_id, role=name)
+            from ..run_artifacts import worker_packet_extras
+
+            join = graph_run.join_handoff(node)
+            extras = worker_packet_extras(Path(wt_path)) if wt_path else {}
+            assignment = str(extras.get("assignment") or "")
+            if not assignment and join.strip():
+                assignment = join.strip()[:800]
             packets.append(_packet(
                 loaded, run_id=run_id, node=node, role=role, model=model,
-                handoff=graph_run.join_handoff(node),
+                handoff=join,
                 worktree=wt_path, base_sha=base if wt_path else "",
                 campaign_id=campaign_id, plan_revision=plan_revision,
                 plan_block=block, memory_block="",
                 token_budget=cfg_int(cfg, "run_token_budget"),
                 board=board,
+                assignment=assignment,
+                artifact_ids=extras.get("artifact_ids"),
+                artifacts_uri=str(extras.get("artifacts_uri") or ""),
             ))
         batches.append([item["node"] for item in packets])
         for item in packets:
