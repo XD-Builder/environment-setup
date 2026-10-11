@@ -1,19 +1,28 @@
-# Illustrative OpenRouter model IDs for future `company_models_allowlist` defaults.
-# Validate tool-calling support on https://openrouter.ai/models before autonomous runs.
-# Override via lmloop config when company mode ships (see DESIGN_MULTI_AGENT_COMPANY.md).
+# Company model allowlist. A line is an id when it starts with "- " and contains
+# one vendor/model token. Prices are USD per million tokens, input/output,
+# from the OpenRouter catalog on 2026-10-11.
+#
+# Planner: DeepSeek V4 Pro ($0.21 / $0.42), a 1.6T coding model.
+# Maker and checker: Claude Haiku 5.5 ($0.10 / $0.50), built for subagents
+# and cheaper on both sides than gpt-4o-mini ($0.15 / $0.60).
+# Sonnet 4 ($3 / $15) and gpt-4o-mini stay so older manifests still pass.
+# google/gemini-2.5-flash-preview is gone from the catalog and is not listed.
 
 tiers:
   planner:
     description: Strategy, retro, long-horizon planning
     models:
+      - deepseek/deepseek-v4-pro
       - anthropic/claude-sonnet-4
   maker:
     description: Implementation with tools
     models:
+      - anthropic/claude-haiku-5.5
+      - deepseek/deepseek-v4-pro
       - openai/gpt-4o-mini
-      - google/gemini-2.5-flash-preview
   checker:
     description: QA, eval, cheap verification passes
     models:
+      - anthropic/claude-haiku-5.5
       - openai/gpt-4o-mini
       - meta-llama/llama-3.3-70b-instruct

@@ -4,13 +4,13 @@
   "isolation": "worktree",
   "graph": "company",
   "models": {
-    "default": "anthropic/claude-sonnet-4",
-    "eval": "openai/gpt-4o-mini",
+    "default": "deepseek/deepseek-v4-pro",
+    "eval": "anthropic/claude-haiku-5.5",
     "roles": {
-      "ceo": "anthropic/claude-sonnet-4",
-      "build": "openai/gpt-4o-mini",
-      "qa": "openai/gpt-4o-mini",
-      "mine": "openai/gpt-4o-mini"
+      "ceo": "deepseek/deepseek-v4-pro",
+      "build": "deepseek/deepseek-v4-pro",
+      "qa": "anthropic/claude-haiku-5.5",
+      "mine": "anthropic/claude-haiku-5.5"
     }
   },
   "resources": {
