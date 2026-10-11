@@ -166,9 +166,7 @@ Credentials and the Docker socket are **not** mounted into the sandbox in v1 (de
 
 ---
 
-## Combined example (future)
-
-When both features ship:
+## Combined example
 
 ```bash
 export OPENROUTER_API_KEY='sk-or-…'
@@ -177,5 +175,21 @@ lmloop config set auto_start_server false
 lmloop --docker until --check 'python -m unittest discover -s tests -q' 'fix the failing tests'
 ```
 
-Until then, use OpenRouter **without** `--docker`, or run Docker manually and keep using host
-lmloop for the agent loop.
+Company mode is a further opt-in. It refuses loopback unless `company_remote` is true,
+and it refuses any model that is not in `company/openrouter_autonomous.yaml` or
+`company_models_allowlist`:
+
+```bash
+lmloop campaign start --goal "Ship the auth slice"
+lmloop --docker company run --goal "Ship the auth slice" --campaign <id>
+```
+
+A supervisor can resume the same campaign on later days. State stays on the host;
+`--docker-persist` only reattaches the container:
+
+```bash
+lmloop --docker-persist campaign resume <id>
+```
+
+`campaign_end_of_day_utc` pauses after that UTC hour. `campaign_max_days` (default 30)
+requires `lmloop campaign extend` before work continues.

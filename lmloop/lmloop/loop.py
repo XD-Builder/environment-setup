@@ -1002,6 +1002,8 @@ def _run_until_body(
                 echo_status(status_mod.msg_until_mining())
                 paths = [p for p in run.session_paths() if p.exists()]
                 mine(paths)
+                from .spirit import note_distill_request
+                note_distill_request(cfg, paths)
                 run.append("mine", "next")
                 echo_status(status_mod.msg_until_done())
                 return run

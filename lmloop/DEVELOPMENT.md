@@ -115,6 +115,9 @@ find yourself updating two lists, you have already added debt.
 | Live-thread file manifest (`/context`) | `context.py` |
 | Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
 | Usage aggregation, gap rules, `lmloop eval` | `evals.py` (leaf: `usage`, stdlib) |
+| Company manifest, allowlist, worktrees, orchestrator | `company/` (`chat` may import `company.allowlist` only) |
+| Campaign plan, board, ticks | `campaign.py` (host writer; workers do not import it to append) |
+| Spirit seed, actions, thoughts, self | `spirit/` |
 | `@path` completion + ref expansion | `files_index.py` |
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
@@ -155,6 +158,10 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
   import `tools` at module load (lazy `ToolResult` only for image attachments).
 - `loop.py` must not import `graph`.
 - `agent.py` / `stream.py` / `display.py` / `chat.py` must not import `loop` or `graph`.
+- `company/` may import `graph`, `loop`, and `exec`. `graph` and `loop` must not import `company`.
+- `chat.py` may import `company.allowlist` only (leaf). It must not import the orchestrator.
+- `campaign.py` and `spirit/` must not import `agent`, `loop`, `graph`, or `company.orchestrator`.
+- Workers do not append learnings, decisions, campaign rows, or spirit distill output.
 
 ### Keep components small
 

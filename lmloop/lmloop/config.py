@@ -80,6 +80,16 @@ DEFAULTS = {
     "graph_mine": True,  # after a terminal graph pass (no mine node), mine learnings
     "use_graph": False,  # opt-in knowledge-graph memory (JSONL nodes/edges)
     "vision": "auto",  # auto = LM Studio VLM flag; true/false override
+    # Wave 3. Parallel width, self size, and plan injection stay constants.
+    "company_remote": False,  # allow --company against loopback or a non-OpenRouter host
+    "company_models_allowlist": "",  # comma-separated ids added to the packaged list
+    "use_spirit": True,
+    "spirit_actions": True,  # append actions.jsonl; turn off on a shared machine
+    "spirit_distill_after_mine": False,
+    "spirit_remote": False,  # send self.md to a remote base_url
+    "campaign_daily_reflect": True,
+    "campaign_end_of_day_utc": "",  # empty = off; else hour 0-23 UTC
+    "campaign_max_days": 30,
 }
 
 _CONFIG_WARNED = False
@@ -126,6 +136,16 @@ def coerce_config_value(key: str, value):
                 return max(0, int(value.strip()))
             except ValueError:
                 return None
+        return None
+    if key == "campaign_end_of_day_utc":
+        if isinstance(value, str):
+            low = value.strip()
+            if low == "":
+                return ""
+            if low.isdigit() and 0 <= int(low) <= 23:
+                return str(int(low))
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 23:
+            return str(value)
         return None
     if key == "autonomous_snapshot":
         if isinstance(value, str):

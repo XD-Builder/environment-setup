@@ -1041,7 +1041,7 @@ def search_files(pattern: str, path: str = ".",
 _TOOL_DEFS: "dict[str, ToolDef]" = {}
 READONLY_OMIT = frozenset({
     "write_file", "update_file", "move_file", "delete_file",
-    "remember", "log_decision", "graph_add_edge",
+    "remember", "log_decision", "graph_add_edge", "reflect_thought",
 })
 
 
@@ -1078,7 +1078,16 @@ def build_tools(cfg: dict, confirm_gate=None,
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
     extra: "list[Path]" = [Path(p).resolve() for p in (extra_readable or [])]
 
+    def _company_refuse() -> "str | None":
+        from .company.allowlist import worker_memory_blocked
+        if worker_memory_blocked(cfg):
+            return "refused: company workers cannot write project memory"
+        return None
+
     def _remember(insight: str, type: str = "pattern", key: str = "", confidence: int = 7) -> str:
+        refused = _company_refuse()
+        if refused:
+            return refused
         row = memory.add_learning(
             insight, type=type, key=key, confidence=confidence, cfg=cfg,
         )
@@ -1088,6 +1097,9 @@ def build_tools(cfg: dict, confirm_gate=None,
         )
 
     def _decide(decision: str, rationale: str = "", supersedes: str = "") -> str:
+        refused = _company_refuse()
+        if refused:
+            return refused
         row = memory.add_decision(
             decision, rationale=rationale, supersedes=supersedes, cfg=cfg,
         )
@@ -1099,8 +1111,25 @@ def build_tools(cfg: dict, confirm_gate=None,
     def _recall(query: str) -> str:
         return memory.search_memory(query, learning_limit=10, decision_limit=10, cfg=cfg)
 
+    def _reflect(kind: str, text: str, evidence: str = "") -> str:
+        refused = _company_refuse()
+        if refused:
+            return refused
+        from .spirit import SpiritError, add_thought
+        if not config.cfg_bool(cfg, "use_spirit"):
+            return "spirit is off — `lmloop config set use_spirit true`"
+        refs = [part.strip() for part in evidence.split(",") if part.strip()]
+        try:
+            row = add_thought(kind, text, evidence=refs, cfg=cfg)
+        except SpiritError as exc:
+            return f"error: {exc}"
+        return f"Recorded thought [{row['id']}]"
+
     def _graph_edge(from_type: str, from_key: str, to_type: str, to_key: str,
                     edge_type: str, note: str) -> str:
+        refused = _company_refuse()
+        if refused:
+            return refused
         return knowledge_graph.try_add_graph_edge(
             from_type, from_key, to_type, to_key, edge_type, note,
         )
@@ -1301,6 +1330,22 @@ def build_tools(cfg: dict, confirm_gate=None,
             "with its rationale. Pass supersedes=<id> to reverse an earlier decision. "
             "After logging, the user-visible reply must include `Decision referenced: [id]`.",
             {"decision": s, "rationale": s, "supersedes": s}, ["decision"], _decide,
+        ),
+        ToolDef(
+            "reflect_thought",
+            "Record one short reflection about this repo (lesson, hypothesis, style, or meta). "
+            "Thoughts stay local until /spirit distill promotes them. Do not use this for facts "
+            "that belong in remember.",
+            {
+                "kind": {"type": "string", "enum": ["lesson", "hypothesis", "style", "meta"]},
+                "text": s,
+                "evidence": {
+                    "type": "string",
+                    "description": "comma-separated action or session ids",
+                },
+            },
+            ["kind", "text"], _reflect,
+            enum_fields={"kind": ("lesson", "hypothesis", "style", "meta")},
         ),
         ToolDef(
             "recall_memory",

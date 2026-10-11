@@ -203,8 +203,8 @@ Dotted edges point at deferred work and name what it would build on.
 | Deferred | Revisit when |
 |---|---|
 | Parallel agents (default local path) | `lmloop flow` shows, on a remote endpoint, frequent moments with ≥ 2 runnable frontier nodes and sequential waiting dominating wall-clock |
-| Multi-agent company (`--docker --company`, manifest, worktrees) | See [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md); build after sandbox S1–S6 + DAG fan-out D1–D3 + OpenRouter allowlist |
-| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | See [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md); H0–H2 after sandbox persist; H3+ with company P4 |
+| Multi-agent company (`--docker --company`, manifest, worktrees) | **Shipped** for Docker + remote allowlist only. Sequential local LM Studio is unchanged. See [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) |
+| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | **Shipped.** See [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) |
 | Per-cycle probe | Runs finish on checker-only `pass` and later regress |
 | Embeddings rerank | FTS5 recall demonstrably misses paraphrases users search for |
 

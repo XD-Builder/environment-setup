@@ -28,9 +28,9 @@ and what to move to `archived/` when done.
 | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | Phases A–C shipped (Wave 1) | Stay until Phase D is cut to Non-goals |
 | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | **V0–V5 shipped** | Stay in `docs/` while open questions remain |
 | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | **S11–S13 + V5 shipped**; optimizer not built | Stay in `docs/` (human-gated) |
-| [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | Proposed | Archive when company mode ships |
-| [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | Proposed | Archive when campaigns ship |
-| [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spec | Proposed | Archive when spirit layer ships |
+| [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | Stay while open questions remain |
+| [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | Stay while open questions remain |
+| [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spec | **P0–P5 shipped** | Stay while open questions remain |
 
 **Archival rule:** When a design doc’s **user-facing** behavior is in README + ARCHITECTURE and
 remaining ideas live only in Non-goals, set `Status: shipped`, move the file to
@@ -62,9 +62,9 @@ flowchart TD
   sandbox["Sandbox Phase S S1–S13"]:::done
   canvas["Canvas TUI C2–C3"]:::done
   cont["Continual harness S11–S13 + evals V5"]:::done
-  company["Multi-agent company"]:::wave3
-  spirit["Evolving spirit"]:::wave3
-  horizon["Long-horizon campaigns"]:::wave3
+  company["Multi-agent company"]:::done
+  spirit["Evolving spirit"]:::done
+  horizon["Long-horizon campaigns"]:::done
   emb["Memory Layer E embeddings"]:::defer
   par["Parallel local agents"]:::defer
 
@@ -122,13 +122,15 @@ section (probe, parallel agents, or the unattended optimizer).
 
 ---
 
-### Wave 3 — Multi-agent and identity (remote + Docker)
+### Wave 3 — Multi-agent and identity (remote + Docker) (**shipped**)
 
-| Order | Track | Doc | Depends on |
-|-------|--------|-----|------------|
-| 3.1 | Multi-agent company | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | **S1–S6**, DAG **D1–D3**, OpenRouter allowlist in guide |
-| 3.2 | Evolving spirit | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Stable memory + optional `use_graph`; best after **D** index and mine/retro paths |
-| 3.3 | Long-horizon campaigns | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Company orchestrator, **`--docker-persist`**, plan/board stores |
+| Order | Track | Doc | Status |
+|-------|--------|-----|--------|
+| 3.1 | Multi-agent company | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | **Shipped.** `lmloop --docker company run`. JSON manifest (stdlib; no YAML parser). Allowlist is the packaged file plus `company_models_allowlist`. At most two workers, and only with distinct worktrees. `ceo` / `retro` / `plan` / `mine` stay on the host. Local sequential mode is unchanged |
+| 3.2 | Evolving spirit | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | **Shipped.** Seed, actions, thoughts, traits, `self.md`, `/spirit distill --patch`. `spirit_self_max_chars` is the constant 4000 |
+| 3.3 | Long-horizon campaigns | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | **Shipped.** `lmloop campaign` store, plan block, board, daily tick, end-of-day hour, `campaign_max_days`. The `plan` skill's JSON is validated before it touches the plan |
+
+Constants, not config keys: `COMPANY_MAX_PARALLEL = 2`, orchestrator model = `eval_model` or the manifest, spirit injection cap 4000, plan injection cap 4000. Parallel **local** agents stay deferred.
 
 Use [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) when
 designing **V3/V5** and spirit reflection — research, not a gating dependency.

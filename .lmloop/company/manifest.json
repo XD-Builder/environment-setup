@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "integration_branch": "master",
+  "isolation": "worktree",
+  "graph": "company",
+  "models": {
+    "default": "deepseek/deepseek-v4-pro",
+    "eval": "anthropic/claude-haiku-5.5",
+    "roles": {
+      "ceo": "deepseek/deepseek-v4-pro",
+      "build": "deepseek/deepseek-v4-pro",
+      "qa": "anthropic/claude-haiku-5.5",
+      "mine": "anthropic/claude-haiku-5.5"
+    }
+  },
+  "resources": {
+    "max_parallel_workers": 2
+  },
+  "milestones": [
+    {
+      "id": "M1",
+      "name": "Package imports",
+      "gates": [
+        {"cmd": "python -c \"import lmloop\"", "role": "authoritative"}
+      ]
+    }
+  ],
+  "roles": {
+    "ceo": {"worktree": "", "graph_nodes": ["ceo"]},
+    "builder": {"worktree": "builder", "graph_nodes": ["build"]},
+    "qa": {"worktree": "qa", "graph_nodes": ["qa"]},
+    "mine": {"worktree": "", "graph_nodes": ["mine"]}
+  }
+}

@@ -24,14 +24,14 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
-│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # Docker + OpenRouter multi-agent orchestrator (proposed)
-│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns, planning memory, multi-day reflect + coordination (proposed)
-│   ├── DESIGN_EVOLVING_SPIRIT.md  # per-repo persona: actions → thoughts → knowledge → self (proposed)
+│   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
+│   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
+│   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
 ├── sandbox/
 │   └── Dockerfile              # reference image; lmloop sandbox build records @sha256:
 ├── company/
-│   └── openrouter_autonomous.yaml  # illustrative allowlist tiers (company mode proposed)
+│   └── openrouter_autonomous.yaml  # company allowlist; config may add ids, not remove the check
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(main())
@@ -55,6 +55,9 @@ lmloop/
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── evals.py                # usage gaps + abstention Act/Abstain/Pair
+│   ├── campaign.py             # multi-day plan, board, reflect ticks (host writer)
+│   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator
+│   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
 │   ├── canvas_tui.py          # knowledge-canvas projection and full-screen keys
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
@@ -68,7 +71,7 @@ lmloop/
 │   ├── graph.py                # authored workflow graphs: parser + runner
 │   ├── steer.py                # always-on steering markdown + live clock
 │   ├── skills/                 # packaged skill prompts (markdown playbooks)
-│   │   ├── system.md           # system prompt: how to work, memory, safety
+│   │   ├── system.md           # standing harness: curiosity, learning, growth, safety floor
 │   │   ├── _author.md          # meta-prompt for skill drafting (not user-facing)
 │   │   ├── _graph_mine.md      # mine phase: propose graph edges (private)
 │   │   ├── _reconcile.md       # review contradicts edges (private)
@@ -502,11 +505,12 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 
 At session start (and each isolated `/until` or graph `act()`), the system prompt is assembled from:
 
-1. `skills/system.md` — core instructions (how to work, memory discipline, safety, style)
+1. `skills/system.md` — standing harness: curiosity, learning, growth, and the safety floor. Repo-specific practice is learned, not added as more lines here.
 2. Live tool name list
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
-5. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old)
+5. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
+6. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
 
 `/context` is the audit view of what the model is holding. It prints two sections, colored when stdout is a TTY (`Console.write_lines`):
 
