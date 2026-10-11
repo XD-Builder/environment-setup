@@ -133,7 +133,9 @@ find yourself updating two lists, you have already added debt.
 | Paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, project slug, `utc_now()` | `config.py` |
 | Live-thread file manifest (`/context`) | `context.py` |
 | Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
-| Usage aggregation, gap rules, `lmloop eval` | `evals.py` (leaf: `usage`, stdlib) |
+| Usage aggregation, gap rules, abstention pairs, `lmloop eval` report | `evals.py` (leaf: `usage`, stdlib) |
+| Assertion pyramid, golden gates | `contracts.py` (stdlib at import; grammar/tool checkers lazy-import `graph` / `tools`) |
+| Local spans, eval queue, golden inbox | `traces.py` (`contracts`, `usage`, `config`, `memory`) |
 | Company manifest, allowlist, worktrees, orchestrator | `company/` (`chat` may import `company.allowlist` only) |
 | Campaign plan, board, ticks | `campaign.py` (host writer; workers do not import it to append) |
 | Spirit seed, actions, thoughts, self | `spirit/` |
@@ -177,6 +179,9 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
   import `tools` at module load (lazy `ToolResult` only for image attachments).
 - `loop.py` must not import `graph`.
 - `agent.py` / `stream.py` / `display.py` / `chat.py` must not import `loop` or `graph`.
+- `contracts.py` stays a stdlib import. Grammar and tool-arg checkers may lazy-import `graph` and `tools`. It must not import `agent` at module load.
+- `traces.py` may import `contracts`, `usage`, `config`, and `memory`. It must not import `agent`, `loop`, or `graph`.
+- `agent.py` may import `traces` lazily inside `act` / `_dispatch_tools`.
 - `company/` may import `graph`, `loop`, and `exec`. `graph` and `loop` must not import `company`.
 - `chat.py` may import `company.allowlist` only (leaf). It must not import the orchestrator.
 - `campaign.py` and `spirit/` must not import `agent`, `loop`, `graph`, or `company.orchestrator`.

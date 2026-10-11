@@ -24,6 +24,7 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
+│   ├── DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates, local traces (shipped)
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
 │   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
 │   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
@@ -55,6 +56,8 @@ lmloop/
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── evals.py                # usage gaps + abstention Act/Abstain/Pair
+│   ├── contracts.py            # assertion pyramid (schema, rubric, trajectory, gates)
+│   ├── traces.py               # local spans, eval queue, golden inbox
 │   ├── campaign.py             # multi-day plan, board, reflect ticks (host writer)
 │   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator
 │   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
@@ -89,6 +92,9 @@ lmloop/
 │   │   └── development.md      # model-facing coding bar
 │   └── graphs/                 # packaged workflow graphs
 │       └── company.md          # ceo → build → qa → mine
+├── evals/golden/               # versioned assertion cases + baseline rates
+│   ├── cases.json
+│   └── baseline.json
 ├── tests/                      # unittest test_*.py; e2e_harness.py drives scripted-model baselines
 ```
 
@@ -442,7 +448,10 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ~/.lmloop/
 ├── config.json                     # user settings (base_url, model, max_rounds, …)
 ├── usage.jsonl                     # append-only local feature-usage events (opt-out: LMLOOP_USAGE=0)
+├── traces.jsonl                    # act() parent span + tool child spans (LMLOOP_TRACE=0 off)
+├── eval_queue.jsonl                # parents waiting for `lmloop eval --drain`
 ├── evals/last_report.json          # last `lmloop eval` report (gaps + flow)
+├── evals/golden_inbox.jsonl        # anonymized span failures (promote by hand)
 ├── history                         # REPL prompt history (prompt_toolkit)
 ├── skills/<name>.md                # user-authored skills (override packaged)
 ├── steer/<name>.md                 # user always-on steering (concatenated)
@@ -576,6 +585,23 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop models` | List models on server |
 | `lmloop config get\|set\|show` | Manage settings |
 | `lmloop completion zsh` | Print zsh completion script |
+| `lmloop eval [--json \| --design \| --abstention]` | Usage gaps, or Act/Abstain/Pair on fixture pairs |
+| `lmloop eval --gate commit\|pr\|nightly` | Assertion pyramid against `evals/golden/` |
+| `lmloop eval --drain` / `--inbox` | Score the local trace queue / show flagged spans |
+
+---
+
+## Assertion gates
+
+**Files:** `contracts.py`, `traces.py`, `evals/golden/`
+
+`lmloop eval` without a gate flag still aggregates `usage.jsonl`. `--abstention` scores Act/Abstain/Pair on fixture pairs; that is separate from the trajectory abstain checker below. `--gate` runs the packaged golden cases with no model call:
+
+- **commit** — layer 1 only (JSON Schema subset, Python `ast`, graph DSL, `validate_tool_arguments`, span shape). Any miss fails.
+- **pr** — layers 1–3 (invariants, ROUGE-1 / BLEU-1 / bag-of-words cosine, rubric citation, tool order, redundant calls, rollback, abstention). A pass-rate drop greater than 2% fails.
+- **nightly** — layers 1–4 (distractors and schema mutations). A miss fails the scheduled job as an alert and does not set `blocks_merge`.
+
+`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md).
 
 ---
 

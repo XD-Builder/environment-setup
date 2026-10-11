@@ -3,7 +3,8 @@
 **Status:** V0–V5 shipped. `lmloop eval --abstention` scores Act / Abstain / Pair from fixture pairs. Automated harness search stays human-gated.
 **Date:** 2026-10-07 · **Revised:** 2026-10-09 (HERA co-evolution + abstention metrics)
 **Depends on:** `usage.py`, `evals.py`, `loop.py`, `agent.py`, `tools.py`
-**Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) (`lmloop flow`) ·
+**Companions:** [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) (contract gates; separate from usage gaps) ·
+[DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) (`lmloop flow`) ·
 [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) ·
 [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
 [DEVELOPMENT.md](../DEVELOPMENT.md)

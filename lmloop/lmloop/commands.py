@@ -169,28 +169,41 @@ def parse_count_words(
     return CountRequest(error=usage)
 
 
-EvalMode = Literal["text", "json", "design", "abstention"]
+EvalMode = Literal[
+    "text", "json", "design", "abstention", "gate", "drain", "inbox",
+]
 EVAL_JSON_FLAG = "--json"
 EVAL_DESIGN_FLAGS = ("--design", "--design-doc")
 EVAL_ABSTENTION_FLAG = "--abstention"
-EVAL_FLAGS = (EVAL_JSON_FLAG, *EVAL_DESIGN_FLAGS, EVAL_ABSTENTION_FLAG)
+EVAL_GATE_FLAG = "--gate"
+EVAL_DRAIN_FLAG = "--drain"
+EVAL_INBOX_FLAG = "--inbox"
+EVAL_GATE_NAMES = ("commit", "pr", "nightly")
+EVAL_FLAGS = (
+    EVAL_JSON_FLAG, *EVAL_DESIGN_FLAGS, EVAL_ABSTENTION_FLAG,
+    EVAL_GATE_FLAG, EVAL_DRAIN_FLAG, EVAL_INBOX_FLAG,
+)
 
 
 def eval_usage(invocation: str = "lmloop eval") -> str:
     """Usage line for ``lmloop eval``. ``--design-doc`` is an alias of ``--design``."""
-    return f"usage: {invocation} [--json | --design | --abstention]"
+    return (
+        f"usage: {invocation} [--json | --design | --abstention | "
+        "--gate commit|pr|nightly | --drain | --inbox]"
+    )
 
 
 @dataclass(frozen=True)
 class EvalRequest:
     """Parsed ``lmloop eval`` invocation.
 
-    ``--json`` and ``--design`` are exclusive. ``--abstention`` may also take
-    ``--json``. ``as_json`` is that combination.
+    ``--json`` may accompany ``--abstention``, ``--gate``, ``--drain``, or
+    ``--inbox``. ``--design`` is exclusive. ``gate`` is set only for ``--gate``.
     """
 
     mode: EvalMode = "text"
     as_json: bool = False
+    gate: str = ""
     error: str = ""
 
 
@@ -199,27 +212,49 @@ def parse_eval_words(
     *,
     invocation: str = "lmloop eval",
 ) -> EvalRequest:
-    """Text, json, design, or abstention. A second flag is an error except abstention+json."""
+    """One eval mode. ``--json`` may combine with abstention, gate, drain, or inbox."""
     seen: list[str] = []
-    for word in words:
+    gate = ""
+    index = 0
+    while index < len(words):
+        word = words[index]
         if word == EVAL_JSON_FLAG:
             kind = "json"
         elif word in EVAL_DESIGN_FLAGS:
             kind = "design"
         elif word == EVAL_ABSTENTION_FLAG:
             kind = "abstention"
+        elif word == EVAL_DRAIN_FLAG:
+            kind = "drain"
+        elif word == EVAL_INBOX_FLAG:
+            kind = "inbox"
+        elif word == EVAL_GATE_FLAG:
+            kind = "gate"
+            if index + 1 >= len(words) or words[index + 1] not in EVAL_GATE_NAMES:
+                return EvalRequest(error=eval_usage(invocation))
+            index += 1
+            gate = words[index]
         else:
             return EvalRequest(error=eval_usage(invocation))
         if kind in seen:
             return EvalRequest(error=eval_usage(invocation))
         seen.append(kind)
+        index += 1
     kinds = set(seen)
     if "design" in kinds and kinds != {"design"}:
         return EvalRequest(error=eval_usage(invocation))
-    if kinds == {"abstention", "json"}:
-        return EvalRequest(mode="abstention", as_json=True)
-    if kinds == {"abstention"}:
-        return EvalRequest(mode="abstention")
+    primary = kinds - {"json"}
+    if len(primary) > 1:
+        return EvalRequest(error=eval_usage(invocation))
+    as_json = "json" in kinds
+    if "abstention" in kinds:
+        return EvalRequest(mode="abstention", as_json=as_json)
+    if "gate" in kinds:
+        return EvalRequest(mode="gate", as_json=as_json, gate=gate)
+    if "drain" in kinds:
+        return EvalRequest(mode="drain", as_json=as_json)
+    if "inbox" in kinds:
+        return EvalRequest(mode="inbox", as_json=as_json)
     if kinds == {"json"}:
         return EvalRequest(mode="json")
     if kinds == {"design"}:
@@ -317,9 +352,12 @@ COMMANDS: tuple = (
                 accepts_arg=True, arg_hint="[get|set] …", slash=False, cli=True),
     CommandMeta("completion", "shell completion script",
                 accepts_arg=True, arg_hint="zsh", slash=False, cli=True),
-    CommandMeta("eval", "summarize local usage evals and improvement gaps",
-                accepts_arg=True, arg_hint="[--json | --design | --abstention]",
-                slash=False, cli=True, reserve_skill=False),
+    CommandMeta(
+        "eval",
+        "usage gaps, abstention pairs, assertion gates, and the trace inbox",
+        accepts_arg=True,
+        arg_hint="[--json | --design | --abstention | --gate commit|pr|nightly | --drain | --inbox]",
+        slash=False, cli=True, reserve_skill=False),
     CommandMeta("sandbox", "Docker sandbox status, build, reset (opt-in --docker)",
                 accepts_arg=True,
                 arg_hint="[status | build | shell | reset [--deps] | rm]",

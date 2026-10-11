@@ -70,7 +70,7 @@ lmloop skill investigate "vim plug install hangs"
 lmloop skill review                     # review the current branch diff
 lmloop models                           # models loaded on the server
 lmloop config show|get|set              # settings (~/.lmloop/config.json)
-lmloop eval [--json | --design | --abstention]
+lmloop eval [--json | --design | --abstention | --gate commit|pr|nightly | --drain | --inbox]
 lmloop --docker until make the tests pass   # opt-in ephemeral sandbox (host is the default)
 lmloop sandbox status                   # local (host) unless this process passed --docker
 lmloop --docker company run --goal "…"  # opt-in company: remote allowlist, worktrees, gates
@@ -78,6 +78,24 @@ lmloop campaign start --goal "…"        # multi-day plan store (host); resume 
 lmloop spirit log                       # actions, thoughts, traits for this repo
 lmloop completion zsh                   # print zsh completion script
 ```
+
+### Eval gates
+
+`lmloop eval` with no gate flag still prints usage gaps from `~/.lmloop/usage.jsonl`.
+`lmloop eval --abstention` is the separate Act/Abstain/Pair report on fixture pairs.
+The assertion gates do not call a model:
+
+| Command | What it checks | Failure |
+|---|---|---|
+| `lmloop eval --gate commit` | Layer 1: JSON shape, Python syntax, graph DSL, tool arguments, span shape | any miss |
+| `lmloop eval --gate pr` | Layers 1–3, including tool order, abstention, and rubric scores | pass rate drops by more than 2% |
+| `lmloop eval --gate nightly` | Layers 1–4, including prompt distractors and schema mutations | alert (the scheduled job goes red) |
+
+Cases live in `lmloop/evals/golden/cases.json`. Each `act()` also writes a local
+trace under `~/.lmloop/traces.jsonl` and queues it for `lmloop eval --drain`.
+Failures are anonymized into `~/.lmloop/evals/golden_inbox.jsonl` for review.
+`LMLOOP_TRACE=0` or `LMLOOP_USAGE=0` turns tracing off. Details:
+[docs/DESIGN_ASSERTION_DRIVEN_EVALS.md](docs/DESIGN_ASSERTION_DRIVEN_EVALS.md).
 
 ### Creating skills
 

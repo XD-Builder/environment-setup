@@ -144,7 +144,31 @@ class EvalRequestTests(unittest.TestCase):
                 req = parse_eval_words(words)
                 self.assertEqual(req.error, eval_usage())
                 self.assertEqual(req.mode, "text")
-        self.assertEqual(EVAL_FLAGS, ("--json", "--design", "--design-doc", "--abstention"))
+        gated = parse_eval_words(["--gate", "commit", "--json"])
+        self.assertEqual(gated.mode, "gate")
+        self.assertEqual(gated.gate, "commit")
+        self.assertTrue(gated.as_json)
+        self.assertEqual(parse_eval_words(["--drain"]).mode, "drain")
+        self.assertEqual(parse_eval_words(["--inbox"]).mode, "inbox")
+        for words in (
+            ["--json", "--design"],
+            ["--design", "--design-doc"],
+            ["--json", "--json"],
+            ["--abstention", "--design"],
+            ["--gate", "commit", "--abstention"],
+            ["--gate", "hourly"],
+            ["--gate"],
+            ["--drain", "--inbox"],
+            ["--nope"],
+        ):
+            with self.subTest(words=words):
+                req = parse_eval_words(words)
+                self.assertEqual(req.error, eval_usage())
+                self.assertEqual(req.mode, "text")
+        self.assertEqual(
+            EVAL_FLAGS,
+            ("--json", "--design", "--design-doc", "--abstention", "--gate", "--drain", "--inbox"),
+        )
 
 
 class GraphRequestTests(unittest.TestCase):

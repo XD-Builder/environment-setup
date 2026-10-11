@@ -1496,6 +1496,42 @@ def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
     return None
 
 
+def validate_tool_arguments(name: str, arguments: "str | dict") -> "tuple[dict | None, str | None]":
+    """Parse and type-check one tool call. ``(kwargs, None)`` or ``(None, ERROR)``.
+
+    This is the layer-1 boundary for model tool calls: JSON object, required
+    fields, ints, bools, and enums. Unknown names return the parsed object
+    and no error so ``dispatch`` can report ``unknown tool`` first. Extra
+    keys are kept here and dropped later against the impl signature.
+    """
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError as exc:
+            return None, f"ERROR: bad tool arguments: {exc}"
+        if not isinstance(parsed, dict):
+            return None, "ERROR: tool arguments must be a JSON object"
+        kwargs = parsed
+    elif isinstance(arguments, dict):
+        kwargs = dict(arguments)
+    else:
+        return None, "ERROR: tool arguments must be a JSON object"
+    if name not in _TOOL_DEFS:
+        build_tools({})
+    if name not in _TOOL_DEFS:
+        return kwargs, None
+    err = _validate_tool_kwargs(name, kwargs)
+    if err:
+        return None, err
+    return kwargs, None
+
+
+def _arg_error_phase(error: str) -> str:
+    if error.startswith(("ERROR: bad tool arguments", "ERROR: tool arguments must")):
+        return "json"
+    return "validate"
+
+
 def dispatch(impls: dict, name: str, arguments: str) -> str:
     from . import usage
 
@@ -1507,20 +1543,9 @@ def dispatch(impls: dict, name: str, arguments: str) -> str:
     if not fn:
         usage.record("tool.error", name=name, phase="unknown")
         return f"ERROR: unknown tool {name}"
-    # Ensure validation table exists even if build_tools was not called first.
-    if name not in _TOOL_DEFS:
-        build_tools({})
-    try:
-        kwargs = json.loads(arguments or "{}")
-        if not isinstance(kwargs, dict):
-            usage.record("tool.error", name=name, phase="json")
-            return "ERROR: tool arguments must be a JSON object"
-    except json.JSONDecodeError as e:
-        usage.record("tool.error", name=name, phase="json")
-        return f"ERROR: bad tool arguments: {e}"
-    err = _validate_tool_kwargs(name, kwargs)
+    kwargs, err = validate_tool_arguments(name, arguments)
     if err:
-        usage.record("tool.error", name=name, phase="validate")
+        usage.record("tool.error", name=name, phase=_arg_error_phase(err))
         return err
     try:
         params = inspect.signature(fn).parameters

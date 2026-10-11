@@ -26,9 +26,9 @@
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
-    lmloop eval [--json | --design | --abstention] local usage evals and improvement gaps
-                                    (--design-doc is an alias for --design;
-                                     --json may accompany --abstention)
+    lmloop eval [--json | --design | --abstention | --gate commit|pr|nightly | --drain | --inbox]
+                                    (--design-doc aliases --design; --json may
+                                     accompany --abstention, --gate, --drain, --inbox)
     lmloop sandbox [status|build|shell|reset|rm]  Docker sandbox (opt-in; default is host)
     lmloop --docker …                         ephemeral container for this process
     lmloop --docker-persist …                 long-lived container (implies --docker)
@@ -627,7 +627,7 @@ def cmd_skill_cli(cfg: dict, words: list, console: Console) -> int:
 
 
 def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
-    from . import evals
+    from . import contracts, evals, traces
 
     request = parse_eval_words(words, invocation="lmloop eval")
     if request.error:
@@ -642,6 +642,32 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
         validation = evals.load_abstention_pairs(split="validation")
         console.info(evals.format_abstention(train, validation))
         return 0
+    if request.mode == "gate":
+        report = contracts.run_gate(request.gate)
+        if request.as_json:
+            console.info(json.dumps(report.to_dict(), indent=2))
+        else:
+            console.info(contracts.format_gate(report))
+        return 0 if report.ok else 1
+    if request.mode == "drain":
+        report = traces.drain()
+        if request.as_json:
+            console.info(json.dumps(report, indent=2))
+        else:
+            console.info(traces.format_drain(report))
+        return 1 if report["failed"] else 0
+    if request.mode == "inbox":
+        rows = traces.read_inbox()
+        if request.as_json:
+            console.info(json.dumps(rows, indent=2))
+        else:
+            console.info(traces.format_inbox(rows))
+        return 0
+    if request.mode == "design":
+        stats = evals.load_stats()
+        gaps = evals.find_gaps(stats)
+        console.info(evals.design_doc_skeleton(gaps))
+        return 0
     from .workflow import collect_flow_stats
     stats = evals.load_stats()
     gaps = evals.find_gaps(stats)
@@ -651,9 +677,6 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     evals.write_last_report(payload)
     if request.mode == "json":
         console.info(json.dumps(payload, indent=2))
-        return 0
-    if request.mode == "design":
-        console.info(evals.design_doc_skeleton(gaps))
         return 0
     console.info(evals.format_report(stats, gaps, flow=flow, cfg=cfg))
     return 0

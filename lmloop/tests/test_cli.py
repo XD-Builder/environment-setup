@@ -1313,7 +1313,11 @@ class EvalCliTests(unittest.TestCase):
         with redirect_stderr(err), redirect_stdout(io.StringIO()):
             code = main(["eval", "--json", "--design"])
         self.assertEqual(code, 1)
-        self.assertIn("usage: lmloop eval [--json | --design | --abstention]", err.getvalue())
+        self.assertIn(
+            "usage: lmloop eval [--json | --design | --abstention | "
+            "--gate commit|pr|nightly | --drain | --inbox]",
+            err.getvalue(),
+        )
 
     def test_flow_json_and_text(self):
         import json

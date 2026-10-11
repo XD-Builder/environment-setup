@@ -27,6 +27,7 @@ and what to move to `archived/` when done.
 | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Spec | **C2–C3 shipped**; parallel agents deferred | Stay in `docs/` while Part 5 is deferred |
 | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | Phases A–C shipped (Wave 1) | Stay until Phase D is cut to Non-goals |
 | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | **V0–V5 shipped** | Stay in `docs/` while open questions remain |
+| [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) | Spec | **Shipped** — deterministic pyramid, local traces, CI gates | Keep until a judge-model or off-host collector is actually adopted (current non-goals) |
 | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | **S11–S13 + V5 shipped**; optimizer not built | Stay in `docs/` (human-gated) |
 | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | Stay while open questions remain |
 | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | Stay while open questions remain |
