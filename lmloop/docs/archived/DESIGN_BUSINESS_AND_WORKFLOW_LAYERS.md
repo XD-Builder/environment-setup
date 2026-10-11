@@ -1,9 +1,9 @@
 # Design: Business layer vs workflow layer
 
-**Status:** proposed — research complete; refactor not started  
+**Status:** shipped — BL-1–BL-6 (run log, DSL, finish hook, runners, facades)  
 **Date:** 2026-10-11  
-**Depends on:** `loop.py`, `graph.py`, `workflow.py`, `checks.py`, `agent.py`, `knowledge_graph.py`, `company/orchestrator.py`, [DEVELOPMENT.md](../DEVELOPMENT.md) import graph  
-**Companions:** [ARCHITECTURE.md](ARCHITECTURE.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [archived/DESIGN_GRAPH_ENGINEERING.md](archived/DESIGN_GRAPH_ENGINEERING.md)
+**Depends on:** `run_log.py`, `until_runner.py`, `graph_dsl.py`, `graph_runner.py`, `workflow_finish.py`, `checks.py`, `knowledge_graph.py`, [DEVELOPMENT.md](../../DEVELOPMENT.md) import graph  
+**Companions:** [ARCHITECTURE.md](../ARCHITECTURE.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md)
 
 ---
 
