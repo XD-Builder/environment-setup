@@ -24,7 +24,8 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; full FTS5 spec partial
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md  # usage.jsonl → gaps; V5 abstention pairs
-│   ├── DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates, local traces (shipped)
+│   ├── archived/DESIGN_ASSERTION_DRIVEN_EVALS.md  # 4-layer contracts, gates (shipped)
+│   ├── DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md  # proposed: business vs workflow module split
 │   ├── DESIGN_MULTI_AGENT_COMPANY.md  # company mode shipped (Docker + allowlist; local parallel still deferred)
 │   ├── DESIGN_LONG_HORIZON_PLANNING.md  # campaigns shipped (plan, board, daily tick)
 │   ├── DESIGN_EVOLVING_SPIRIT.md  # spirit layer shipped (seed, actions, thoughts, self)
@@ -602,7 +603,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 - **pr** — layers 1–3 (invariants, ROUGE-1 / BLEU-1 / bag-of-words cosine, rubric citation, tool order, redundant calls, rollback, abstention). A pass-rate drop greater than 2% fails.
 - **nightly** — layers 1–4 (distractors and schema mutations). A miss fails the scheduled job as an alert and does not set `blocks_merge`.
 
-`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md).
+`act()` appends a parent span and one child per tool call to `~/.lmloop/traces.jsonl`, and enqueues the parent. Tool arguments are omitted. `lmloop eval --drain` scores the queue later; failures are anonymized into `evals/golden_inbox.jsonl`. `LMLOOP_TRACE=0` and `LMLOOP_USAGE=0` both disable this. Full write-up: [archived/DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md).
 
 ---
 

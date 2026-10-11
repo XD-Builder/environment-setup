@@ -95,7 +95,7 @@ Cases live in `lmloop/evals/golden/cases.json`. Each `act()` also writes a local
 trace under `~/.lmloop/traces.jsonl` and queues it for `lmloop eval --drain`.
 Failures are anonymized into `~/.lmloop/evals/golden_inbox.jsonl` for review.
 `LMLOOP_TRACE=0` or `LMLOOP_USAGE=0` turns tracing off. Details:
-[docs/DESIGN_ASSERTION_DRIVEN_EVALS.md](docs/DESIGN_ASSERTION_DRIVEN_EVALS.md).
+[docs/archived/DESIGN_ASSERTION_DRIVEN_EVALS.md](docs/archived/DESIGN_ASSERTION_DRIVEN_EVALS.md).
 
 ### Creating skills
 
