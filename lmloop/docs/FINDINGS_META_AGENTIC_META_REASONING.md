@@ -188,7 +188,7 @@ Cross-reference [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md §2](FINDINGS_OPEN_SOUR
 
 ## 5. Incorporation proposal for lmloop
 
-**Design doc status:** Research / recommended phases — not a committed build track until added to [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+**Design doc status:** Actionable spec in [DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md) (modes `off` | `budget` | `meta`, tasks M0–M5).
 
 ### 5.1 Principles
 
