@@ -92,6 +92,8 @@ The assertion gates do not call a model:
 | `lmloop eval --gate commit` | Layer 1: JSON shape, Python syntax, graph DSL, tool arguments, span shape | any miss |
 | `lmloop eval --gate pr` | Layers 1–3, including tool order, abstention, and rubric scores | pass rate drops by more than 2% |
 | `lmloop eval --gate nightly` | Layers 1–4, including prompt distractors and schema mutations | alert (the scheduled job goes red) |
+| `lmloop eval --gate harness-adopt` | Golden cases tagged `eval` (layers 1–3) plus validation abstention Act/Abstain | pass rate or abstention drops by more than 2% |
+| `lmloop eval --harness-report [--run PATH]` | Execution summary for harness editors (no model call) | n/a (opt-in artifact) |
 
 Cases live in `lmloop/evals/golden/cases.json`. Each `act()` also writes a local
 trace under `~/.lmloop/traces.jsonl` and queues it for `lmloop eval --drain`.

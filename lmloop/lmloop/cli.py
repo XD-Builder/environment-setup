@@ -27,7 +27,7 @@
     lmloop models                   list models on the server
     lmloop config get|set|show      settings
     lmloop completion zsh           print zsh completion script
-    lmloop eval [--json | --design | --abstention | --gate commit|pr|nightly | --drain | --inbox]
+    lmloop eval [--json | --design | --abstention | --gate commit|pr|nightly|harness-adopt | --harness-report [--run PATH] | --drain | --inbox]
                                     (--design-doc aliases --design; --json may
                                      accompany --abstention, --gate, --drain, --inbox)
     lmloop sandbox [status|build|shell|reset|rm]  Docker sandbox (opt-in; default is host)
@@ -690,6 +690,27 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
         else:
             console.info(contracts.format_gate(report))
         return 0 if report.ok else 1
+    if request.mode == "harness-report":
+        from . import harness_report
+        from .config import load_config
+        from pathlib import Path as PathLib
+
+        run_path = request.harness_run.strip()
+        if run_path:
+            path = PathLib(run_path)
+        else:
+            path = harness_report.latest_run_path()
+        if path is None or not path.is_file():
+            console.error("no until/graph run log found — pass --run PATH")
+            return 1
+        out = harness_report.write_harness_execution_report(path, cfg=load_config())
+        payload = harness_report.build_harness_execution_report(path, cfg=load_config())
+        if request.as_json:
+            console.info(json.dumps(payload, indent=2))
+        else:
+            console.info(harness_report.format_harness_report(payload))
+            console.info(f"  wrote: {out}")
+        return 0
     if request.mode == "drain":
         report = traces.drain()
         if request.as_json:

@@ -1,5 +1,8 @@
 {
   "commit": 1.0,
   "pr": 1.0,
-  "nightly": 1.0
+  "nightly": 1.0,
+  "harness-adopt": 1.0,
+  "harness-adopt-act": 1.0,
+  "harness-adopt-abstain": 1.0
 }

@@ -1317,7 +1317,8 @@ class EvalCliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(
             "usage: lmloop eval [--json | --design | --abstention | "
-            "--gate commit|pr|nightly | --drain | --inbox]",
+            "--gate commit|pr|nightly|harness-adopt | --harness-report [--run PATH] | "
+            "--drain | --inbox]",
             err.getvalue(),
         )
 

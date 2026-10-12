@@ -76,6 +76,8 @@ class GraphRun(_GraphRun):
     @classmethod
     def create(cls, name: str, slug: "str | None" = None) -> "GraphRun":
         from . import graph as graph_facade
+        from .config import load_config
+
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         d = graph_facade.project_dir(slug) / "graphs" / name
         d.mkdir(parents=True, exist_ok=True)
@@ -85,7 +87,12 @@ class GraphRun(_GraphRun):
             path = d / f"{ts}-{n}.jsonl"
             n += 1
         run = cls(path=path, name=name, events=[])
-        run._write({"ts": utc_now(), "role": META_ROLE, "name": name})
+        meta: dict = {"ts": utc_now(), "role": META_ROLE, "name": name}
+        cfg = load_config()
+        from .harness_bundle import attach_harness_meta
+
+        attach_harness_meta(meta, cfg, workspace_root=Path.cwd(), graph_name=name)
+        run._write(meta)
         return run
 from .server import eval_model_name
 from .until_runner import (

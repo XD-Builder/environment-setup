@@ -61,6 +61,8 @@ class UntilRun:
         meta_checks: list,
         explicit: bool,
         until_control: "str | None" = None,
+        cfg: "dict | None" = None,
+        workspace_root: "Path | None" = None,
     ) -> "UntilRun":
         run = cls(path=path, goal=goal, check_cmd=check_cmd or None, events=[])
         meta: dict = {
@@ -73,6 +75,12 @@ class UntilRun:
         }
         if until_control:
             meta["until_control"] = until_control
+        if cfg is not None:
+            from .harness_bundle import attach_harness_meta
+
+            attach_harness_meta(
+                meta, cfg, workspace_root=workspace_root, checks=meta_checks,
+            )
         run._write(meta)
         return run
 
@@ -179,7 +187,14 @@ class GraphRun:
     events: list = field(default_factory=list)
 
     @classmethod
-    def create(cls, name: str, slug: "str | None" = None) -> "GraphRun":
+    def create(
+        cls,
+        name: str,
+        slug: "str | None" = None,
+        *,
+        cfg: "dict | None" = None,
+        workspace_root: "Path | None" = None,
+    ) -> "GraphRun":
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         d = graphs_dir(slug) / name
         d.mkdir(parents=True, exist_ok=True)
@@ -189,7 +204,14 @@ class GraphRun:
             path = d / f"{ts}-{n}.jsonl"
             n += 1
         run = cls(path=path, name=name, events=[])
-        run._write({"ts": utc_now(), "role": META_ROLE, "name": name})
+        meta: dict = {"ts": utc_now(), "role": META_ROLE, "name": name}
+        if cfg is not None:
+            from .harness_bundle import attach_harness_meta
+
+            attach_harness_meta(
+                meta, cfg, workspace_root=workspace_root, graph_name=name,
+            )
+        run._write(meta)
         return run
 
     @classmethod

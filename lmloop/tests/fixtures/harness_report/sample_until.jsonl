@@ -1,0 +1,2 @@
+{"ts": "2026-01-01T00:00:00Z", "role": "meta", "goal": "make tests pass", "check_cmd": "pytest -q", "checks": [{"cmd": "pytest -q", "role": "check", "source": "flag"}], "explicit": true, "harness_bundle_id": "deadbeef"}
+{"ts": "2026-01-01T00:01:00Z", "step": 1, "role": "check", "status": "fail", "results": [{"output": "FAILED tests/test_x.py::test_y", "status": "fail"}]}

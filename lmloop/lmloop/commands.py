@@ -170,7 +170,7 @@ def parse_count_words(
 
 
 EvalMode = Literal[
-    "text", "json", "design", "abstention", "gate", "drain", "inbox",
+    "text", "json", "design", "abstention", "gate", "drain", "inbox", "harness-report",
 ]
 EVAL_JSON_FLAG = "--json"
 EVAL_DESIGN_FLAGS = ("--design", "--design-doc")
@@ -178,10 +178,13 @@ EVAL_ABSTENTION_FLAG = "--abstention"
 EVAL_GATE_FLAG = "--gate"
 EVAL_DRAIN_FLAG = "--drain"
 EVAL_INBOX_FLAG = "--inbox"
-EVAL_GATE_NAMES = ("commit", "pr", "nightly")
+EVAL_GATE_NAMES = ("commit", "pr", "nightly", "harness-adopt")
+EVAL_HARNESS_REPORT_FLAG = "--harness-report"
+EVAL_RUN_FLAG = "--run"
 EVAL_FLAGS = (
     EVAL_JSON_FLAG, *EVAL_DESIGN_FLAGS, EVAL_ABSTENTION_FLAG,
     EVAL_GATE_FLAG, EVAL_DRAIN_FLAG, EVAL_INBOX_FLAG,
+    EVAL_HARNESS_REPORT_FLAG, EVAL_RUN_FLAG,
 )
 
 
@@ -189,7 +192,8 @@ def eval_usage(invocation: str = "lmloop eval") -> str:
     """Usage line for ``lmloop eval``. ``--design-doc`` is an alias of ``--design``."""
     return (
         f"usage: {invocation} [--json | --design | --abstention | "
-        "--gate commit|pr|nightly | --drain | --inbox]"
+        "--gate commit|pr|nightly|harness-adopt | --harness-report [--run PATH] | "
+        "--drain | --inbox]"
     )
 
 
@@ -204,6 +208,7 @@ class EvalRequest:
     mode: EvalMode = "text"
     as_json: bool = False
     gate: str = ""
+    harness_run: str = ""
     error: str = ""
 
 
@@ -215,6 +220,7 @@ def parse_eval_words(
     """One eval mode. ``--json`` may combine with abstention, gate, drain, or inbox."""
     seen: list[str] = []
     gate = ""
+    harness_run = ""
     index = 0
     while index < len(words):
         word = words[index]
@@ -228,6 +234,14 @@ def parse_eval_words(
             kind = "drain"
         elif word == EVAL_INBOX_FLAG:
             kind = "inbox"
+        elif word == EVAL_HARNESS_REPORT_FLAG:
+            kind = "harness-report"
+        elif word == EVAL_RUN_FLAG:
+            if index + 1 >= len(words):
+                return EvalRequest(error=eval_usage(invocation))
+            harness_run = words[index + 1]
+            index += 2
+            continue
         elif word == EVAL_GATE_FLAG:
             kind = "gate"
             if index + 1 >= len(words) or words[index + 1] not in EVAL_GATE_NAMES:
@@ -251,6 +265,10 @@ def parse_eval_words(
         return EvalRequest(mode="abstention", as_json=as_json)
     if "gate" in kinds:
         return EvalRequest(mode="gate", as_json=as_json, gate=gate)
+    if "harness-report" in kinds:
+        return EvalRequest(
+            mode="harness-report", as_json=as_json, harness_run=harness_run,
+        )
     if "drain" in kinds:
         return EvalRequest(mode="drain", as_json=as_json)
     if "inbox" in kinds:
@@ -259,6 +277,8 @@ def parse_eval_words(
         return EvalRequest(mode="json")
     if kinds == {"design"}:
         return EvalRequest(mode="design")
+    if harness_run and "harness-report" not in kinds:
+        return EvalRequest(error=eval_usage(invocation))
     return EvalRequest(mode="text")
 
 
@@ -356,7 +376,7 @@ COMMANDS: tuple = (
         "eval",
         "usage gaps, abstention pairs, assertion gates, and the trace inbox",
         accepts_arg=True,
-        arg_hint="[--json | --design | --abstention | --gate commit|pr|nightly | --drain | --inbox]",
+        arg_hint="[--json | --design | --abstention | --gate commit|pr|nightly|harness-adopt | --harness-report [--run PATH] | --drain | --inbox]",
         slash=False, cli=True, reserve_skill=False),
     CommandMeta("sandbox", "Docker sandbox status, build, reset (opt-in --docker)",
                 accepts_arg=True,

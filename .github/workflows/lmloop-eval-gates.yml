@@ -30,6 +30,10 @@ jobs:
         if: github.event_name == 'pull_request'
         working-directory: lmloop
         run: PYTHONPATH=. python -m lmloop eval --gate pr --json
+      - name: Harness adoption gate (eval + validation abstention)
+        if: github.event_name == 'pull_request'
+        working-directory: lmloop
+        run: PYTHONPATH=. python -m lmloop eval --gate harness-adopt --json
       - name: Nightly gate
         if: github.event_name == 'schedule'
         working-directory: lmloop

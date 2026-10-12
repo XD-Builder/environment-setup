@@ -61,6 +61,8 @@ lmloop/
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── evals.py                # usage gaps + abstention Act/Abstain/Pair
 │   ├── contracts.py            # assertion pyramid (schema, rubric, trajectory, gates)
+│   ├── harness_bundle.py       # harness_bundle_id fingerprint (H1, leaf)
+│   ├── harness_report.py       # opt-in execution report from run logs (H2)
 │   ├── traces.py               # local spans, eval queue, golden inbox
 │   ├── campaign.py             # multi-day plan, board, reflect ticks (host writer)
 │   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator

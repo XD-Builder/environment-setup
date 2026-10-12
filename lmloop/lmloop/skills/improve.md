@@ -4,9 +4,11 @@ Human-gated. Read the local eval report, pick one action gap, and propose the
 smallest code change. Do not commit.
 
 ## Step 1 — Report
-1. The latest report is `~/.lmloop/evals/last_report.json` (written by `lmloop eval`).
-2. If it is missing, tell the user to run `lmloop eval --json` first.
-3. List gaps with `severity: action` only.
+1. Prefer `~/.lmloop/evals/harness_execution_report.json` when present
+   (`lmloop eval --harness-report [--run PATH]` after an until/graph run).
+2. Otherwise use `~/.lmloop/evals/last_report.json` (`lmloop eval --json`).
+3. List gaps with `severity: action` only (usage report) or summarize harness
+   failures from the execution report (check/eval/gate rows).
 
 ## Step 2 — One gap
 Pick the first action gap. Quote its `id`, `evidence`, and `design_hook`.
@@ -19,7 +21,8 @@ Implement one fix and a test in the same change. Prefer extending
 
 ## Step 4 — Stop
 Show the diff summary and the test command. Do not commit. Do not start a
-second gap in the same turn.
+second gap in the same turn. Before opening a harness PR, run
+`lmloop eval --gate harness-adopt`.
 
 ## Harness edits
 Add a standing line only when it states curiosity, learning, growth, or the

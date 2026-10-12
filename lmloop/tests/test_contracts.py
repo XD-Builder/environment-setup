@@ -231,7 +231,7 @@ class EvalGateCliTests(unittest.TestCase):
         with redirect_stderr(err):
             code = main(["eval", "--gate", "hourly"])
         self.assertEqual(code, 1)
-        self.assertIn("commit|pr|nightly", err.getvalue())
+        self.assertIn("harness-adopt", err.getvalue())
 
     def test_mixed_modes_exit_one(self):
         err = io.StringIO()

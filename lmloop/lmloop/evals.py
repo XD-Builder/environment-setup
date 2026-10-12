@@ -521,6 +521,22 @@ def last_report_path() -> Path:
     return USAGE_PATH.parent / "evals" / "last_report.json"
 
 
+def harness_report_path() -> Path:
+    return USAGE_PATH.parent / "evals" / "harness_execution_report.json"
+
+
+def feedback_case_ids() -> list[str]:
+    from . import contracts
+
+    cases = contracts.load_cases()
+    return sorted(
+        str(case.get("id") or "")
+        for case in cases
+        if contracts.CASE_ROLE_FEEDBACK in contracts.case_roles(case)
+        and case.get("id")
+    )
+
+
 def write_last_report(payload: dict) -> Path:
     path = last_report_path()
     path.parent.mkdir(parents=True, exist_ok=True)

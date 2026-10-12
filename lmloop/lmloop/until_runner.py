@@ -266,6 +266,9 @@ class UntilRun(_UntilRun):
         planned = flags_plan(tuple(check_list), tuple(keeps or ()))
         first = next((item.cmd for item in planned if item.role == "check"), "")
         ctrl = normalize_until_control(until_control) if until_control else None
+        from .config import load_config
+
+        cfg = load_config()
         return cls.open_new(
             path,
             goal=goal,
@@ -273,6 +276,8 @@ class UntilRun(_UntilRun):
             meta_checks=[item.as_dict() for item in planned],
             explicit=bool(planned),
             until_control=ctrl if ctrl and ctrl != "off" else None,
+            cfg=cfg,
+            workspace_root=Path.cwd(),
         )
 
     @classmethod
