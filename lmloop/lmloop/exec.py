@@ -345,6 +345,24 @@ def backend_label() -> str:
     return "local"
 
 
+def run_log_fields() -> dict:
+    """Backend label plus sandbox policy fields when ``--docker`` is active.
+
+    Local runs record only ``backend``. Policy fields let a later ``lmloop eval``
+    correlate a run log with abstention and egress decisions.
+    """
+    backend = active_backend()
+    fields: dict = {"backend": backend_label()}
+    if isinstance(backend, DockerBackend):
+        fields["sandbox_network"] = backend.network
+        if backend.policy_hash:
+            fields["policy_bundle_hash"] = backend.policy_hash
+        if backend.egress_hosts:
+            fields["egress_hosts"] = list(backend.egress_hosts)
+        fields["untrusted"] = bool(backend.untrusted)
+    return fields
+
+
 def install_backend(backend: "ExecBackend") -> None:
     global _ACTIVE
     _ACTIVE = backend

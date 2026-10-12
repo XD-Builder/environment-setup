@@ -17,11 +17,10 @@ lmloop/
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
 │   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
-│   ├── archived/               # shipped design specs (usage evals, assertion pyramid, business/workflow split, meta control, company, campaigns, spirit, … — see archived/README.md)
-│   ├── DESIGN_COMMAND_CONSOLIDATION.md  # memory slash vocabulary (Phases A–C shipped)
-│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker shipped
+│   ├── archived/               # shipped specs (command vocabulary, continual harness, usage evals, … — see archived/README.md)
+│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker; probe deferred
 │   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, canvas TUI shipped; parallel agents deferred
-│   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking shipped; Layer E deferred
+│   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking + perf harness shipped; Layer E deferred
 │   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
 │   ├── DESIGN_CLAUDE_CODE_PARITY.md  # proposed: MCP + Claude Code–class harness parity
 │   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
@@ -474,6 +473,8 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ```
 
 **Project slug** is resolved from git remote (`owner-repo`) or directory name.
+
+`lmloop flow` reads until and graph logs into `FlowStats` and prints eight rules (`budget-bound`, `checker-only`, `flaky-gate`, `blocked-loop`, `repeat-denial`, `dead-node`, `hot-cycle`, `bad-source`). Maker rows carry `denied` and `usage`; check rows carry `tree` when snapshots are on, which is what makes `flaky-gate` measurable. `flaky-gate` stays quiet when no row has a tree. Docker runs also store `sandbox_network` and, when set, `policy_bundle_hash` via `exec.run_log_fields`.
 
 `lmloop eval` aggregates `usage.jsonl` and folds this project's until/graph logs into gaps. Check commands that look like secrets are dropped. An unreadable log sets `run_log_error` and a `run-log-unreadable` gap instead of omitting those signals. The text report's flow section uses the caller's config (`until_max_steps`), the same budget `lmloop flow` uses. Invalid usage rows are counted and surfaced as `invalid-usage-rows`; unknown feature names never reach the feature counter because `validate_row` rejects them first.
 

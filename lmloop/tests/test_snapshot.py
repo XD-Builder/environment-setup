@@ -55,6 +55,7 @@ class SnapshotTests(unittest.TestCase):
             ).stdout
             result = snapshot.take_snapshot({}, root, run_label="abc", step=1)
             self.assertTrue(result.ref.startswith(snapshot.REF_PREFIX))
+            self.assertTrue(result.tree)
             show = subprocess.run(
                 ["git", "-C", str(root), "show", f"{result.ref}:new.txt"],
                 capture_output=True,
@@ -77,6 +78,11 @@ class SnapshotTests(unittest.TestCase):
             _init_repo(root)
             result = snapshot.take_snapshot({}, root, run_label="clean", step=1)
             self.assertEqual(result.ref, "HEAD")
+            head = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD^{tree}"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            self.assertEqual(result.tree, head)
             listed = subprocess.run(
                 ["git", "-C", str(root), "for-each-ref", snapshot.REF_PREFIX],
                 capture_output=True,

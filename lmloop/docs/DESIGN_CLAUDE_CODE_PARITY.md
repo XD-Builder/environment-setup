@@ -2,8 +2,8 @@
 
 **Status:** proposed — feature parity target for interactive coding agents; no code in this doc.  
 **Date:** 2026-10-11  
-**Depends on:** [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md), [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md)  
-**Related:** [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (remote multi-agent), [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) (slash vocabulary)
+**Depends on:** [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md), [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md)  
+**Related:** [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (remote multi-agent), [DESIGN_COMMAND_CONSOLIDATION.md](archived/DESIGN_COMMAND_CONSOLIDATION.md) (slash vocabulary)
 
 ---
 
@@ -269,7 +269,7 @@ Store per `(server_name, endpoint_fingerprint)`:
 }
 ```
 
-Evaluated in `GatePolicy` before confirm prompt. Emits `usage.record` events (`mcp.call`, `mcp.denied`) for [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) SIEM-shaped export.
+Evaluated in `GatePolicy` before confirm prompt. Emits `usage.record` events (`mcp.call`, `mcp.denied`) for [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) SIEM-shaped export.
 
 **Sandbox:** MCP stdio servers run on **host** by default (they are user-installed binaries). Document that `--docker` does **not** auto-spawn MCP children inside the container unless `mcp.inherit_sandbox: true` in server entry (advanced, off by default).
 

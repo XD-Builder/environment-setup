@@ -230,7 +230,8 @@ class GraphRun:
 
     def append(self, role: str, status: str, node: str = "",
                handoff: str = "", session: str = "",
-               until_run: str = "", verify=None, snapshot_ref: str = "") -> None:
+               until_run: str = "", verify=None, snapshot_ref: str = "",
+               **extra: object) -> None:
         step = sum(1 for e in self.events if e.get("role") not in (META_ROLE,))
         row = {
             "ts": utc_now(),
@@ -246,6 +247,9 @@ class GraphRun:
             row["verify"] = verify
         if snapshot_ref:
             row["snapshot_ref"] = snapshot_ref
+        for key, val in extra.items():
+            if val is not None and val != "" and val != () and val != []:
+                row[key] = val
         self._write(row)
 
     def last_work(self) -> "dict | None":

@@ -506,6 +506,41 @@ def _maybe_propose_checks(
     return planned + list(proposed)
 
 
+def _dropped_checks(planned: list, notes: tuple) -> list:
+    """Commands baseline dropped, with the source the flow report needs."""
+    by_cmd = {item.cmd: item for item in planned}
+    prefix = "dropped unrunnable check: "
+    dropped = []
+    for note in notes:
+        if not str(note).startswith(prefix):
+            continue
+        cmd = str(note)[len(prefix):]
+        item = by_cmd.get(cmd)
+        dropped.append({
+            "cmd": cmd,
+            "source": item.source if item is not None else "",
+        })
+    return dropped
+
+
+def _row_fields(cfg: dict, root: "Path | None", snap=None, *, tree_now: bool = False) -> dict:
+    """Policy fields plus the git tree when a snapshot exists or is requested."""
+    from .exec import run_log_fields
+    from . import snapshot
+
+    fields = run_log_fields()
+    if snap is not None:
+        tree = getattr(snap, "tree", "") or ""
+        if tree:
+            fields["tree"] = tree
+        return fields
+    if tree_now and root is not None and str(cfg.get("autonomous_snapshot") or "git") != "off":
+        tree = snapshot.workspace_tree(root)
+        if tree:
+            fields["tree"] = tree
+    return fields
+
+
 def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
                   interactive: bool, confirm_gate, *, model: str,
                   memory_block: "str | None" = None,
@@ -560,13 +595,14 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
             echo_status(row["output"])
         results = list(results) + extra_results
     stored = tuple(stored_list)
-    from .exec import backend_label
+    dropped = _dropped_checks(planned, outcome.notes)
     run.append(
         "baseline", outcome.status,
         handoff="\n".join(outcome.notes),
         checks=[item.as_dict() for item in stored],
         results=results,
-        backend=backend_label(),
+        dropped=dropped or None,
+        **_row_fields(cfg, root),
     )
     reason = abstain_reason(outcome)
     if reason:
@@ -574,7 +610,7 @@ def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
             "abstain", "infeasible",
             handoff="\n".join(outcome.notes),
             reason=reason,
-            backend=backend_label(),
+            **_row_fields(cfg, root),
         )
         echo_status(status_mod.msg_until_abstain(reason))
         from . import usage
@@ -1209,16 +1245,15 @@ def _run_until_body(
                 except OSError:
                     pass
                 denied_log = list(gate.denied) if isinstance(gate, tools.GatePolicy) else []
-                from .exec import backend_label
                 handoff_text = last_assistant(messages)
                 run.append(
                     "maker", "next",
                     handoff=handoff_text,
                     session=str(session_log),
                     snapshot_ref=snap.ref,
-                    usage=dict(step_stats),
+                    usage=dict(step_stats) or None,
                     denied=denied_log or None,
-                    backend=backend_label(),
+                    **_row_fields(cfg, root, snap),
                 )
                 _register_until_artifact(
                     artifact_store, run, "maker",
@@ -1257,10 +1292,9 @@ def _run_until_body(
                         "",
                     )
                     echo_status(status_mod.msg_until_check_blocked(blocked))
-                from .exec import backend_label
                 run.append(
                     "check", status, handoff=check_output, results=results,
-                    backend=backend_label(),
+                    **_row_fields(cfg, root, tree_now=True),
                 )
                 _register_until_artifact(
                     artifact_store, run, "check",
@@ -1363,7 +1397,8 @@ def _run_until_body(
                     "eval", status,
                     handoff=text,
                     session=str(session_log),
-                    usage=dict(step_stats),
+                    usage=dict(step_stats) or None,
+                    **_row_fields(cfg, root),
                 )
                 _register_until_artifact(
                     artifact_store, run, "eval",

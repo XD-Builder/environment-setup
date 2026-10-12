@@ -175,6 +175,7 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
 - `workflow_finish.py` may import `knowledge_graph` and `usage`. It must not import `agent`, `loop`, or `graph`.
 - `until_runner.py` may import `run_log`, `checks`, `agent`, `snapshot`, `tools`, and `workflow_finish`. It must not import `graph_runner` or `graph_dsl`.
 - `graph_runner.py` may import `run_log`, `graph_dsl`, `until_runner`, `skills`, `workflow`, and `workflow_finish`. It must not import `repl` or `cli`.
+- `workflow.py` may import `graph_dsl` (authored node names for the dead-node rule). It must not import `agent`, `loop`, `graph`, or `graph_runner`.
 - `loop.py` is a facade over `until_runner` (re-exports for harnesses and tests). It must not import `graph`.
 - `graph.py` is a facade over `graph_dsl` + `graph_runner` + `until_runner` entry points. It must not be imported by `until_runner` at module load (runtime import for patched paths is OK).
 - `snapshot.py` is a leaf: git via subprocess. It must not import `agent`, `loop`, or `graph`.

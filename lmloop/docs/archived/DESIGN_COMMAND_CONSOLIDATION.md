@@ -1,8 +1,8 @@
 # Design: Command consolidation (memory and neighbors)
 
-**Status:** shipped — Phases A–C (`mine_on_exit`, submit-line mine routes, `/memory audit`). Phase D cut (see Non-goals).
+**Status:** shipped — Phases A–C (`mine_on_exit`, submit-line mine routes, `/memory audit`, CLI `memory mine`). Two Phase D ideas were cut because they contradict the registries (see Non-goals).
 **Date:** 2026-10-07
-**Companions:** [ARCHITECTURE.md](ARCHITECTURE.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md)
+**Companions:** [ARCHITECTURE.md](../ARCHITECTURE.md) · [DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md) · [DESIGN_LLM_CALLING.md](DESIGN_LLM_CALLING.md)
 
 ## Problem
 
@@ -80,10 +80,11 @@ behavior that can evolve without new slash commands.
 - New memory features land as skill/steer/config changes before new `CommandMeta` rows.
 - README “Project memory” table fits **peek | write | reload** without duplicate stems.
 
-## Non-goals (Phase D cut)
+## Non-goals (contradict the registries)
 
 | Item | Reason |
 |------|--------|
 | Merge `remember` and `log_decision` | Different stores and semantics; steer covers when to use each |
 | Slash `/until` / `/graph` workflow control | Authored graphs and CLI flags remain canonical; post-pass mine stays automatic |
-| CLI `lmloop memory mine N` | REPL `/memory mine` and submit-line routes cover the workflow; add only if scripting demand appears |
+
+CLI `lmloop memory mine [N]` shipped. REPL and CLI share `parse_memory_words`.
