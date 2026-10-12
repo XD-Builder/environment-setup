@@ -32,6 +32,7 @@ from lmloop.exec import (
     active_backend,
     backend_label,
     build_backend,
+    run_log_fields,
     describe_exec,
     egress_script,
     image_has_digest,
@@ -218,7 +219,12 @@ class DockerArgvTests(unittest.TestCase):
             self.assertIn("[exit code: 0]", text)
             self.assertTrue(any("exec" in call for call in rec.calls))
             self.assertEqual(backend_label(), "docker:ephemeral")
+            fields = run_log_fields()
+            self.assertEqual(fields["backend"], "docker:ephemeral")
+            self.assertEqual(fields["sandbox_network"], backend.network)
             self.assertIn("docker", describe_exec())
+            reset_active_backend()
+            self.assertEqual(run_log_fields(), {"backend": "local"})
 
     def test_secrets_are_read_only_mounts_not_env(self):
         with tempfile.TemporaryDirectory() as d:

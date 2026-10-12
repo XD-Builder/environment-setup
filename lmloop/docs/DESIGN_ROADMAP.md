@@ -6,7 +6,7 @@
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
 [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
 [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) (shipped) ·
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (partial) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (shipped; optimizer is a non-goal) ·
 [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (research) ·
 [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (shipped) ·
 [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) (shipped) ·
@@ -36,7 +36,7 @@ What remains is a small, high-value core:
 Steps 0–4 and the host-path pieces of 5–7 have landed; `lmloop flow` data should decide
 whether to invest in Docker (Phase S), semantic rerank, or parallel agents.
 
-**Continual evolution (2026-10-09):** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
+**Continual evolution (2026-10-09):** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
 merges enterprise runtime governance ([Docker AI Governance](https://www.docker.com/blog/docker-ai-governance-unlock-agent-autonomy-safely/))
 with harness–environment co-evolution for abstention ([HERA](https://arxiv.org/html/2610.06563v1)).
 Sandbox Part 7 maps Docker’s four control surfaces; usage evals V5 adds Act/Abstain/Pair on

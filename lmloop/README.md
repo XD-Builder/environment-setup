@@ -64,6 +64,7 @@ lmloop memory index                     # FTS5 / scan index status
 lmloop memory reindex                   # rebuild index.sqlite3 from JSONL
 lmloop memory canvas [query]            # knowledge canvas (full-screen TTY, else text)
 lmloop memory reconcile                 # review contradicts clusters (use_graph)
+lmloop flow [--json]                   # until/graph stats and suggestion rules
 lmloop graph propose <name>             # draft a workflow graph from flow stats (≥5 finished runs)
 lmloop skills                           # list skill prompts
 lmloop skills new deploy "roll out staging safely"   # AI draft → review → save
@@ -161,6 +162,7 @@ Inside the REPL:
 | `/context` | files held in this conversation (full path on its own line), then injected memory (`/memory dump` is that memory view alone) |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] [--keep cmd] <goal>` | isolated maker/checker loop. With no flags, lmloop derives a check plan from the goal and the project, shows it (`Enter` run, `e` edit, `s` checker only; no prompt when stdin is not a TTY), and baselines it once. A check that goes fail → pass finishes the run; an already-passing check becomes an invariant and the evaluator decides. `--check` / `--keep` skip inference. Then type to continue from a handoff |
+| `/flow` | until/graph stats and suggestion rules (same report as `lmloop flow`) |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/graph propose <name>` drafts one (save on `y` only); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
 | `/memory [list \| decisions \| dump \| query \| mine [n] \| kg \| index \| reindex \| canvas \| audit \| reconcile]` | dashboard or search; injected memory; mine this session (or last n prior files); knowledge-graph stats (`kg`); index status; text canvas; audit learnings in a side session; reconcile contradictions when `use_graph` |
@@ -172,7 +174,7 @@ Inside the REPL:
 | `/help [all]` | show core slash commands (`all` includes restore, compact, `/learn`, …) |
 | `/quit` | exit (`/exit` and `/q` also work) |
 
-Every file in `skills/` (except `system.md`) is also available as `/name` automatically. `/learn` and `/retro` are omitted from default `/` completion (use `/help all` or type the full name). `/retro` is a hidden alias for `/memory mine` (the `retro.md` playbook is what mining loads). Command consolidation notes: [docs/DESIGN_COMMAND_CONSOLIDATION.md](docs/DESIGN_COMMAND_CONSOLIDATION.md).
+Every file in `skills/` (except `system.md`) is also available as `/name` automatically. `/learn` and `/retro` are omitted from default `/` completion (use `/help all` or type the full name). `/retro` is a hidden alias for `/memory mine` (the `retro.md` playbook is what mining loads). Command consolidation notes: [docs/archived/DESIGN_COMMAND_CONSOLIDATION.md](docs/archived/DESIGN_COMMAND_CONSOLIDATION.md).
 
 REPL UX (prompt_toolkit + rich):
 

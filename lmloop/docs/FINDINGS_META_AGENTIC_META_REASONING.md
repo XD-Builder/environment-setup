@@ -5,7 +5,7 @@
 **Primary source:** Dahal et al., *Thinking Before Thinking: Scaling Agentic Inference Through Meta-Reasoning* (Meta Superintelligence Labs, arXiv [2609.38147](https://arxiv.org/abs/2609.38147), 2026-09-29)  
 **Scope:** Synthesize industry commentary, Meta’s proposal, adjacent 2025–26 research on budget-aware agents, and a concrete incorporation path for **lmloop**  
 **Audience:** Harness architects, eval owners, and anyone extending long-horizon `until` / company / campaign flows  
-**Companions:** [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) · [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) · [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
+**Companions:** [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) · [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) · [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
 
 ---
 

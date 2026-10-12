@@ -4,7 +4,7 @@
 **Scope:** Top 30 popular open-source agentic AI projects (GitHub popularity + ecosystem influence, Oct 2026)  
 **Focus:** Harness design (especially **prompts**), **harness evolution** loops, and patterns that yield the highest **performance ROI** per token and per engineering hour  
 **Audience lenses:** CTO / Distinguished Engineer · Chief Scientist / AI Architect · General AGI resolution (deep reflection + output framework)  
-**Companions:** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
+**Companions:** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
 [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
 [DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) ·
 [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md)
@@ -389,7 +389,7 @@ Add **persona-specific output schema** via skill, not by bloating L0.
 
 ### 9.1 Mapping to lmloop continual harness design
 
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
 operationalizes the survey’s co-evolution diagram for this repo:
 
 | Survey concept (§1–2) | lmloop design anchor |

@@ -91,6 +91,7 @@ from .server import eval_model_name
 from .until_runner import (
     EVAL_PROMPT,
     UntilRun,
+    _row_fields,
     approved_note,
     boundary_approval,
     drop_denied,
@@ -249,18 +250,59 @@ def _skill_prompt(node: NodeDef, handoff: str) -> str:
     return "\n\n".join(parts)
 
 
+def _node_log_fields(cfg: dict, snap, extra: dict) -> dict:
+    fields = _row_fields(cfg, None, snap)
+    for key, val in extra.items():
+        if val:
+            fields[key] = val
+    return fields
+
+
+def _fill_node_fields(row_fields: "dict | None", denied: list, step_stats: dict) -> None:
+    if row_fields is None:
+        return
+    if denied:
+        row_fields["denied"] = list(denied)
+    tokens = int(step_stats.get("total_tokens") or 0)
+    if tokens:
+        row_fields["usage"] = {"total_tokens": tokens}
+
+
+def _until_node_fields(until_path: str) -> dict:
+    """Usage and denials already stored on the child until log."""
+    if not until_path:
+        return {}
+    path = Path(until_path)
+    if not path.is_file():
+        return {}
+    from . import memory
+    fields: dict = {}
+    denied: list = []
+    tokens = 0
+    for ev in memory.read_jsonl(path):
+        denied.extend(ev.get("denied") or [])
+        tokens += int((ev.get("usage") or {}).get("total_tokens") or 0)
+    if denied:
+        fields["denied"] = denied
+    if tokens:
+        fields["usage"] = {"total_tokens": tokens}
+    return fields
+
+
 def _run_skill_node(
     cfg: dict, model: str, node: NodeDef, handoff: str, *,
     confirm_gate, echo, echo_status, echo_error, echo_tool, echo_round,
     context_limit, context_reserve, workspace_root,
     ask_gate=None,
     clock_now=None,
+    row_fields: "dict | None" = None,
 ) -> "tuple[str, str, str]":
     try:
         prompt = _skill_prompt(node, handoff)
     except FileNotFoundError as e:
         echo_error(str(e))
         return "blocked", str(e), ""
+    step_stats: dict = {}
     act_kwargs = dict(
         confirm_gate=confirm_gate, echo=echo, echo_status=echo_status,
         echo_error=echo_error, echo_tool=echo_tool, echo_round=echo_round,
@@ -268,11 +310,13 @@ def _run_skill_node(
         workspace_root=workspace_root,
         log_label=f"/graph {node.name}",
         clock_now=clock_now,
+        usage_stats=step_stats,
     )
     from . import graph as graph_facade
     result = graph_facade.isolated_act(cfg, model, prompt, **act_kwargs)
     if result is None:
         return "pause", "", ""
+    denied = list(confirm_gate.denied) if isinstance(confirm_gate, tools.GatePolicy) else []
     approved, _denied = boundary_approval(
         confirm_gate, ask_gate, echo_status, label=f"graph {node.name}",
     )
@@ -290,6 +334,7 @@ def _run_skill_node(
     command_status = _skill_command_status(
         cfg, node, confirm_gate, workspace_root, echo_status,
     )
+    _fill_node_fields(row_fields, denied, step_stats)
     if command_status is not None:
         return command_status, summary, str(session_log)
     eval_prompt = EVAL_PROMPT.format(
@@ -315,6 +360,7 @@ def _run_skill_node(
         return "pause", summary, str(session_log)
     ev_messages, _ev_session = ev
     status = parse_eval_status(last_assistant(ev_messages))
+    _fill_node_fields(row_fields, denied, step_stats)
     return status, summary, str(session_log)
 
 
@@ -494,6 +540,7 @@ def run_graph(
             handoff = graph_join_handoff(run, node)
             snap_ref = snap.ref
             if node.kind == "skill":
+                node_fields: dict = {}
                 status, summary, session = _run_skill_node(
                     cfg, model, node, handoff,
                     confirm_gate=confirm_gate, echo=echo,
@@ -503,6 +550,7 @@ def run_graph(
                     context_reserve=context_reserve, workspace_root=root,
                     ask_gate=ask_gate,
                     clock_now=clock_now,
+                    row_fields=node_fields,
                 )
                 if status == "pause":
                     return _pause_interrupted(run, echo_status, node=node.name)
@@ -510,6 +558,7 @@ def run_graph(
                     "node", status, node=node.name,
                     handoff=summary, session=session,
                     snapshot_ref=snap_ref,
+                    **_node_log_fields(cfg, snap, node_fields),
                 )
                 continue
             if node.kind == "until":
@@ -538,6 +587,7 @@ def run_graph(
                     handoff=summary, session=session, until_run=until_path,
                     verify=verify,
                     snapshot_ref=snap_ref,
+                    **_node_log_fields(cfg, snap, _until_node_fields(until_path)),
                 )
                 continue
             raise RuntimeError(f"unknown graph node kind {node.kind!r}")

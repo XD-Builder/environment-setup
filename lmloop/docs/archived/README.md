@@ -17,6 +17,8 @@ and [README.md](../../README.md).
 | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | Docker company mode, manifest, worktrees, allowlist |
 | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) | Campaigns: plan, board, daily tick, supervisors |
 | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spirit layer: seed, actions, thoughts, traits, `self.md` |
+| [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Memory slash vocabulary; merge-tools and slash workflow control cut |
+| [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Abstention pairs, sandbox governance; unattended optimizer is a non-goal |
 
 Active (partial or proposed) specs stay in [../](../). Build order:
 [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) and [../DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md).

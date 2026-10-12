@@ -1,10 +1,10 @@
 # Design: Continual harness and sandbox co-evolution
 
-**Status:** partial — S11–S13, the `abstain` outcome, paired fixtures, and `lmloop eval --abstention` shipped. An unattended harness optimizer is still out of scope (human PRs only).
+**Status:** shipped — S11–S13, the `abstain` outcome, paired fixtures, and `lmloop eval --abstention`. An unattended harness optimizer contradicts the human-gated rule and stays a non-goal.
 **Date:** 2026-10-09
-**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
-[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
-[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (survey) ·
+**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](../DESIGN_SANDBOX_AND_VERIFICATION.md) ·
+[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
+[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (survey) ·
 `exec.py`, `tools.GatePolicy`, `loop.py`, `checks.py`, `evals.py`
 **External references:**
 - [Docker AI Governance: Unlock Agent Autonomy, Safely](https://www.docker.com/blog/docker-ai-governance-unlock-agent-autonomy-safely/) (2026-05-12)
@@ -121,7 +121,7 @@ Store pairs under `tests/fixtures/abstention/<name>/{feasible,infeasible}/` with
 
 ### 4.3 Co-evolution loop (operational, human-gated)
 
-Align with [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) — models write prose; **rules and fixtures decide**.
+Align with [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) — models write prose; **rules and fixtures decide**.
 
 ```mermaid
 flowchart TB

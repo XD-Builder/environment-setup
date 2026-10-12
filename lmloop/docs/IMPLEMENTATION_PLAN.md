@@ -24,14 +24,14 @@ and what to move to `archived/` when done.
 | [DESIGN_FILE_READING.md](archived/DESIGN_FILE_READING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_GRAPH_ENGINEERING.md](archived/DESIGN_GRAPH_ENGINEERING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md) | Spec | **Shipped** | `archived/` |
-| [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Spec | **Phase S shipped**; probe deferred | Stay in `docs/` while §2.9 is deferred |
-| [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Spec | **Layers A–D shipped**; A1 harness + Layer E deferred | Stay in `docs/` until E ships or is cut |
+| [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Spec | **S1–S14 shipped**; per-cycle probe deferred | Stay in `docs/` while §2.9 is deferred |
+| [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Spec | **Layers A–D + A1 shipped**; Layer E deferred | Stay in `docs/` until E ships or is cut |
 | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Spec | **C2–C3 shipped**; parallel agents deferred | Stay in `docs/` while Part 5 is deferred |
-| [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Spec | **Phases A–C shipped**; Phase D cut | `docs/` (Phase D in Non-goals) |
+| [DESIGN_COMMAND_CONSOLIDATION.md](archived/DESIGN_COMMAND_CONSOLIDATION.md) | Spec | **Shipped** — A–C; merge-tools and slash workflow control cut | `archived/` |
 | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | Spec | **V0–V5 shipped** | `archived/` |
 | [DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md) | Spec | **Shipped** — deterministic pyramid, local traces, CI gates | `archived/` |
 | [DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md](archived/DESIGN_BUSINESS_AND_WORKFLOW_LAYERS.md) | Spec | **Shipped** — BL-1–BL-6 | `archived/` |
-| [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | **S11–S13 + V5 shipped**; optimizer not built | Stay in `docs/` (human-gated) |
+| [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Spec | **Shipped** — S11–S13 + V5; unattended optimizer is a non-goal | `archived/` |
 | [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) | Spec | **P1–P6 shipped** (JSON manifest, cap 2) | `archived/` |
 | [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) | Spec | **H0–H5 shipped** | `archived/` |
 | [DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) | Spec | **P0–P5 shipped** | `archived/` |
@@ -123,10 +123,10 @@ Do these in parallel where convenient; suggested **serial** order for one contri
 |-------|--------|-------|-----|----------|
 | 1.1 | Memory index | **A5** parse cache; **D3–D8** incremental sync, query, wiring, `memory reindex`, check-inference candidates | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | **Shipped** |
 | 1.2 | Flow / KG | **W6** run/goal nodes in knowledge graph | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | **Shipped** (`record_workflow_run`) |
-| 1.3 | UX vocabulary | **Phase C** — `mine_on_exit`, submit-line mine routes, `/memory audit` | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | **Shipped** |
+| 1.3 | UX vocabulary | **Phase C** — `mine_on_exit`, submit-line mine routes, `/memory audit` | [DESIGN_COMMAND_CONSOLIDATION.md](archived/DESIGN_COMMAND_CONSOLIDATION.md) | **Shipped** |
 | 1.4 | Self-improvement loop | **V1–V4** — join until logs, align `flow`, human-gated agent patches, locked regressions | [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) | **Shipped** (V5 landed in Wave 2) |
 
-Optional in Wave 1: **A1** perf harness (skipped-by-default tests) when touching memory hot paths.
+**A1** perf harness shipped as `tests/test_memory_perf.py` (skipped unless `LMLOOP_MEMORY_PERF=1`).
 
 **Defer in Wave 1:** **Layer E** embeddings rerank — revisit when FTS5 misses real paraphrases
 (roadmap deferred table).
@@ -139,11 +139,12 @@ Optional in Wave 1: **A1** perf harness (skipped-by-default tests) when touching
 |-------|--------|-------|-----|--------|
 | 2.1 | Docker sandbox | **S1–S10** (`DockerBackend`, flags, preflight, shadow volumes, docs) | [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | **Shipped.** Default stays host. `bridge` is not host isolation |
 | 2.2 | Canvas TUI | **C2–C3** after **C1** | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | **Shipped.** `canvas_tui.py`; text fallback without a TTY |
-| 2.3 | Governance + co-evolution | **S11–S13**, **V5** Act/Abstain/Pair fixtures | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | **Shipped.** Allowlist, scoped secrets, and policy hash are optional files/env, not new config keys. A broken keep abstains |
+| 2.3 | Governance + co-evolution | **S11–S13**, **V5** Act/Abstain/Pair fixtures | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | **Shipped.** Allowlist, scoped secrets, and policy hash are optional files/env, not new config keys. A broken keep abstains. Unattended optimizer stays a non-goal |
 
 [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md) matches the flags, network
-table, and troubleshooting. These docs stay in `docs/` because each still has a deferred
-section (probe, parallel agents, or the unattended optimizer).
+table, and troubleshooting. Sandbox and DAG stay in `docs/` because the per-cycle probe
+and parallel local agents are still deferred. The unattended optimizer is a non-goal in
+the archived continual-harness spec.
 
 ---
 
@@ -169,7 +170,7 @@ designing **V3/V5** and spirit reflection — research, not a gating dependency.
 | Parallel local agents | [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), roadmap | `lmloop flow` shows remote frontier wait dominates |
 | Per-cycle eval probe | Sandbox | Runs pass on checker-only then regress |
 | Memory Layer E | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | FTS5 recall misses user paraphrases |
-| Command Phase D items | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Cut to Non-goals — only if product asks |
+| Merge `remember`/`log_decision`; slash workflow control | [DESIGN_COMMAND_CONSOLIDATION.md](archived/DESIGN_COMMAND_CONSOLIDATION.md) | Cut — they contradict separate stores and authored graphs. CLI `memory mine` shipped |
 
 ---
 

@@ -220,7 +220,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
                 f"check.blocked={stats.blocked_checks}; "
                 f"until.abstain={stats.abstains}; until.finish={until_total}"
             ),
-            design_hook="DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md §5",
+            design_hook="archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md §5",
         ))
 
     web_calls = stats.tools.get("fetch_url", 0) + stats.tools.get("web_search", 0)
@@ -278,7 +278,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             severity="watch",
             title="REPL-only usage — CLI subcommands never run",
             evidence=f"repl sessions ~{repl}, cli.command=0",
-            design_hook="DESIGN_COMMAND_CONSOLIDATION.md; README command tables",
+            design_hook="archived/DESIGN_COMMAND_CONSOLIDATION.md; README command tables",
         ))
 
     if stats.invalid_rows:

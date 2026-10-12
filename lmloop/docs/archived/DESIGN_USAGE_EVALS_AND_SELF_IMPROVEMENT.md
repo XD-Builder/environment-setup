@@ -6,7 +6,7 @@
 **Companions:** [DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) (contract gates; separate from usage gaps) ·
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) (`lmloop flow`) ·
 [DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md) ·
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](../DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) ·
 [DEVELOPMENT.md](../../DEVELOPMENT.md)
 
 ## Problem
@@ -163,7 +163,7 @@ This mirrors BDK defineEval without adding pytest or network.
 ### V5 — Harness–environment co-evolution (HERA-inspired)
 
 Full methodology:
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](../DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
 Reference: [HERA (arxiv 2610.06563)](https://arxiv.org/html/2610.06563v1).
 
 **Problem HERA names:** agents continue acting when a task is **infeasible** (missing
