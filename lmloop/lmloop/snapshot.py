@@ -25,6 +25,7 @@ class SnapshotResult:
     ref: str = ""
     skipped: tuple[str, ...] = ()
     note: str = ""
+    tree: str = ""
 
 
 def _mode(cfg: dict) -> str:
@@ -103,6 +104,34 @@ def _oversize_untracked(root: Path, max_bytes: int) -> list[str]:
     return skipped
 
 
+def _index_tree(root: Path) -> "tuple[str, tuple[str, ...]]":
+    """Tree oid of the worktree via a temporary index. Does not move HEAD."""
+    max_bytes = SNAPSHOT_MAX_FILE_MB * 1024 * 1024
+    skipped = tuple(_oversize_untracked(root, max_bytes))
+    with tempfile.TemporaryDirectory(prefix="lmloop-snap-") as tmp:
+        index_path = Path(tmp) / "index"
+        env = {"GIT_INDEX_FILE": str(index_path)}
+        _git(root, "read-tree", "HEAD", env=env, check=True)
+        add_args = ["add", "-A", "--", "."]
+        for rel in skipped:
+            add_args.append(f":(exclude){rel}")
+        _git(root, *add_args, env=env, check=True)
+        tree_proc = _git(root, "write-tree", env=env, check=True)
+    return tree_proc.stdout.strip(), skipped
+
+
+def workspace_tree(workspace: Path) -> str:
+    """Current worktree tree oid, or "" when git cannot answer."""
+    root = git_root(workspace)
+    if root is None:
+        return ""
+    try:
+        tree, _skipped = _index_tree(root)
+    except RuntimeError:
+        return ""
+    return tree
+
+
 def _prune_old_refs(root: Path) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=SNAPSHOT_RETENTION_DAYS)
     proc = _git(
@@ -145,14 +174,13 @@ def take_snapshot(
 
     safe_label = "".join(c if c.isalnum() or c in "-_." else "-" for c in run_label)
     ref_name = f"{REF_PREFIX}{safe_label}/{step}"
-    max_bytes = SNAPSHOT_MAX_FILE_MB * 1024 * 1024
     try:
-        skipped = tuple(_oversize_untracked(root, max_bytes))
+        tree, skipped = _index_tree(root)
     except RuntimeError as exc:
         return SnapshotResult(note=str(exc))
 
     try:
-        return _write_snapshot(root, ref_name, safe_label, step, skipped)
+        return _write_snapshot(root, ref_name, safe_label, step, skipped, tree)
     except RuntimeError as exc:
         return SnapshotResult(note=str(exc))
 
@@ -163,21 +191,11 @@ def _write_snapshot(
     safe_label: str,
     step: int,
     skipped: tuple[str, ...],
+    new_tree: str,
 ) -> SnapshotResult:
-    with tempfile.TemporaryDirectory(prefix="lmloop-snap-") as tmp:
-        index_path = Path(tmp) / "index"
-        env = {"GIT_INDEX_FILE": str(index_path)}
-        _git(root, "read-tree", "HEAD", env=env, check=True)
-        add_args = ["add", "-A", "--", "."]
-        for rel in skipped:
-            add_args.append(f":(exclude){rel}")
-        _git(root, *add_args, env=env, check=True)
-        tree_proc = _git(root, "write-tree", env=env, check=True)
-        new_tree = tree_proc.stdout.strip()
-
     if new_tree == _head_tree(root):
         _prune_old_refs(root)
-        return SnapshotResult(ref="HEAD", skipped=skipped)
+        return SnapshotResult(ref="HEAD", skipped=skipped, tree=new_tree)
 
     msg = f"lmloop snapshot {safe_label} {step}"
     commit_proc = _git(
@@ -193,5 +211,5 @@ def _write_snapshot(
     sha = commit_proc.stdout.strip()
     _git(root, "update-ref", ref_name, sha, check=True)
     _prune_old_refs(root)
-    return SnapshotResult(ref=ref_name, skipped=skipped)
+    return SnapshotResult(ref=ref_name, skipped=skipped, tree=new_tree)
 

@@ -1,6 +1,6 @@
 # Design: Fast, ranked memory retrieval
 
-**Status:** partial — Layers A–D shipped (A5 parse cache; D3–D8 incremental sync, quoted query, session recall, `command_candidates`). Layer E deferred. A1 perf harness still open.
+**Status:** partial — Layers A–D shipped, including the A1 skipped-by-default perf harness (`LMLOOP_MEMORY_PERF=1`). Layer E stays deferred until FTS5 misses real paraphrases.
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: single process; config budget; embeddings deferred)
 **Depends on:** `memory.py`, `knowledge_graph.py`, `skills.system_prompt`, `loop.isolated_act`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
@@ -32,7 +32,7 @@ none of them changes the source of truth.
 | D (minimal) FTS5/scan index, `memory index` / `reindex`, `/stats` line | `memory_index.py`, `cli.py`, `repl.py` |
 | Canvas layout helper (cross-doc) | `knowledge_graph.canvas_view`, text via `format_canvas_text` |
 
-**Not shipped yet:** A1 perf harness (skipped-by-default tests), Layer E (E1–E3 embeddings rerank).
+**Not shipped yet:** Layer E (E1–E3 embeddings rerank). A1 is `tests/test_memory_perf.py` (skipped unless `LMLOOP_MEMORY_PERF=1`).
 **Also shipped (cross-doc):** `canvas_tui.py` full-screen canvas ([DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)).
 
 ---
@@ -106,7 +106,11 @@ The graph path is the real problem, and it is algorithmic, not a storage choice:
 
 ## Part 1 — Architecture
 
-### 1.1 Read path today vs target
+### 1.1 Read path before Layer A vs the shipped target
+
+The left side is the cost measured in Part 0, before `GraphView` and the index.
+It is not the current read path. The right side is what `recall_memory` and
+`context_block` do now. Cosine rerank (Layer E) is still off.
 
 ```mermaid
 flowchart LR
@@ -114,7 +118,7 @@ flowchart LR
   classDef hot fill:#fef2f2,stroke:#ef4444
   classDef ext fill:#f5f5f5,stroke:#999
 
-  subgraph today["Today — every call"]
+  subgraph today["Before Layer A — every call"]
     direction TB
     t_call["recall_memory / context_block"] --> t_ensure["KnowledgeGraph.ensure()<br/>_backfill: read all JSONL + glob sessions"]:::hot
     t_ensure --> t_scan["read_jsonl: parse whole file"]:::hot
