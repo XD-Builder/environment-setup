@@ -706,6 +706,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             interrupted=bool(stats and stats.get("interrupted")),
             ok=act_ok,
         )
+        from .harness_bundle import bundle_id as harness_bundle_id_for
+
         traces_mod.finish_turn(
             rounds=turn.turn_rounds,
             tools=turn.turn_tools,
@@ -714,5 +716,8 @@ def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None
             readonly=readonly,
             no_tools=no_tools,
             output=traces_mod.output_excerpt(messages),
+            harness_bundle_id=harness_bundle_id_for(
+                cfg, workspace_root=workspace_root,
+            ),
         )
         memory.set_active_session(prev_session)

@@ -468,7 +468,13 @@ GATES: dict[str, GateSpec] = {
     "commit": GateSpec(max_layer=1, max_drop=0.0, alerts=False),
     "pr": GateSpec(max_layer=3, max_drop=PR_MAX_DROP, alerts=False),
     "nightly": GateSpec(max_layer=4, max_drop=0.0, alerts=True),
+    "harness-adopt": GateSpec(max_layer=3, max_drop=PR_MAX_DROP, alerts=False),
 }
+
+CASE_ROLE_EVAL = "eval"
+CASE_ROLE_SCORE = "score"
+CASE_ROLE_FEEDBACK = "feedback"
+_VALID_CASE_ROLES = frozenset({CASE_ROLE_EVAL, CASE_ROLE_SCORE, CASE_ROLE_FEEDBACK})
 
 
 @dataclass
@@ -520,9 +526,10 @@ class GateReport:
     drop: float
     failed: list[dict]
     error: str = ""
+    metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "gate": self.gate,
             "ok": self.ok,
             "alert": self.alert,
@@ -535,6 +542,24 @@ class GateReport:
             "failed": self.failed,
             "error": self.error,
         }
+        if self.metrics:
+            out["metrics"] = self.metrics
+        return out
+
+
+def case_roles(case: dict) -> frozenset[str]:
+    """Roles for a golden case. Untagged cases are eval-only."""
+    raw = case.get("roles")
+    if raw is None:
+        return frozenset({CASE_ROLE_EVAL})
+    if not isinstance(raw, list):
+        return frozenset({CASE_ROLE_EVAL})
+    picked = {str(item).strip() for item in raw if str(item).strip() in _VALID_CASE_ROLES}
+    return frozenset(picked or {CASE_ROLE_EVAL})
+
+
+def filter_cases_by_role(cases: list[dict], role: str) -> list[dict]:
+    return [case for case in cases if role in case_roles(case)]
 
 
 def _layer_of(case: dict) -> int | None:
@@ -632,6 +657,62 @@ def _empty_report(gate: str, error: str, *, blocks: bool) -> GateReport:
     )
 
 
+def _run_harness_adopt_gate(
+    loaded: list[dict],
+    rates: dict[str, float],
+    spec: GateSpec,
+) -> GateReport:
+    from . import evals
+
+    eval_cases = filter_cases_by_role(loaded, CASE_ROLE_EVAL)
+    suite = run_cases(eval_cases, max_layer=spec.max_layer)
+    golden_key = "harness-adopt"
+    act_key = "harness-adopt-act"
+    abstain_key = "harness-adopt-abstain"
+    for key in (golden_key, act_key, abstain_key):
+        if key not in rates:
+            return _empty_report(
+                "harness-adopt", f"baseline missing {key!r}", blocks=True,
+            )
+    base_golden = float(rates[golden_key])
+    drop = (_basis(base_golden) - _basis(suite.pass_rate)) / 10000
+    golden_fail = drop_exceeds(suite.pass_rate, base_golden, spec.max_drop)
+    validation = evals.load_abstention_pairs(split="validation")
+    abs_m = evals.score_abstention(validation)
+    act_rate = float(abs_m["act"])
+    abstain_rate = float(abs_m["abstain"])
+    base_act = float(rates[act_key])
+    base_abstain = float(rates[abstain_key])
+    act_drop = (_basis(base_act) - _basis(act_rate)) / 10000
+    abstain_drop = (_basis(base_abstain) - _basis(abstain_rate)) / 10000
+    act_fail = drop_exceeds(act_rate, base_act, spec.max_drop)
+    abstain_fail = drop_exceeds(abstain_rate, base_abstain, spec.max_drop)
+    blocks = golden_fail or act_fail or abstain_fail
+    metrics = {
+        "abstention_validation": abs_m,
+        "golden_eval_cases": suite.cases,
+        "act_rate": act_rate,
+        "abstain_rate": abstain_rate,
+        "act_baseline": base_act,
+        "abstain_baseline": base_abstain,
+        "act_drop": act_drop,
+        "abstain_drop": abstain_drop,
+    }
+    return GateReport(
+        gate="harness-adopt",
+        ok=not blocks,
+        alert=False,
+        blocks_merge=blocks,
+        cases=suite.cases,
+        passed=suite.passed_count,
+        pass_rate=suite.pass_rate,
+        baseline=base_golden,
+        drop=drop,
+        failed=suite.failed,
+        metrics=metrics,
+    )
+
+
 def run_gate(
     name: str,
     *,
@@ -646,6 +727,8 @@ def run_gate(
         rates = load_baseline() if baseline is None else baseline
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return _empty_report(name, str(exc), blocks=not spec.alerts)
+    if name == "harness-adopt":
+        return _run_harness_adopt_gate(loaded, rates, spec)
     if name not in rates:
         return _empty_report(name, f"baseline missing {name!r}", blocks=not spec.alerts)
     suite = run_cases(loaded, max_layer=spec.max_layer)
@@ -677,6 +760,14 @@ def format_gate(report: GateReport) -> str:
     ]
     if report.error:
         lines.append(f"  error: {report.error}")
+    metrics = report.metrics or {}
+    if metrics:
+        abs_m = metrics.get("abstention_validation") or {}
+        lines.append(
+            f"  validation Act: {metrics.get('act_rate', 0):.4f}  "
+            f"Abstain: {metrics.get('abstain_rate', 0):.4f}  "
+            f"n={abs_m.get('n', 0)}"
+        )
     if report.alert:
         lines.append("  result: alert (distribution shift; does not block merge)")
     elif report.ok:

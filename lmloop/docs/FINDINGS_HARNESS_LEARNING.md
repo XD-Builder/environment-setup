@@ -2,6 +2,7 @@
 
 **Date:** 2026-10-12  
 **Primary source:** Zhang et al., *Harness Learning Enables Generalizable Test-Time Adaptation* (arXiv [2609.35738](https://arxiv.org/abs/2609.35738), 2026)  
+**Status:** implemented — see [DESIGN_HARNESS_LEARNING.md](DESIGN_HARNESS_LEARNING.md)  
 **Scope:** Only changes that **do not alter default `act()` / `until` / graph behavior** and cannot regress live runs unless the user explicitly opts in. Omitted: test-time harness auto-edit, best-of-N selection inside the loop, multistep RL, or any change that injects revision context into standing prompts.  
 **Audience:** Eval owners, harness editors (`improve`, `graph propose`), CI gate maintainers  
 **Companions:** [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) · [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) · [archived/DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md) · [archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md)

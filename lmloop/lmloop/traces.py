@@ -112,6 +112,7 @@ def finish_turn(
     readonly: bool,
     no_tools: bool,
     output: str = "",
+    harness_bundle_id: str = "",
 ) -> None:
     """Write the turn's spans and enqueue the parent. Swallows ``OSError``."""
     frame = _CURRENT.get()
@@ -142,6 +143,8 @@ def finish_turn(
         }
         if output:
             attrs["output_excerpt"] = redact(output)[:240]
+        if harness_bundle_id:
+            attrs["harness_bundle_id"] = harness_bundle_id
         root = _span(
             turn, span_id=turn.span_id, parent="", name="agent.act", attributes=attrs,
         )

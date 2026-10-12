@@ -167,8 +167,22 @@ class EvalRequestTests(unittest.TestCase):
                 self.assertEqual(req.mode, "text")
         self.assertEqual(
             EVAL_FLAGS,
-            ("--json", "--design", "--design-doc", "--abstention", "--gate", "--drain", "--inbox"),
+            (
+                "--json", "--design", "--design-doc", "--abstention", "--gate",
+                "--drain", "--inbox", "--harness-report", "--run",
+            ),
         )
+
+
+class EvalHarnessReportTests(unittest.TestCase):
+    def test_harness_report_with_run_path(self):
+        req = parse_eval_words(
+            ["--harness-report", "--run", "until/run.jsonl", "--json"],
+        )
+        self.assertEqual(req.mode, "harness-report")
+        self.assertTrue(req.as_json)
+        self.assertEqual(req.harness_run, "until/run.jsonl")
+        self.assertEqual(req.error, "")
 
 
 class GraphRequestTests(unittest.TestCase):
