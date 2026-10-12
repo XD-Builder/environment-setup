@@ -73,6 +73,7 @@ lmloop models                           # models loaded on the server
 lmloop config show|get|set              # settings (~/.lmloop/config.json)
 lmloop eval [--json | --design | --abstention | --gate commit|pr|nightly | --drain | --inbox]
 lmloop --docker until make the tests pass   # opt-in ephemeral sandbox (host is the default)
+lmloop --sandbox-url http://task:8000 until fix the bug   # remote repo via HTTP exec/read/write
 lmloop sandbox status                   # local (host) unless this process passed --docker
 lmloop --docker company run --goal "…"  # opt-in company: remote allowlist, worktrees, gates
 lmloop campaign start --goal "…"        # multi-day plan store (host); resume runs the daily tick
@@ -329,6 +330,8 @@ zsh completion for `config set` is generated from these keys.
 | `until_baseline` | `auto` | `auto`: run the plan once before any work, drop commands that cannot start, and turn already-passing checks into invariants. `off`: a passing check finishes the run immediately. A keep that already fails ends the run as `abstain` (no maker step) |
 | `sandbox_image` | *(empty)* | Digest-pinned image (`name@sha256:…`) written by `lmloop sandbox build`. Inert unless you passed `--docker`. A tag is rejected |
 | `sandbox_network` | `bridge` | `bridge` (default), `none`, or `host`. Inert unless you passed `--docker`. `bridge` is not host isolation |
+| `sandbox_url` | *(empty)* | Base URL for a remote task sandbox (`GET /health`, `POST /exec`, `/read`, `/write`). Also `LMLOOP_SANDBOX_URL` or `--sandbox-url`. Mutually exclusive with `--docker` |
+| `sandbox_workdir` | `/workspace` | Repository path inside the remote container. Also `LMLOOP_SANDBOX_WORKDIR` or `--sandbox-workdir` |
 | `model_concurrency` | `auto` | Host-wide lock slots per `base_url`. `auto`: 1 for local/LM Studio, 4 for remote endpoints; or set an integer 1–8 |
 | `run_token_budget` | `0` | Pause an until/graph run after this many tokens (`0` = off). `/continue` resumes |
 | `eval_model` | `` | Model for checker/eval/proposal calls; empty = same as `model` |

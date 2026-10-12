@@ -33,6 +33,7 @@
     lmloop sandbox [status|build|shell|reset|rm]  Docker sandbox (opt-in; default is host)
     lmloop --docker …                         ephemeral container for this process
     lmloop --docker-persist …                 long-lived container (implies --docker)
+    lmloop --sandbox-url URL …                remote task repo (HTTP exec/read/write)
     lmloop --docker company run --goal TEXT   opt-in company (remote allowlist, worktrees)
     lmloop campaign start --goal TEXT         multi-day campaign store
     lmloop campaign resume [id]               daily tick, then status
@@ -954,19 +955,44 @@ def cli_handlers() -> dict:
 
 
 def activate_sandbox(cfg: dict, args, console: Console) -> int:
-    """Start a sandbox when the flag asked for one. No flag: do not probe Docker.
+    """Install an exec backend when flags or config ask for one.
 
     Returns 0 to continue, or an exit code that stops the process before any
-    model call. A config key cannot turn this on.
+    model call. Docker requires an explicit flag; ``sandbox_url`` may also
+    come from config or ``LMLOOP_SANDBOX_URL``.
     """
     from . import exec as exec_mod
+    from . import remote_sandbox as rs_mod
 
     image = (getattr(args, "docker_image", "") or "").strip()
     if image and not exec_mod.image_has_digest(image):
         console.error("image reference must contain @sha256:")
         return 2
-    enabled = bool(getattr(args, "docker", False) or getattr(args, "docker_persist", False))
-    if not enabled:
+    docker = bool(getattr(args, "docker", False) or getattr(args, "docker_persist", False))
+    cli_url = (getattr(args, "sandbox_url", "") or "").strip()
+    cli_workdir = (getattr(args, "sandbox_workdir", "") or "").strip()
+    remote_url = cli_url or rs_mod.resolve_sandbox_url(cfg)
+    if remote_url and docker:
+        console.error("use either --sandbox-url or --docker, not both")
+        return 2
+    if remote_url:
+        backend = exec_mod.build_backend(
+            cfg,
+            Path.cwd(),
+            sandbox_url=cli_url,
+            sandbox_workdir=cli_workdir,
+        )
+        report = backend.preflight()
+        if not report.ok:
+            for line in report.errors:
+                console.error(line)
+            return 1
+        for line in report.warnings:
+            console.hint(line)
+        exec_mod.install_backend(backend)
+        console.hint(backend.describe())
+        return 0
+    if not docker:
         return 0
     backend = exec_mod.build_backend(
         cfg,
@@ -1005,6 +1031,14 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--docker-image", default="",
         help="one-run image override; must contain @sha256:",
+    )
+    parser.add_argument(
+        "--sandbox-url", default="",
+        help="HTTP task sandbox base URL (exec/read/write routes; repo is remote)",
+    )
+    parser.add_argument(
+        "--sandbox-workdir", default="",
+        help="repository path inside the remote task container (default /workspace)",
     )
     parser.add_argument(
         "--company", action="store_true",

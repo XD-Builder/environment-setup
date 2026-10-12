@@ -76,6 +76,8 @@ DEFAULTS = {
     "until_baseline": "auto",  # auto: baseline and reclassify a non-empty plan; off: checks gate directly
     "sandbox_image": "",  # digest-pinned image; inert unless --docker
     "sandbox_network": "bridge",  # bridge | none | host — inert unless --docker
+    "sandbox_url": "",  # HTTP task sandbox; inert unless set or --sandbox-url
+    "sandbox_workdir": "/workspace",  # repo path inside the remote task container
     "model_concurrency": "auto",  # auto: 1 local / 4 remote; or int 1..8
     "run_token_budget": 0,  # pause run after this many tokens; 0 = off
     "eval_model": "",  # checker / proposals / mining; empty = main model

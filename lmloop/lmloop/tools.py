@@ -551,6 +551,13 @@ def format_exec_result(result) -> str:
     return _truncate(out.strip())
 
 
+def _http_sandbox():
+    from .exec import HttpSandboxBackend, active_backend
+
+    backend = active_backend()
+    return backend if isinstance(backend, HttpSandboxBackend) else None
+
+
 def _workspace_root() -> Path:
     return Path.cwd().resolve()
 
@@ -687,6 +694,15 @@ def read_file(path: str, start_line: int = 1, max_lines: int = MAX_READ_LINES,
     p, err = _check_workspace(path, workspace_root, extra_readable=extra_readable)
     if err:
         return err
+    root = workspace_root or _workspace_root()
+    remote = _http_sandbox()
+    if remote:
+        if p.is_dir():
+            return "ERROR: path is a directory; use list_dir"
+        text, rerr = remote.read_file_text(p, root)
+        if rerr:
+            return rerr
+        return _numbered_chunk(text or "", str(p), start_line, max_lines)
     if not p.exists():
         return f"ERROR: {path} does not exist"
     if p.is_dir():
@@ -780,6 +796,22 @@ def write_file(path: str, content: str, workspace_root: "Path | None" = None,
                 f"DENIED: the user declined to overwrite {p}; "
                 "use update_file for edits."
             )
+    remote = _http_sandbox()
+    if remote:
+        existed = exists
+        if not existed:
+            try:
+                probe, rerr = remote.read_file_text(p, root)
+                if not rerr and probe is not None:
+                    existed = True
+            except OSError:
+                existed = False
+        werr = remote.write_file_text(p, root, content)
+        if werr:
+            return werr
+        if existed:
+            return f"{_OVERWROTE_PREFIX}{p} with {len(content)} chars (remote)"
+        return f"Wrote {len(content)} chars to {p} (remote)"
     backup = backup_file(p, root) if exists else None
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -832,17 +864,24 @@ def update_file(path: str, old_string: str, new_string: str,
             return f"ERROR: {path} is outside workspace {root}"
         if not confirm_gate(f"{GATE_UPDATE_OUTSIDE}{p}"):
             return "DENIED: the user declined to edit outside the workspace."
-    if not p.exists():
+    remote = _http_sandbox()
+    if remote:
+        text, rerr = remote.read_file_text(p, root)
+        if rerr:
+            return rerr
+        text = text or ""
+    elif not p.exists():
         return f"ERROR: {path} does not exist; use write_file to create it"
-    if p.is_dir():
+    elif p.is_dir():
         return f"ERROR: {path} is a directory"
-    try:
-        with p.open("r", newline="") as fh:  # keep CRLF as-is; no translation
-            text = fh.read()
-    except UnicodeDecodeError:
-        return f"ERROR: {path} is not a text file"
-    except OSError as e:
-        return f"ERROR: {e}"
+    else:
+        try:
+            with p.open("r", newline="") as fh:  # keep CRLF as-is; no translation
+                text = fh.read()
+        except UnicodeDecodeError:
+            return f"ERROR: {path} is not a text file"
+        except OSError as e:
+            return f"ERROR: {e}"
     if not old_string:
         return "ERROR: old_string must not be empty"
     if old_string == new_string:
@@ -865,12 +904,17 @@ def update_file(path: str, old_string: str, new_string: str,
             "include more surrounding lines or set replace_all=true."
         )
     new_text = text.replace(old_string, new_string)
-    backup = backup_file(p, root)
-    try:
-        with p.open("w", newline="") as fh:
-            fh.write(new_text)
-    except OSError as e:
-        return f"ERROR: {e}"
+    backup = None if remote else backup_file(p, root)
+    if remote:
+        werr = remote.write_file_text(p, root, new_text)
+        if werr:
+            return werr
+    else:
+        try:
+            with p.open("w", newline="") as fh:
+                fh.write(new_text)
+        except OSError as e:
+            return f"ERROR: {e}"
     span_end = lines[0] + old_string.rstrip("\n").count("\n")
     where = (
         f"lines {', '.join(str(n) for n in lines)}" if count > 1

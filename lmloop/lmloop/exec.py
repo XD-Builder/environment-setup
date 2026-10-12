@@ -340,6 +340,8 @@ def describe_exec() -> str:
 
 def backend_label() -> str:
     backend = active_backend()
+    if isinstance(backend, HttpSandboxBackend):
+        return "remote"
     if isinstance(backend, DockerBackend):
         return "docker:persist" if backend.persist else "docker:ephemeral"
     return "local"
@@ -436,6 +438,110 @@ class LocalBackend:
 
     def describe(self) -> str:
         return "local (host)"
+
+    def close(self) -> None:
+        return None
+
+
+@dataclass
+class HttpSandboxBackend:
+    """Remote repository access via HTTP (agent on host, code in task container)."""
+
+    url: str
+    workdir: str
+    local_root: Path
+    client: object = None
+    name: str = "remote"
+
+    def __post_init__(self) -> None:
+        if self.client is None:
+            from . import remote_sandbox as rs
+
+            self.client = rs.SandboxClient(self.url, workdir=self.workdir)
+
+    def _rel_path(self, path: Path, root: Path) -> str:
+        from . import remote_sandbox as rs
+
+        return rs.workspace_rel_path(path, root)
+
+    def run(
+        self,
+        command: "str | list[str]",
+        *,
+        timeout_s: int,
+        cwd: Path,
+        readonly: bool = False,
+        shell_syntax: bool = False,
+    ) -> ExecResult:
+        del readonly, shell_syntax
+        if isinstance(command, list):
+            cmd = shlex.join(command)
+        else:
+            cmd = command
+        try:
+            self._rel_path(cwd, self.local_root)
+        except ValueError as exc:
+            return ExecResult(
+                stdout=f"ERROR: {exc}", stderr="", exit_code=127,
+                backend=self.name, spawn_error=True,
+            )
+        from . import remote_sandbox as rs
+
+        try:
+            raw = self.client.exec_command(cmd, timeout_s=timeout_s)
+        except rs.RemoteSandboxError as exc:
+            return ExecResult(
+                stdout=f"ERROR: {exc}", stderr="", exit_code=127,
+                backend=self.name, spawn_error=True,
+            )
+        return ExecResult(
+            stdout=raw.stdout,
+            stderr=raw.stderr,
+            exit_code=raw.exit_code,
+            backend=self.name,
+            timed_out=raw.timed_out,
+            timeout_s=timeout_s if raw.timed_out else 0,
+            spawn_error=raw.spawn_error,
+        )
+
+    def read_file_text(self, path: Path, root: Path) -> "tuple[str | None, str | None]":
+        from . import remote_sandbox as rs
+
+        try:
+            rel = self._rel_path(path, root)
+        except ValueError as exc:
+            return None, f"ERROR: {exc}"
+        try:
+            text = self.client.read_text(rel)
+        except rs.RemoteSandboxError as exc:
+            return None, f"ERROR: {exc}"
+        if text.startswith("ERROR:"):
+            return None, text
+        return text, None
+
+    def write_file_text(self, path: Path, root: Path, content: str) -> "str | None":
+        from . import remote_sandbox as rs
+
+        try:
+            rel = self._rel_path(path, root)
+        except ValueError as exc:
+            return f"ERROR: {exc}"
+        try:
+            return self.client.write_text(rel, content)
+        except rs.RemoteSandboxError as exc:
+            return f"ERROR: {exc}"
+
+    def preflight(self) -> PreflightReport:
+        from . import remote_sandbox as rs
+
+        try:
+            self.client.health()
+        except rs.RemoteSandboxError as exc:
+            return PreflightReport(errors=(str(exc),))
+        return PreflightReport()
+
+    def describe(self) -> str:
+        return f"remote sandbox {self.url} workdir={self.workdir}"
 
     def close(self) -> None:
         return None
@@ -929,11 +1035,19 @@ def build_backend(
     persist: bool = False,
     image: str = "",
     runner=None,
-) -> "LocalBackend | DockerBackend":
-    """Factory. ``docker=False`` returns ``LocalBackend`` without a PATH lookup."""
+    sandbox_url: str = "",
+    sandbox_workdir: str = "",
+) -> "LocalBackend | DockerBackend | HttpSandboxBackend":
+    """Factory. ``docker=False`` and no sandbox URL returns ``LocalBackend``."""
+    from . import remote_sandbox as rs
+
+    root = Path(workspace_root or Path.cwd()).resolve()
+    url = (sandbox_url or "").strip() or rs.resolve_sandbox_url(cfg)
+    if url:
+        workdir = (sandbox_workdir or "").strip() or rs.resolve_sandbox_workdir(cfg)
+        return HttpSandboxBackend(url=url, workdir=workdir, local_root=root)
     if not docker and not persist:
         return LocalBackend()
-    root = Path(workspace_root or Path.cwd()).resolve()
     kwargs = {
         "cfg": cfg,
         "root": root,
@@ -949,6 +1063,7 @@ def local_status_text() -> str:
     return "\n".join([
         "exec: local (host)",
         "Docker is not active. Pass --docker to run shell commands in a container.",
+        "Or pass --sandbox-url for a remote task container (HTTP exec/read/write).",
         NETWORK_HONEST + " when you do opt in.",
         "Published ports (bridge only): "
         + ", ".join(f"127.0.0.1:{spec}" for spec in SANDBOX_PORTS),
