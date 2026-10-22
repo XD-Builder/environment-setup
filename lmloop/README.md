@@ -320,7 +320,15 @@ zsh completion for `config set` is generated from these keys.
 | `autonomous_snapshot` | `git` | Before each maker step in `until` / `graph`, record a git snapshot under `refs/lmloop/` (temp index; does not touch your index). `off` disables; non-git workspaces skip silently. |
 | `shell_timeout_s` | `120` | `run_shell` timeout |
 | `web_timeout_s` | `30` | `web_search` / `fetch_url` timeout |
-| `max_tool_output` | `12000` | Truncate tool results (chars) |
+| `max_tool_output` | `12000` | Truncate tool results sent to the model (chars) |
+| `tool_preview_limit` | `160` | Max characters on a tool-argument preview line |
+| `diff_limit` | `60` | Max unified-diff lines shown for `update_file` |
+| `check_output_limit` | `2000` | Max characters of until check-command output kept in the handoff |
+| `history_preview_chars` | `120` | Max characters of the `lmloop history` / `/history` preview |
+| `max_transcript_tool_chars` | `0` | `/transcript` tool rows. `0` means no limit |
+| `web_search_concurrency` | `2` | In-flight `web_search` calls inside one parallel wave |
+| `web_fetch_concurrency` | `4` | In-flight `fetch_url` calls inside one parallel wave |
+| `local_read_concurrency` | `8` | In-flight local reads (`read_file`, `list_dir`, and the other read-only tools) inside one parallel wave |
 | `auto_start_server` | `true` | Run `lms server start` / `lms load` when nothing is listening |
 | `color` | `true` | ANSI chrome; also honors `NO_COLOR=1` |
 | `context_length` | `0` | `0` = auto-detect from LM Studio; else token window override |

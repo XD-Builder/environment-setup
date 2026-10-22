@@ -21,7 +21,15 @@ from .checks import (
     PROPOSE_PROMPT,
     shell_evidence_table,
 )
-from .config import DEFAULTS, cfg_bool, cfg_int, cfg_str, utc_now
+from .config import (
+    CHECK_OUTPUT_LIMIT,
+    DEFAULTS,
+    cfg_bool,
+    cfg_int,
+    cfg_positive_int,
+    cfg_str,
+    utc_now,
+)
 from .run_artifacts import (
     CONTROL_PROPOSAL_MIN,
     UntilArtifactStore,
@@ -50,8 +58,8 @@ STATUS_LINE_PREFIX = "STATUS:"
 EXIT_CODE_PREFIX = "[exit code:"
 VALID_EVAL_STATUS = frozenset({"pass", "fail", "blocked"})
 
-CHECK_OUTPUT_LIMIT = 2000
 _CHECK_TRUNCATED = "\n... [truncated, {total} chars total]"
+
 
 MAKER_PROMPT = """You are working toward this goal until an external checker says it is done.
 You do not get to declare the overall goal complete.
@@ -123,8 +131,10 @@ Budget (this until run):
 """
 
 
-def clip_check_output(output: str, limit: int = CHECK_OUTPUT_LIMIT) -> str:
+def clip_check_output(output: str, limit: int | None = None, cfg: "dict | None" = None) -> str:
     """Bound check-command text for display/handoff. Never silent: mark the cut."""
+    if limit is None:
+        limit = cfg_positive_int(cfg, CHECK_OUTPUT_LIMIT)
     body = output or ""
     if len(body) <= limit:
         return body
@@ -433,15 +443,15 @@ def run_plan_commands(cfg: dict, commands, confirm_gate, workspace_root: Path) -
         results.append({
             "cmd": cmd,
             "status": check_status_from_output(output),
-            "output": clip_check_output(output),
+            "output": clip_check_output(output, cfg=cfg),
         })
     drop_denied(confirm_gate)
     return results
 
 
-def _plan_handoff(results: list) -> str:
+def _plan_handoff(results: list, cfg: "dict | None" = None) -> str:
     parts = [f"$ {row['cmd']}\n{row['output']}" for row in results]
-    return clip_check_output("\n".join(parts))
+    return clip_check_output("\n".join(parts), cfg=cfg)
 
 
 def _choice_on(cfg: dict, key: str) -> bool:
@@ -1278,7 +1288,7 @@ def _run_until_body(
                 )
                 for row in results:
                     echo_status(row["output"])
-                check_output = _plan_handoff(results)
+                check_output = _plan_handoff(results, cfg=cfg)
                 status = judge_cycle(
                     tuple(planned), results,
                     baseline_on=any(

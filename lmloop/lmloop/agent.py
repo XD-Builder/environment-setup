@@ -495,12 +495,13 @@ def _dispatch_tools(
         fn = call.get("function", {})
         name, args = fn.get("name", ""), fn.get("arguments", "")
         arg_preview = tools.format_tool_preview(
-            name, args, workspace_root=workspace_root,
+            name, args, workspace_root=workspace_root, cfg=cfg,
         )
         echo_tool(name, arg_preview, stats)
         prepared.append((call, call_idx, name, args, arg_preview))
     raw_results = tools.run_tool_calls(
         impls, [(name, args) for _call, _idx, name, args, _prev in prepared],
+        cfg=cfg,
     )
     for (call, call_idx, name, _args, arg_preview), raw_result in zip(
         prepared, raw_results,

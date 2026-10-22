@@ -9,7 +9,22 @@ from unittest import mock
 
 from lmloop import config as config_mod
 from lmloop import memory
-from lmloop.config import DEFAULTS, cfg_get, cfg_int, coerce_config_value, normalize_config
+from lmloop.config import (
+    CHECK_OUTPUT_LIMIT,
+    DEFAULTS,
+    DIFF_LIMIT,
+    HISTORY_PREVIEW_CHARS,
+    LOCAL_READ_CONCURRENCY,
+    MAX_TRANSCRIPT_TOOL_CHARS,
+    TOOL_PREVIEW_LIMIT,
+    WEB_FETCH_CONCURRENCY,
+    WEB_SEARCH_CONCURRENCY,
+    cfg_get,
+    cfg_int,
+    cfg_positive_int,
+    coerce_config_value,
+    normalize_config,
+)
 from support import parametrize
 
 # Keys documented in README.md config table (keep in sync with the table).
@@ -28,6 +43,9 @@ README_CONFIG_KEYS = frozenset({
     "company_remote", "company_models_allowlist",
     "use_spirit", "spirit_actions", "spirit_distill_after_mine", "spirit_remote",
     "campaign_daily_reflect", "campaign_end_of_day_utc", "campaign_max_days",
+    TOOL_PREVIEW_LIMIT, DIFF_LIMIT, CHECK_OUTPUT_LIMIT, HISTORY_PREVIEW_CHARS,
+    MAX_TRANSCRIPT_TOOL_CHARS,
+    WEB_SEARCH_CONCURRENCY, WEB_FETCH_CONCURRENCY, LOCAL_READ_CONCURRENCY,
 })
 
 
@@ -110,6 +128,12 @@ class ConfigQualityTests(unittest.TestCase):
         self.assertIsNone(coerce_config_value("until_baseline", "sometimes"))
         self.assertEqual(coerce_config_value("autonomous_snapshot", "GIT"), "git")
         self.assertIsNone(coerce_config_value("autonomous_snapshot", "maybe"))
+
+    def test_cfg_positive_int_rejects_non_positive(self):
+        self.assertEqual(cfg_positive_int({}, WEB_SEARCH_CONCURRENCY), 2)
+        self.assertEqual(cfg_positive_int({WEB_SEARCH_CONCURRENCY: 0}, WEB_SEARCH_CONCURRENCY), 2)
+        self.assertEqual(cfg_positive_int({WEB_SEARCH_CONCURRENCY: 4}, WEB_SEARCH_CONCURRENCY), 4)
+        self.assertEqual(cfg_positive_int({DIFF_LIMIT: -3}, DIFF_LIMIT), DEFAULTS[DIFF_LIMIT])
 
     def test_cfg_get_keeps_zero_values(self):
         cfg = {"context_length": 0, "context_reserve": 512}

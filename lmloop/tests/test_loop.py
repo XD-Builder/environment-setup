@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from lmloop.config import CHECK_OUTPUT_LIMIT
 from lmloop.server import ServerError
 from lmloop.loop import (
     UntilRun,
@@ -126,6 +127,10 @@ class CheckStatusTests(unittest.TestCase):
         self.assertIn(str(len(body)), out)
         self.assertLess(len(out), len(body) + 80)
         self.assertEqual(check_status_from_output(body), "fail")
+        clipped = clip_check_output(body, cfg={CHECK_OUTPUT_LIMIT: 100})
+        self.assertIn("[truncated", clipped)
+        self.assertLess(len(clipped), 180)
+        self.assertEqual(clip_check_output("x" * 50, cfg={CHECK_OUTPUT_LIMIT: 0}), "x" * 50)
 
 
 class UntilRunGraphTests(unittest.TestCase):

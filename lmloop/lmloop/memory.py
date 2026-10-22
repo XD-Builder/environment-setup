@@ -705,6 +705,10 @@ def format_sessions_for_retro(paths) -> str:
     return "\n\n".join(parts)
 
 
+_TRANSCRIPT_TOOL_CHARS = 500
+_ELLIPSIS = "..."
+
+
 def format_messages_transcript(messages, max_chars: int = 20000) -> str:
     """Render a live thread for compact/memory mine — honors /undo.
 
@@ -718,7 +722,9 @@ def format_messages_transcript(messages, max_chars: int = 20000) -> str:
         if not content or role == "system":
             continue
         if role == "tool":
-            lines.append(f"[tool] {content[:500]}")
+            if len(content) > _TRANSCRIPT_TOOL_CHARS:
+                content = content[:_TRANSCRIPT_TOOL_CHARS] + _ELLIPSIS
+            lines.append(f"[tool] {content}")
             continue
         if role not in ("user", "assistant"):
             continue
@@ -820,7 +826,7 @@ def session_preview(path: Path, max_chars: int = 120) -> str:
         if row.get("role") == "user":
             text = (row.get("content") or "").strip().replace("\n", " ")
             if len(text) > max_chars:
-                return text[:max_chars] + "..."
+                return text[:max_chars] + _ELLIPSIS
             return text or "(empty)"
     return "(no user messages)"
 

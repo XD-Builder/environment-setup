@@ -19,6 +19,8 @@ and [README.md](../../README.md).
 | [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md) | Spirit layer: seed, actions, thoughts, traits, `self.md` |
 | [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) | Memory slash vocabulary; merge-tools and slash workflow control cut |
 | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Abstention pairs, sandbox governance; unattended optimizer is a non-goal |
+| [DESIGN_CONCURRENCY.md](DESIGN_CONCURRENCY.md) | Per-category tool pools inside one concurrent wave |
+| [DESIGN_TRUNCATION_AND_CUTOFF.md](DESIGN_TRUNCATION_AND_CUTOFF.md) | Display limits; `/transcript` tool rows full by default |
 
 Active (partial or proposed) specs stay in [../](../). Build order:
 [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) and [../DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md).

@@ -5,6 +5,7 @@ import unittest
 from support import requires_rich
 
 from lmloop.markdown_view import (
+    _TRANSCRIPT_TOOL_CUT,
     make_console,
     messages_to_markdown,
     render_markdown_ansi,
@@ -40,6 +41,18 @@ class MarkdownViewTests(unittest.TestCase):
         self.assertIn("see shot", md)
         self.assertIn("[image]", md)
         self.assertNotIn("SECRET", md)
+
+    def test_tool_rows_are_full_unless_limited(self):
+        content = "z" * 5000
+        messages = [{"role": "tool", "content": content}]
+        full = messages_to_markdown(messages)
+        self.assertIn(content, full)
+        self.assertNotIn(_TRANSCRIPT_TOOL_CUT, full)
+        clipped = messages_to_markdown(messages, tool_char_limit=100)
+        self.assertIn("z" * 100, clipped)
+        self.assertNotIn("z" * 101, clipped)
+        self.assertIn(_TRANSCRIPT_TOOL_CUT, clipped)
+        self.assertEqual(session_transcript(messages, tool_char_limit=100), clipped)
 
     def test_render_markdown_ansi_produces_output(self):
         out = render_markdown_ansi("# Hello\n\n**bold**", width=80)

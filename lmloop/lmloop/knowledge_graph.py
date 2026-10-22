@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import memory
-from .config import cfg_bool, utc_now
+from .config import HISTORY_PREVIEW_CHARS, cfg_bool, cfg_positive_int, utc_now
 
 GRAPH_NODE_TYPES = frozenset({
     "learning", "decision", "session", "file", "skill", "concept",
@@ -134,7 +134,7 @@ class KnowledgeGraph:
         cache_key = str(root)
         if _BACKFILL_FP.get(cache_key) == fp:
             return
-        self._backfill()
+        self._backfill(cfg)
         _BACKFILL_FP[cache_key] = fp
 
     def load_view(self) -> GraphView:
@@ -517,7 +517,7 @@ class KnowledgeGraph:
                 sess_mtime = 0
         return (_stat(learn), _stat(dec), sess_mtime, session_count)
 
-    def _backfill(self) -> None:
+    def _backfill(self, cfg: dict) -> None:
         existing = self.nodes()
         wrote = False
         for r in memory.get_learnings(limit=10000, slug=self.slug):
@@ -545,7 +545,9 @@ class KnowledgeGraph:
             ident = _node_id("session", path.stem)
             if ident not in existing:
                 self.add_node(
-                    "session", path.stem, label=memory.session_preview(path),
+                    "session", path.stem, label=memory.session_preview(
+                        path, max_chars=cfg_positive_int(cfg, HISTORY_PREVIEW_CHARS),
+                    ),
                     extra={"path": str(path)},
                 )
                 wrote = True

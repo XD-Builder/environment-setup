@@ -41,6 +41,16 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# Shared spelling for DEFAULTS and every reader of these keys.
+TOOL_PREVIEW_LIMIT = "tool_preview_limit"
+DIFF_LIMIT = "diff_limit"
+CHECK_OUTPUT_LIMIT = "check_output_limit"
+HISTORY_PREVIEW_CHARS = "history_preview_chars"
+MAX_TRANSCRIPT_TOOL_CHARS = "max_transcript_tool_chars"
+WEB_SEARCH_CONCURRENCY = "web_search_concurrency"
+WEB_FETCH_CONCURRENCY = "web_fetch_concurrency"
+LOCAL_READ_CONCURRENCY = "local_read_concurrency"
+
 DEFAULTS = {
     "base_url": "http://127.0.0.1:1234/v1",
     "api_key": "",  # empty = no Authorization header; see resolve_api_key()
@@ -95,6 +105,16 @@ DEFAULTS = {
     "campaign_daily_reflect": True,
     "campaign_end_of_day_utc": "",  # empty = off; else hour 0-23 UTC
     "campaign_max_days": 30,
+    # --- Truncation / display ---
+    TOOL_PREVIEW_LIMIT: 160,  # max chars for ⚙-line tool arg preview
+    DIFF_LIMIT: 60,  # max unified-diff lines shown to user
+    CHECK_OUTPUT_LIMIT: 2000,  # max chars for shell check output clip
+    HISTORY_PREVIEW_CHARS: 120,  # max chars for `lmloop history` preview
+    MAX_TRANSCRIPT_TOOL_CHARS: 0,  # 0 = no limit for /transcript tool rows
+    # --- Per-category in-flight caps (ToolDef.category) ---
+    WEB_SEARCH_CONCURRENCY: 2,  # DDG rate limit (CAPTCHA after ~3)
+    WEB_FETCH_CONCURRENCY: 4,  # HTTP is cheap, no CAPTCHA
+    LOCAL_READ_CONCURRENCY: 8,  # local filesystem, no rate limits
 }
 
 _CONFIG_WARNED = False
@@ -249,6 +269,14 @@ def cfg_get(cfg: "dict | None", key: str):
 
 def cfg_int(cfg: "dict | None", key: str) -> int:
     return int(cfg_get(cfg, key))
+
+
+def cfg_positive_int(cfg: "dict | None", key: str) -> int:
+    """``cfg_int`` when it is at least 1; otherwise ``DEFAULTS[key]``."""
+    val = cfg_int(cfg, key)
+    if val < 1:
+        return int(DEFAULTS[key])
+    return val
 
 
 def cfg_bool(cfg: "dict | None", key: str) -> bool:

@@ -79,7 +79,7 @@ list.
 
 | Concern | Owner | Rule |
 |---|---|---|
-| Tool schema + validation + impl | `ToolDef` rows in `tools.build_tools()` | `tool_names()` reads that registry. Never a second name list. Argument coercion is a `ToolDef` field (`int_fields`, `bool_fields`, `enum_fields`, `allow_empty`), not a per-tool `if`. |
+| Tool schema + validation + impl | `ToolDef` rows in `tools.build_tools()` | `tool_names()` reads that registry. Never a second name list. Argument coercion is a `ToolDef` field (`int_fields`, `bool_fields`, `enum_fields`, `allow_empty`), not a per-tool `if`. Concurrency category is `ToolDef.category` (`local_read`, `web_search`, `web_fetch`); `run_tool_calls` reads it. Do not keep a second name set. |
 | Confirm-gate labels and tiers | `tools._GATE_KINDS` via `confirm_label()` / `gate_tier()` | Gate strings are `<prefix><detail>`. `ui.make_confirm_gate` prints and asks; it does not classify. `GatePolicy` decides autonomy from the tier, never from the tool name. |
 | Post-tool user echo | `tools.user_notice(name, result)` | `agent._dispatch_tools` makes one call; no tool-name branching in `agent.py`. |
 | Slash / CLI stems, reserved skill names, first-arg completions | `CommandMeta` rows in `commands.py` | Handlers stay in `cli.py` / `repl.py`. Names, `arg_choices`, and `help_tier` live here only. Memory subverb completion uses `MEMORY_ARG_COMPLETION`. |

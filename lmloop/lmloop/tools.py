@@ -30,9 +30,17 @@ TOOL_READ_FILE = "read_file"
 MAX_SEARCH_MATCHES = 50
 MAX_SEARCH_CONTEXT = 5
 MAX_FIND_RESULTS = 200
-UPDATE_DIFF_LINES = 60
 DEFAULT_SHELL_TIMEOUT_S = config.DEFAULTS["shell_timeout_s"]
-MAX_CONCURRENT_TOOLS = 8
+# ToolDef.category values. Barriers leave the field empty.
+CATEGORY_LOCAL_READ = "local_read"
+CATEGORY_WEB_SEARCH = "web_search"
+CATEGORY_WEB_FETCH = "web_fetch"
+# Category → config key for that category's in-flight cap.
+_POOL_LIMIT_KEYS = {
+    CATEGORY_LOCAL_READ: config.LOCAL_READ_CONCURRENCY,
+    CATEGORY_WEB_SEARCH: config.WEB_SEARCH_CONCURRENCY,
+    CATEGORY_WEB_FETCH: config.WEB_FETCH_CONCURRENCY,
+}
 
 _TRUNCATE_HINT = (
     "\n... [truncated, {total} chars total]. "
@@ -236,6 +244,7 @@ class ToolDef:
     allow_empty: tuple = ()
     enum_fields: dict = field(default_factory=dict)
     concurrent: bool = False
+    category: str = ""  # CATEGORY_* when concurrent; empty for a barrier
 
     def openai_spec(self) -> dict:
         return {
@@ -429,7 +438,6 @@ def _resolve_path(path: str, root: "Path | None" = None) -> Path:
     return resolve_user_path(path, root)
 
 
-_TOOL_PREVIEW_LIMIT = 160
 # tool -> path-valued args shown resolved on the ⚙ line. "path" defaults to ".".
 _FILE_PATH_TOOLS: "dict[str, tuple[str, ...]]" = {
     TOOL_READ_FILE: ("path",),
@@ -512,12 +520,15 @@ def _file_tool_preview(parsed: dict, path_args: tuple, resolved: dict) -> str:
 
 def format_tool_preview(name: str, args: str,
                         workspace_root: "Path | None" = None,
-                        limit: int = _TOOL_PREVIEW_LIMIT) -> str:
+                        limit: int | None = None,
+                        cfg: "dict | None" = None) -> str:
     """Compact ⚙-line args. File tools show the resolved path in full.
 
     The path is its own line and is never cut with ``...``. Other arguments
     follow and may be shortened. Non-file tools stay one clipped line.
     """
+    if limit is None:
+        limit = config.cfg_positive_int(cfg, config.TOOL_PREVIEW_LIMIT)
     text = args or ""
     path_args = _FILE_PATH_TOOLS.get(name)
     if not path_args:
@@ -807,7 +818,9 @@ def _match_lines(text: str, needle: str) -> "list[int]":
 
 
 def _unified_diff(old: str, new: str, label: str,
-                  limit: int = UPDATE_DIFF_LINES) -> str:
+                  limit: int | None = None, cfg: "dict | None" = None) -> str:
+    if limit is None:
+        limit = config.cfg_positive_int(cfg, config.DIFF_LIMIT)
     lines = list(difflib.unified_diff(
         old.splitlines(), new.splitlines(),
         fromfile=label, tofile=label, n=2, lineterm="",
@@ -821,7 +834,8 @@ def update_file(path: str, old_string: str, new_string: str,
                 replace_all: bool = False,
                 workspace_root: "Path | None" = None,
                 extra_readable: "list[Path] | None" = None,
-                confirm_gate=None) -> str:
+                confirm_gate=None,
+                cfg: "dict | None" = None) -> str:
     """Replace an exact snippet in an existing file. Returns a unified diff."""
     root = workspace_root or _workspace_root()
     p, err = _check_workspace(path, root, extra_readable=extra_readable)
@@ -885,7 +899,7 @@ def update_file(path: str, old_string: str, new_string: str,
         label = str(p.relative_to(Path(root).resolve()))
     except ValueError:
         label = str(p)
-    return _truncate(header + "\n" + _unified_diff(text, new_text, label))
+    return _truncate(header + "\n" + _unified_diff(text, new_text, label, cfg=cfg))
 
 
 def move_file(path: str, new_path: str, workspace_root: "Path | None" = None,
@@ -1170,6 +1184,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             ),
             int_fields=("start_line", "max_lines"),
             concurrent=True,
+            category=CATEGORY_LOCAL_READ,
         ),
         ToolDef(
             "write_file",
@@ -1204,6 +1219,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             lambda path, old_string, new_string, replace_all=False: update_file(
                 path, old_string, new_string, replace_all=replace_all,
                 workspace_root=root, extra_readable=extra, confirm_gate=gate,
+                cfg=cfg,
             ),
             allow_empty=("new_string",),
             bool_fields=("replace_all",),
@@ -1236,6 +1252,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             {"path": s}, [],
             lambda path=".": list_dir(path, workspace_root=root, extra_readable=extra),
             concurrent=True,
+            category=CATEGORY_LOCAL_READ,
         ),
         ToolDef(
             "find_files",
@@ -1246,6 +1263,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             {"pattern": s, "path": s}, ["pattern"],
             lambda pattern, path=".": find_files(pattern, path, workspace_root=root),
             concurrent=True,
+            category=CATEGORY_LOCAL_READ,
         ),
         ToolDef(
             "search_files",
@@ -1270,6 +1288,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             int_fields=("context",),
             bool_fields=("case_insensitive", "fixed"),
             concurrent=True,
+            category=CATEGORY_LOCAL_READ,
         ),
         ToolDef(
             "web_search",
@@ -1286,6 +1305,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             ),
             int_fields=("max_results",),
             concurrent=True,
+            category=CATEGORY_WEB_SEARCH,
         ),
         ToolDef(
             "fetch_url",
@@ -1297,6 +1317,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             {"url": s}, ["url"],
             lambda url: web.fetch_url(url, timeout_s=web_timeout),
             concurrent=True,
+            category=CATEGORY_WEB_FETCH,
         ),
         ToolDef(
             "current_time",
@@ -1309,6 +1330,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             {}, [],
             format_current_time,
             concurrent=True,
+            category=CATEGORY_LOCAL_READ,
         ),
         ToolDef(
             "remember",
@@ -1357,6 +1379,7 @@ def build_tools(cfg: dict, confirm_gate=None,
             "`Decision referenced: [id]`.",
             {"query": s}, ["query"], _recall,
             concurrent=True,
+            category=CATEGORY_LOCAL_READ,
         ),
         ToolDef(
             "graph_add_edge",
@@ -1390,13 +1413,34 @@ def build_tools(cfg: dict, confirm_gate=None,
 
 
 def tool_is_concurrent(name: str) -> bool:
-    """True when consecutive calls of this tool may share a thread pool."""
+    """True when consecutive calls of this tool may share a parallel wave."""
     tool = _TOOL_DEFS.get(name)
     return bool(tool is not None and tool.concurrent)
 
 
+def _pool_limit(category: str, cfg: dict) -> int:
+    """In-flight cap for a ToolDef category. Unknown categories stay serial."""
+    key = _POOL_LIMIT_KEYS.get(category)
+    if key is None:
+        return 1
+    return config.cfg_positive_int(cfg, key)
+
+
 def concurrent_groups(names: list) -> "list[list[int]]":
-    """Index groups: consecutive concurrent tools together; others alone."""
+    """Index groups: one wave of consecutive concurrent tools; others alone.
+
+    A non-concurrent tool is a barrier. Category caps are applied inside the
+    wave, so a read and a web search in the same wave still overlap.
+
+    Examples::
+
+        ["read_file", "list_dir", "write_file", "read_file"]
+        → [[0, 1], [2], [3]]
+        ["read_file", "web_search", "web_search", "read_file"]
+        → [[0, 1, 2, 3]]
+        ["write_file", "run_shell"]
+        → [[0], [1]]
+    """
     groups: "list[list[int]]" = []
     i = 0
     while i < len(names):
@@ -1412,17 +1456,43 @@ def concurrent_groups(names: list) -> "list[list[int]]":
     return groups
 
 
-def run_tool_calls(impls: dict, calls: list) -> list:
-    """Dispatch ``(name, arguments)`` pairs. Consecutive concurrent tools share a pool.
+def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: dict, out: list) -> None:
+    """Run one concurrent wave: one pool per category, joined before return."""
+    buckets: "dict[str, list[int]]" = {}
+    for i in group:
+        tool = _TOOL_DEFS.get(names[i])
+        cat = tool.category if tool is not None and tool.category else ""
+        buckets.setdefault(cat, []).append(i)
+    pools = []
+    futs = {}
+    try:
+        for cat, idxs in buckets.items():
+            workers = min(len(idxs), _pool_limit(cat, cfg))
+            pool = ThreadPoolExecutor(max_workers=max(1, workers))
+            pools.append(pool)
+            for i in idxs:
+                futs[pool.submit(dispatch, impls, calls[i][0], calls[i][1])] = i
+        for fut in as_completed(futs):
+            out[futs[fut]] = fut.result()
+    finally:
+        for pool in pools:
+            pool.shutdown(wait=True)
+
+
+def run_tool_calls(impls: dict, calls: list, cfg: "dict | None" = None) -> list:
+    """Dispatch ``(name, arguments)`` pairs. Consecutive concurrent tools share a wave.
 
     Results stay in call order. Side-effect tools (shell, writes, memory) stay
-    serial and act as barriers.
+    serial and act as barriers. Inside a wave, each category has its own pool
+    sized to its config cap (web_search, web_fetch, local_read).
     """
     n = len(calls)
     if n == 0:
         return []
     if not _TOOL_DEFS:
         build_tools({})
+    if cfg is None:
+        cfg = {}
     out: list = [None] * n
     names = [c[0] for c in calls]
     for group in concurrent_groups(names):
@@ -1431,14 +1501,7 @@ def run_tool_calls(impls: dict, calls: list) -> list:
             name, args = calls[i]
             out[i] = dispatch(impls, name, args)
             continue
-        workers = min(len(group), MAX_CONCURRENT_TOOLS)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = {
-                pool.submit(dispatch, impls, calls[i][0], calls[i][1]): i
-                for i in group
-            }
-            for fut in as_completed(futs):
-                out[futs[fut]] = fut.result()
+        _run_wave(impls, calls, names, group, cfg, out)
     return out
 
 
