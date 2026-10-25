@@ -436,7 +436,7 @@ class GraphRunnerTests(unittest.TestCase):
             self.assertNotIn("exit code", node["handoff"])
 
     def test_skill_node_records_uses_skill_after_act(self):
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
 
         text = "node a skill ceo"
         defn = parse_graph(text, "t")

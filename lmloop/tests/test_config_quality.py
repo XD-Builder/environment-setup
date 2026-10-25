@@ -171,8 +171,8 @@ class ConfigQualityTests(unittest.TestCase):
         self.assertEqual(cfg_int({}, "max_rounds"), DEFAULTS["max_rounds"])
 
     def test_tool_limits_match_defaults(self):
-        from lmloop import tools
-        from lmloop.web import DEFAULT_WEB_TIMEOUT_S
+        from lmloop.capabilities import tools
+        from lmloop.capabilities.web import DEFAULT_WEB_TIMEOUT_S
 
         self.assertEqual(tools.MAX_OUTPUT, DEFAULTS["max_tool_output"])
         self.assertEqual(tools.DEFAULT_SHELL_TIMEOUT_S, DEFAULTS["shell_timeout_s"])

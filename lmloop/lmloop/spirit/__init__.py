@@ -103,7 +103,7 @@ def _worker_blocked(cfg: Config) -> bool:
 def _link(cfg: Config, typ: str, key: str, label: str) -> None:
     if not cfg_bool(cfg, "use_graph") or _worker_blocked(cfg):
         return
-    from .. import knowledge_graph
+    from ..memory import knowledge_graph
     knowledge_graph.add_graph_node(typ, key, label=label[:200], source="observed")
 
 
@@ -338,7 +338,7 @@ def _sections(text: str) -> dict:
 
 
 def _remote_hides_self(cfg: Config) -> bool:
-    from ..server import base_url_is_local
+    from ..model.server import base_url_is_local
     if base_url_is_local(cfg):
         return False
     return not cfg_bool(cfg, "spirit_remote")

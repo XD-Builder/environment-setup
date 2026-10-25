@@ -7,10 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .. import __version__, steer
+from .. import __version__
+from ..prompts import steer
 from ..core.config import Config, DEFAULTS, load_config
-from ..skills import SKILLS_DIR
-from ..tools import tool_names
+from ..prompts.skills import SKILLS_DIR
+from ..capabilities.tools import tool_names
 
 _SYSTEM_SKILL = SKILLS_DIR / "system.md"
 
@@ -60,7 +61,7 @@ def _config_slice(cfg: Config) -> dict[str, Any]:
 
 
 def _tool_names(cfg: Config) -> list[str]:
-    from .. import tools as tools_mod
+    from ..capabilities import tools as tools_mod
 
     if tools_mod._TOOL_DEFS:
         return sorted(tools_mod._TOOL_DEFS.keys())

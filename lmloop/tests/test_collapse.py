@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from lmloop.repl import SessionState
+from lmloop.entry.repl import SessionState
 from lmloop.ui import Console, drain_tty_input, fresh_stats
 
 

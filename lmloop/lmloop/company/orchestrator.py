@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .. import memory
 from ..core.config import Config, cfg_int, utc_now
-from ..server import resolve_model_concurrency
+from ..model.server import resolve_model_concurrency
 from .allowlist import endpoint_error, effective_allowlist
 from .manifest import MANIFEST_REL, Manifest, ManifestError, allowlist_errors, load_manifest
 from .protocol import envelope
@@ -107,7 +107,7 @@ def _packet(manifest: Manifest, *, run_id: str, node, role, model: str, handoff:
     checks = [{"cmd": cmd, "role": "check"} for cmd in (node.checks or ())]
     skill_text = ""
     if node.kind == "skill" and node.skill:
-        from ..skills import load_skill
+        from ..prompts.skills import load_skill
         try:
             skill_text = load_skill(node.skill, public_only=True)
         except FileNotFoundError:
@@ -157,7 +157,7 @@ def run_company(
     defn=None,
 ) -> CompanyResult:
     """Drive one company run. ``launcher(packet) -> envelope`` stands in for a worker."""
-    from ..exec import workspace_rejection
+    from ..capabilities.exec import workspace_rejection
     from ..graph import GraphError, GraphRun, load_graph
 
     root = repo.resolve()
@@ -212,7 +212,7 @@ def run_company(
     plan_text = ""
     plan_revision = 0
     if campaign_id:
-        from ..campaign import attach_run, plan_block, revision_of
+        from ..host.campaign import attach_run, plan_block, revision_of
         plan_revision = revision_of(campaign_id) or 0
         plan_text = plan_block(campaign_id, role="")
         attach_run(campaign_id, kind="company", path=str(log_path))
@@ -262,13 +262,13 @@ def run_company(
             block = plan_text
             board = ""
             if campaign_id and role_name:
-                from ..campaign import board_clip, plan_block
+                from ..host.campaign import board_clip, plan_block
                 block = plan_block(campaign_id, role=role_name)
                 board = board_clip(campaign_id, role=role_name)
             elif campaign_id:
-                from ..campaign import board_clip
+                from ..host.campaign import board_clip
                 board = board_clip(campaign_id, role=name)
-            from ..run_artifacts import worker_packet_extras
+            from ..run.run_artifacts import worker_packet_extras
 
             join = graph_run.join_handoff(node)
             extras = worker_packet_extras(Path(wt_path)) if wt_path else {}
@@ -294,7 +294,7 @@ def run_company(
                 "prefix_hash": item["prefix_hash"],
             })
             if campaign_id:
-                from ..campaign import append_board
+                from ..host.campaign import append_board
                 append_board(campaign_id, "spawn", role=item["node"], text=item["goal"])
         envelopes = _launch_many(launcher, packets)
         for packet, result in zip(packets, envelopes):
@@ -309,7 +309,7 @@ def run_company(
                 "denied": result.get("denied") or [],
             })
             if campaign_id:
-                from ..campaign import append_board
+                from ..host.campaign import append_board
                 kind = "blocker" if node_status in ("blocked", "fail") else "status"
                 append_board(
                     campaign_id, kind, role=packet["node"],
@@ -377,7 +377,7 @@ def _milestones(cfg, manifest: Manifest, integration: Path, log_path: Path,
         if milestone.on_pass and harvester is not None:
             harvester({"milestone": milestone.id, "goal": goal, "cfg": cfg})
         if campaign_id:
-            from ..campaign import reflect
+            from ..host.campaign import reflect
             reflect(campaign_id, "milestone", {"milestone": milestone.id, "goal": goal})
     if not manifest.milestones and harvester is not None:
         harvester({"milestone": "", "goal": goal, "cfg": cfg})

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from lmloop.core.config import DEFAULTS
 from lmloop.graph import parse_graph
-from lmloop.server import ServerError
+from lmloop.model.server import ServerError
 
 
 def _cfg(**overrides):
@@ -74,11 +74,11 @@ class AllowlistTests(unittest.TestCase):
         self.assertEqual(allow.count("openai/gpt-4o-mini"), 1)
 
     def test_chat_refuses_before_http(self):
-        from lmloop.chat import _chat
+        from lmloop.model.chat import _chat
         from lmloop.company.allowlist import activate
 
         cfg = activate(_cfg(), orchestrator=False)
-        with patch("lmloop.chat.urllib.request.urlopen") as urlopen:
+        with patch("lmloop.model.chat.urllib.request.urlopen") as urlopen:
             with self.assertRaises(ServerError) as caught:
                 _chat(cfg, "not-allowlisted/model", [{"role": "user", "content": "hi"}], None)
         self.assertIn("allowlist", str(caught.exception))
@@ -239,7 +239,7 @@ class WorkerTests(unittest.TestCase):
     def test_rejects_bad_model_sha_and_stale_plan(self):
         from lmloop.company.manifest import canonical_sha
         from lmloop.company.worker import execute_packet
-        from lmloop import campaign as campaign_mod
+        from lmloop.host import campaign as campaign_mod
 
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -283,7 +283,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_worker_cannot_remember(self):
         from lmloop.company.allowlist import activate
-        from lmloop.tools import build_tools, dispatch
+        from lmloop.capabilities.tools import build_tools, dispatch
 
         cfg = activate(_cfg(), orchestrator=False)
         _specs, impls = build_tools(cfg)
@@ -297,7 +297,7 @@ class WorkerTests(unittest.TestCase):
 
 class SpiritTests(unittest.TestCase):
     def test_seed_actions_distill_and_prompt(self):
-        from lmloop import skills
+        from lmloop.prompts import skills
         from lmloop.spirit import (
             SpiritError, active_traits, add_thought, add_trait, apply_distill,
             compress_self, ensure_seed, note_tool, note_user_text, open_thoughts,
@@ -368,8 +368,8 @@ class SpiritTests(unittest.TestCase):
                 self.assertNotIn("Open questions", compact)
 
             with patch("lmloop.memory.context_block", return_value="MEM"), \
-                 patch("lmloop.steer.clock_block", return_value="## Clock\n\nNOW"), \
-                 patch("lmloop.steer.steering_block", return_value=""), \
+                 patch("lmloop.prompts.steer.clock_block", return_value="## Clock\n\nNOW"), \
+                 patch("lmloop.prompts.steer.steering_block", return_value=""), \
                  patch("lmloop.memory.project_dir", return_value=state):
                 prompt = skills.system_prompt(_cfg(base_url="http://127.0.0.1:1234/v1"))
             heading = "## Context recovery (from project memory)"
@@ -379,7 +379,7 @@ class SpiritTests(unittest.TestCase):
 
 class CampaignTests(unittest.TestCase):
     def test_plan_board_ticks_and_gates(self):
-        from lmloop import campaign as campaign_mod
+        from lmloop.host import campaign as campaign_mod
         from lmloop.company.worker import execute_packet
         from lmloop.company.manifest import canonical_sha
 
@@ -474,14 +474,14 @@ class CampaignTests(unittest.TestCase):
 
 class CommandTests(unittest.TestCase):
     def test_manifest_cli_and_company_without_docker(self):
-        from lmloop.cli import main
+        from lmloop.entry.cli import main
         from lmloop.core.commands import COMMANDS
 
         names = [row.name for row in COMMANDS]
         for stem in ("company", "worker", "campaign", "spirit"):
             self.assertEqual(names.count(stem), 1)
         repo = Path(__file__).resolve().parents[2]
-        with patch("lmloop.cli.Path.cwd", return_value=repo):
+        with patch("lmloop.entry.cli.Path.cwd", return_value=repo):
             self.assertEqual(main(["company", "manifest"]), 0)
             code = main(["company", "run", "--goal", "nope"])
         self.assertEqual(code, 1)

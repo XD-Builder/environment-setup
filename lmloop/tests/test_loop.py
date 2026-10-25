@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lmloop.core.config import CHECK_OUTPUT_LIMIT
-from lmloop.server import ServerError
+from lmloop.model.server import ServerError
 from lmloop.loop import (
     UntilRun,
     check_status_from_output,

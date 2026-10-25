@@ -98,7 +98,7 @@ class ComponentContractTests(unittest.TestCase):
 
     @baseline("checks", "pytest.ini becomes an authoritative check")
     def test_infer_plan_from_pytest_ini(self):
-        from lmloop.checks import infer_plan
+        from lmloop.verify.checks import infer_plan
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -109,7 +109,7 @@ class ComponentContractTests(unittest.TestCase):
 
     @baseline("exec.local", "cwd, stdout, and missing binary")
     def test_local_backend(self):
-        from lmloop.exec import LocalBackend
+        from lmloop.capabilities.exec import LocalBackend
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -132,7 +132,7 @@ class ComponentContractTests(unittest.TestCase):
 
     @baseline("snapshot", "dirty tree is stored under refs/lmloop")
     def test_snapshot_ref(self):
-        from lmloop.snapshot import take_snapshot
+        from lmloop.verify.snapshot import take_snapshot
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "fixture"
@@ -153,7 +153,7 @@ class ComponentContractTests(unittest.TestCase):
     def test_clock_block(self):
         from datetime import datetime, timezone
 
-        from lmloop.steer import clock_block
+        from lmloop.prompts.steer import clock_block
 
         text = clock_block(datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc))
         self.assertIn("## Clock", text)

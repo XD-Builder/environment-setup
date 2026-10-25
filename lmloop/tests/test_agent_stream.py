@@ -7,9 +7,9 @@ import urllib.error
 from unittest import mock
 
 from lmloop import agent
-from lmloop import display
-from lmloop import stream as stream_mod
-from lmloop.server import ServerError
+from lmloop.model import display
+from lmloop.model import stream as stream_mod
+from lmloop.model.server import ServerError
 from lmloop.core.status import ANSWER_TEXT, NUDGE_CONTINUE_TEXT, answer_message
 from support import requires_rich
 
@@ -127,11 +127,11 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertIsNone(p._write)
         p, mode = display._open_live_display(True)
         self.assertEqual(mode, "plain")
-        with mock.patch("lmloop.display._rich_live_available", return_value=True):
+        with mock.patch("lmloop.model.display._rich_live_available", return_value=True):
             p, mode = display._open_live_display(None)
             self.assertEqual(mode, "markdown")
             self.assertIsInstance(p, display._MarkdownLivePrinter)
-        with mock.patch("lmloop.display._rich_live_available", return_value=False):
+        with mock.patch("lmloop.model.display._rich_live_available", return_value=False):
             p, mode = display._open_live_display(None)
             self.assertEqual(mode, "plain")
 
@@ -180,9 +180,9 @@ class StreamPrinterTests(unittest.TestCase):
         p = display._MarkdownLivePrinter()
         fake_live = mock.MagicMock()
         fake_live.auto_refresh = False
-        with mock.patch("lmloop.display._load_rich") as load_rich, \
+        with mock.patch("lmloop.model.display._load_rich") as load_rich, \
              mock.patch("lmloop.ui.markdown_view.make_console") as make_console, \
-             mock.patch("lmloop.display.terminal_size", return_value=(80, 40)):
+             mock.patch("lmloop.model.display.terminal_size", return_value=(80, 40)):
             Console = mock.MagicMock()
             make_console.return_value.soft_wrap = False
             make_console.return_value.width = 79
@@ -236,17 +236,17 @@ class StreamPrinterTests(unittest.TestCase):
         self.assertIn("short paragraph", out)
 
     def test_live_preview_height_tracks_terminal(self):
-        from lmloop.display import _live_preview_height
-        with mock.patch("lmloop.display.terminal_size", return_value=(80, 40)):
+        from lmloop.model.display import _live_preview_height
+        with mock.patch("lmloop.model.display.terminal_size", return_value=(80, 40)):
             self.assertEqual(_live_preview_height(), 38)
-        with mock.patch("lmloop.display.terminal_size", return_value=(80, 5)):
+        with mock.patch("lmloop.model.display.terminal_size", return_value=(80, 5)):
             self.assertEqual(_live_preview_height(), 4)
 
     def test_live_preview_width_leaves_wrap_margin(self):
-        from lmloop.display import _live_preview_width
-        with mock.patch("lmloop.display.terminal_size", return_value=(80, 40)):
+        from lmloop.model.display import _live_preview_width
+        with mock.patch("lmloop.model.display.terminal_size", return_value=(80, 40)):
             self.assertEqual(_live_preview_width(), 79)
-        with mock.patch("lmloop.display.terminal_size", return_value=(1, 24)):
+        with mock.patch("lmloop.model.display.terminal_size", return_value=(1, 24)):
             self.assertEqual(_live_preview_width(), 1)
 
     @requires_rich
@@ -340,7 +340,7 @@ class StreamPrinterTests(unittest.TestCase):
         t = display._ThinkingLive(color=False)
         ts = type("TS", (), {"columns": 20, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
-             mock.patch("lmloop.display.terminal_size", return_value=(ts.columns, ts.lines)):
+             mock.patch("lmloop.model.display.terminal_size", return_value=(ts.columns, ts.lines)):
             out.isatty.return_value = True
             t._write_line("x" * 45)
         # "  ▎" prefix + 45 = 48 cells → 3 rows at width 20
@@ -361,7 +361,7 @@ class StreamPrinterTests(unittest.TestCase):
         writes = []
         ts = type("TS", (), {"columns": 80, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
-             mock.patch("lmloop.display.terminal_size", return_value=(ts.columns, ts.lines)):
+             mock.patch("lmloop.model.display.terminal_size", return_value=(ts.columns, ts.lines)):
             out.write.side_effect = lambda s: writes.append(s)
             out.isatty.return_value = True
             for piece in feeds:
@@ -424,7 +424,7 @@ class StreamPrinterTests(unittest.TestCase):
         writes = []
         ts = type("TS", (), {"columns": 80, "lines": 24})()
         with mock.patch("sys.stdout") as out, \
-             mock.patch("lmloop.display.terminal_size", return_value=(ts.columns, ts.lines)):
+             mock.patch("lmloop.model.display.terminal_size", return_value=(ts.columns, ts.lines)):
             out.write.side_effect = lambda s: writes.append(s)
             out.isatty.return_value = True
             t.feed("line one\nline two\n")
@@ -531,7 +531,7 @@ class ContinueNudgeTests(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=[FakeResp(round1), FakeResp(round2), FakeResp(round3)],
         ), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -573,7 +573,7 @@ class ContinueNudgeTests(unittest.TestCase):
             return ({"role": "assistant", "content": "Wrote the roadmap."}, {})
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             agent.act(
                 cfg, "m", messages,
@@ -611,7 +611,7 @@ class ContinueNudgeTests(unittest.TestCase):
             return ({"role": "assistant", "content": "File written."}, {})
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             agent.act(
                 cfg, "m", messages,
@@ -644,7 +644,7 @@ class ContinueNudgeTests(unittest.TestCase):
             return ({"role": "assistant", "content": "RESTARTED REPORT"}, {})
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             agent.act(
                 cfg, "m", messages,
@@ -680,7 +680,7 @@ class ContinueNudgeTests(unittest.TestCase):
             return ({"role": "assistant", "content": "Here is the review."}, {})
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             agent.act(
                 cfg, "m", messages,
@@ -1235,7 +1235,7 @@ class ChatStreamTests(unittest.TestCase):
 
     def test_halt_drops_late_tool_calls_after_drain(self):
         """Thinking-loop halt closes the SSE body; tool_calls after drain are dropped."""
-        from lmloop import stream as stream_mod
+        from lmloop.model import stream as stream_mod
         block = (
             "Let me start with the first batch:\n"
             "1. Reuters Business\n"
@@ -1324,7 +1324,7 @@ class ActIntegrationTests(unittest.TestCase):
         }
         echoed, out = [], []
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False):
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False):
             # Re-bind plain writer through True path for capture
             agent.act(
                 cfg, "m", [{"role": "user", "content": "hi"}],
@@ -1425,7 +1425,7 @@ class ActIntegrationTests(unittest.TestCase):
             "last_prompt_tokens": 0, "last_completion_tokens": 0,
         }
         with mock.patch("urllib.request.urlopen", side_effect=[FakeResp(round1), FakeResp(round2)]), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -1634,7 +1634,7 @@ class ActIntegrationTests(unittest.TestCase):
             raise ServerError("boom")
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             with self.assertRaises(ServerError):
@@ -1678,7 +1678,7 @@ class ActIntegrationTests(unittest.TestCase):
             raise KeyboardInterrupt
 
         with mock.patch.object(agent, "_chat", side_effect=boom), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             with self.assertRaises(KeyboardInterrupt):
                 agent.act(
@@ -1712,7 +1712,7 @@ class ActIntegrationTests(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=[FakeResp(gather), FakeResp(answer)],
         ) as urlopen, \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp:
             disp.return_value = "ok"
@@ -1744,7 +1744,7 @@ class ActIntegrationTests(unittest.TestCase):
         }
         messages = [{"role": "user", "content": "hi"}]
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp:
             agent.act(
@@ -1778,7 +1778,7 @@ class ActIntegrationTests(unittest.TestCase):
             )
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})):
             agent.act(
                 cfg, "m", messages,
@@ -1817,7 +1817,7 @@ class ActIntegrationTests(unittest.TestCase):
             )
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -1853,7 +1853,7 @@ class ActIntegrationTests(unittest.TestCase):
             return ({"role": "assistant", "content": ""}, {})
 
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(
@@ -1919,7 +1919,7 @@ class GatherAnswerTests(unittest.TestCase):
         echoed = []
         messages = [{"role": "user", "content": "hi"}]
         with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp:
             disp.return_value = "ok"
@@ -1957,7 +1957,7 @@ class GatherAnswerTests(unittest.TestCase):
         echoed = []
         messages = [{"role": "user", "content": "hi"}]
         with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp:
             disp.return_value = "ok"
@@ -1992,7 +1992,7 @@ class GatherAnswerTests(unittest.TestCase):
         ]
         messages = [{"role": "user", "content": "review"}]
         with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp:
             disp.return_value = "48"
@@ -2025,7 +2025,7 @@ class GatherAnswerTests(unittest.TestCase):
         ]
         messages = [{"role": "user", "content": "hi"}]
         with mock.patch("urllib.request.urlopen", side_effect=bodies) as urlopen, \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp:
             disp.return_value = "ok"
@@ -2062,7 +2062,7 @@ class GatherAnswerTests(unittest.TestCase):
         }
         messages = [{"role": "user", "content": "hi"}]
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(
                  agent.tools, "build_tools",
                  return_value=([{"type": "function", "function": {"name": "list_dir"}}], {}),
@@ -2098,7 +2098,7 @@ class GatherAnswerTests(unittest.TestCase):
         }
         messages = [{"role": "user", "content": "summarize"}]
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", side_effect=fake_build):
             agent.act(
                 cfg, "m", messages, no_tools=True,
@@ -2128,7 +2128,7 @@ class GatherAnswerTests(unittest.TestCase):
         }
         messages = [{"role": "user", "content": "hi"}]
         with mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(
                  agent.tools, "build_tools",
                  return_value=([{"type": "function", "function": {"name": "list_dir"}}], {}),
@@ -2148,7 +2148,7 @@ class GatherAnswerTests(unittest.TestCase):
 
 class ChatRequestTests(unittest.TestCase):
     def test_tool_choice_auto_when_tools_present(self):
-        from lmloop.chat import _chat_request
+        from lmloop.model.chat import _chat_request
 
         cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.2}
         specs = [{"type": "function", "function": {"name": "list_dir"}}]
@@ -2159,7 +2159,7 @@ class ChatRequestTests(unittest.TestCase):
         self.assertNotIn("stream_options", payload)
 
     def test_tool_choice_omitted_when_no_tools(self):
-        from lmloop.chat import _chat_request
+        from lmloop.model.chat import _chat_request
 
         cfg = {"base_url": "http://127.0.0.1:1234/v1", "temperature": 0.2}
         req = _chat_request(cfg, "m", [{"role": "user", "content": "hi"}], None, stream=True)
@@ -2230,8 +2230,8 @@ class ActVisionInjectTests(unittest.TestCase):
         )
 
     def test_act_appends_image_user_message(self):
-        from lmloop.extract import extract_bytes
-        from lmloop.tools import ToolResult
+        from lmloop.capabilities.extract import extract_bytes
+        from lmloop.capabilities.tools import ToolResult
         from tests.test_extract import PNG_1X1
 
         media = extract_bytes(PNG_1X1, name="a.png", label="a.png").media
@@ -2251,10 +2251,10 @@ class ActVisionInjectTests(unittest.TestCase):
         ]
         messages = [{"role": "user", "content": "look"}]
         with mock.patch("urllib.request.urlopen", side_effect=bodies), \
-             mock.patch("lmloop.display._rich_live_available", return_value=False), \
+             mock.patch("lmloop.model.display._rich_live_available", return_value=False), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch") as disp, \
-             mock.patch("lmloop.server.model_has_vision", return_value=True):
+             mock.patch("lmloop.model.server.model_has_vision", return_value=True):
             disp.return_value = ToolResult("caption", [media])
             agent.act(
                 cfg, "m", messages,

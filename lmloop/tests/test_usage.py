@@ -42,7 +42,7 @@ class UsageRecordTests(unittest.TestCase):
 
 class UsageIntegrationTests(unittest.TestCase):
     def test_dispatch_records_tool(self):
-        from lmloop.tools import build_tools, dispatch
+        from lmloop.capabilities.tools import build_tools, dispatch
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "usage.jsonl"

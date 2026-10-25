@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop import skills
+from lmloop.prompts import skills
 
 
 class SkillsDiscoveryTests(unittest.TestCase):
@@ -102,7 +102,7 @@ class SystemPromptMemoryTests(unittest.TestCase):
         self.assertIn("curiosity, learning, and growth", text)
         self.assertIn("Repo-specific practice is learned", text)
         self.assertIn("## Safety floor", text)
-        seed = (skills.SKILLS_DIR.parent / "spirit" / "seed.md").read_text()
+        seed = (skills.SKILLS_DIR.parents[1] / "spirit" / "seed.md").read_text()
         self.assertIn("Be curious, learn, and grow", seed)
         improve = skills.load_skill("improve")
         self.assertIn("delete one", improve)

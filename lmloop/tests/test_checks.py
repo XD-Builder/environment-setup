@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop.checks import (
+from lmloop.verify.checks import (
     PlannedCheck,
     apply_baseline,
     confirm_plan,
@@ -356,7 +356,7 @@ class CompanyInferenceTests(unittest.TestCase):
     def test_company_until_node_infers_on_a_node_project(self):
         from lmloop.graph import parse_graph
 
-        text = Path(__file__).resolve().parents[1] / "lmloop" / "graphs" / "company.md"
+        text = Path(__file__).resolve().parents[1] / "lmloop" / "flow" / "graphs" / "company.md"
         defn = parse_graph(text.read_text(), "company")
         self.assertIsNone(defn.node("build").check_cmd)
         with tempfile.TemporaryDirectory() as d:

@@ -507,7 +507,7 @@ def format_report(
             lines.append(f"           {g.evidence}")
             lines.append(f"           → {g.design_hook}")
     if flow is not None:
-        from ..workflow import FlowStats, compact_flow_summary
+        from ..flow.workflow import FlowStats, compact_flow_summary
         if isinstance(flow, FlowStats):
             lines.append("")
             lines.append("  flow:")

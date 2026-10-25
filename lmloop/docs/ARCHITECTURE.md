@@ -30,32 +30,68 @@ lmloop/
 │   └── openrouter_autonomous.yaml  # company allowlist; config may add ids, not remove the check
 ├── lmloop/
 │   ├── __init__.py             # version string
-│   ├── __main__.py             # raise SystemExit(main())
-│   ├── cli.py                  # argparse subcommands → REPL or one-shot
-│   ├── repl.py                 # interactive loop with slash commands
-│   ├── prompt.py               # prompt_toolkit session, completers
+│   ├── __main__.py             # raise SystemExit(entry.cli.main())
 │   ├── agent.py                # gather/answer tool loop, skill drafting
-│   ├── chat.py                 # POST /v1/chat/completions (leaf)
-│   ├── skills.py               # skill playbooks, name validation, system prompt
-│   ├── server.py               # LMS bring-up, models, context length, vision
-│   ├── stream.py               # SSE ingest, overlap, repeat-halt
-│   ├── display.py              # spinner, live printers, thinking lines
-│   ├── tools.py                # tool registry: specs + Python impls
-│   ├── web.py                  # web_search / fetch_url + HTML parsers
-│   ├── memory.py               # JSONL learnings, decisions, sessions, checkpoints
-│   ├── memory_index.py         # derived FTS5/scan index (incremental sync)
-│   ├── knowledge_graph.py      # opt-in JSONL knowledge graph (use_graph)
-│   ├── run_log.py              # until/graph JSONL run logs (leaf)
-│   ├── until_parse.py          # --check/--keep parsing (leaf)
-│   ├── until_runner.py         # until state machine
 │   ├── loop.py                 # until facade (CLI/REPL + test patches)
-│   ├── graph_dsl.py            # authored graph parse/load (leaf)
-│   ├── graph_runner.py         # graph frontier + run_graph
 │   ├── graph.py                # graph facade
-│   ├── workflow_finish.py      # terminal usage + KG hooks
-│   ├── run_artifacts.py        # until sidecar state + artifact index (budget control)
-│   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
-│   ├── exec.py                 # LocalBackend (default) and opt-in DockerBackend
+│   ├── entry/                  # human-facing shell
+│   │   ├── cli.py              # argparse subcommands → REPL or one-shot
+│   │   ├── repl.py             # interactive loop with slash commands
+│   │   └── prompt.py           # prompt_toolkit session, completers
+│   ├── model/                  # chat, stream, display, LMS (no loop/graph)
+│   │   ├── chat.py             # POST /v1/chat/completions (leaf)
+│   │   ├── stream.py           # SSE ingest, overlap, repeat-halt
+│   │   ├── display.py          # spinner, live printers, thinking lines
+│   │   └── server.py           # LMS bring-up, models, context length, vision
+│   ├── prompts/                # playbooks + steering (markdown co-located)
+│   │   ├── skills/             # packaged skill prompts + skills package
+│   │   │   ├── __init__.py     # name validation, system prompt
+│   │   │   ├── system.md       # standing harness: curiosity, learning, growth, safety floor
+│   │   │   ├── _author.md      # meta-prompt for skill drafting (not user-facing)
+│   │   │   ├── _graph_mine.md  # mine phase: propose graph edges (private)
+│   │   │   ├── _reconcile.md   # review contradicts edges (private)
+│   │   │   ├── retro.md        # mine sessions → learnings
+│   │   │   ├── investigate.md  # root-cause debugging
+│   │   │   ├── review.md       # pre-landing code review
+│   │   │   ├── compact.md      # compress thread for context recovery
+│   │   │   ├── qa.md           # run tests, verify changes
+│   │   │   ├── learn.md        # curate and audit learnings
+│   │   │   └── ceo.md          # strategy / plan review
+│   │   └── steer/              # always-on rules (injected, not /name)
+│   │       ├── __init__.py     # load steering markdown + live clock
+│   │       ├── time.md         # relative windows; Clock is source of truth
+│   │       ├── memory.md       # current question wins over context recovery
+│   │       ├── skills.md       # when to follow a playbook
+│   │       └── development.md  # model-facing coding bar
+│   ├── capabilities/           # tools + host I/O
+│   │   ├── tools.py            # tool registry: specs + Python impls
+│   │   ├── web.py              # web_search / fetch_url + HTML parsers
+│   │   ├── extract.py          # PDF/Office/image/audio extraction (leaf)
+│   │   ├── exec.py             # LocalBackend (default) and opt-in DockerBackend
+│   │   └── files_index.py      # @path completion + ref expansion (~, abs, relative)
+│   ├── memory/                 # JSONL memory; __init__.py is the memory module
+│   │   ├── __init__.py         # learnings, decisions, sessions, checkpoints
+│   │   ├── index.py            # derived FTS5/scan index (incremental sync)
+│   │   ├── knowledge_graph.py  # opt-in JSONL knowledge graph (use_graph)
+│   │   ├── context.py          # live-thread file manifest for /context
+│   │   └── canvas_tui.py       # knowledge-canvas projection and full-screen keys
+│   ├── run/                    # until machine (facade is ../loop.py)
+│   │   ├── until_parse.py      # --check/--keep parsing (leaf)
+│   │   ├── until_runner.py     # until state machine
+│   │   ├── run_log.py          # until/graph JSONL run logs (leaf)
+│   │   └── run_artifacts.py    # until sidecar state + artifact index (budget control)
+│   ├── flow/                   # authored graphs (facade is ../graph.py)
+│   │   ├── graph_dsl.py        # authored graph parse/load (leaf)
+│   │   ├── graph_runner.py     # graph frontier + run_graph
+│   │   ├── workflow.py         # FlowStats, lmloop flow, graph propose inputs
+│   │   ├── workflow_finish.py  # terminal usage + KG hooks
+│   │   └── graphs/             # packaged workflow graphs
+│   │       └── company.md      # ceo → build → qa → mine
+│   ├── verify/                 # checks + git snapshots (leaves)
+│   │   ├── checks.py           # derived check plans (no model calls)
+│   │   └── snapshot.py         # git temp-index refs before autonomous maker steps
+│   ├── host/                   # campaign board (workers do not append here)
+│   │   └── campaign.py         # multi-day plan, board, reflect ticks
 │   ├── core/                   # config, commands, status, usage
 │   │   ├── config.py           # Config class, ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   │   ├── commands.py         # CommandMeta table (CLI + slash stems)
@@ -67,38 +103,11 @@ lmloop/
 │   │   ├── harness_bundle.py   # harness_bundle_id fingerprint (H1, leaf)
 │   │   ├── harness_report.py   # opt-in execution report from run logs (H2)
 │   │   └── traces.py           # local spans, eval queue, golden inbox
-│   ├── context.py              # live-thread file manifest for /context
-│   ├── campaign.py             # multi-day plan, board, reflect ticks (host writer)
 │   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator
 │   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
-│   ├── canvas_tui.py          # knowledge-canvas projection and full-screen keys
-│   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
-│   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
-│   ├── ui/                     # Console + markdown (no top-level ui.py — package only)
-│   │   ├── console.py          # ANSI theming, status bars, clipboard
-│   │   └── markdown_view.py    # render assistant markdown (no quote gutter)
-│   ├── checks.py               # derived check plans (no model calls)
-│   ├── snapshot.py             # git temp-index refs before autonomous maker steps
-│   ├── steer.py                # always-on steering markdown + live clock
-│   ├── skills/                 # packaged skill prompts (markdown playbooks)
-│   │   ├── system.md           # standing harness: curiosity, learning, growth, safety floor
-│   │   ├── _author.md          # meta-prompt for skill drafting (not user-facing)
-│   │   ├── _graph_mine.md      # mine phase: propose graph edges (private)
-│   │   ├── _reconcile.md       # review contradicts edges (private)
-│   │   ├── retro.md            # mine sessions → learnings
-│   │   ├── investigate.md      # root-cause debugging
-│   │   ├── review.md           # pre-landing code review
-│   │   ├── compact.md          # compress thread for context recovery
-│   │   ├── qa.md               # run tests, verify changes
-│   │   ├── learn.md            # curate and audit learnings
-│   │   └── ceo.md              # strategy / plan review
-│   ├── steer/                  # packaged always-on rules (injected, not /name)
-│   │   ├── time.md             # relative windows; Clock is source of truth
-│   │   ├── memory.md           # current question wins over context recovery
-│   │   ├── skills.md           # when to follow a playbook
-│   │   └── development.md      # model-facing coding bar
-│   └── graphs/                 # packaged workflow graphs
-│       └── company.md          # ceo → build → qa → mine
+│   └── ui/                     # Console + markdown (no top-level ui.py — package only)
+│       ├── console.py          # ANSI theming, status bars, clipboard
+│       └── markdown_view.py    # render assistant markdown (no quote gutter)
 ├── evals/golden/               # versioned assertion cases + baseline rates
 │   ├── cases.json
 │   └── baseline.json
@@ -111,8 +120,8 @@ lmloop/
 
 Everything runs in one Python process on the user's machine. Arrows point from caller
 to callee and follow the import graph in [DEVELOPMENT.md](../DEVELOPMENT.md); nothing
-calls back up the stack. Leaf helpers used nearly everywhere — `config.py` (paths,
-slug), `ui.py` (terminal chrome), `status.py` (user-facing copy), and `commands.py`
+calls back up the stack. Leaf helpers used nearly everywhere — `core/config.py` (paths,
+slug), `ui/console.py` (terminal chrome), `core/status.py` (user-facing copy), and `core/commands.py`
 (command names) — are omitted so the call structure stays readable.
 
 ```mermaid
@@ -229,7 +238,7 @@ sequenceDiagram
 
 ## The Agent Loop
 
-**Files:** `agent.py` (gather/answer), `chat.py` (HTTP)
+**Files:** `agent.py` (gather/answer), `model/chat.py` (HTTP)
 
 The heart of lmloop. A single function, `act()`, implements the multi-round tool loop. Every generated token comes from `chat._chat()` posting to `{base_url}/chat/completions`. Call inventory and budgets: [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md).
 
@@ -322,7 +331,7 @@ Not completions: `GET /v1/models`, native `GET /api/v0/models` (context + vision
 
 ### Server management (`ensure_server`)
 
-**File:** `server.py`
+**File:** `model/server.py`
 
 Before the loop starts, `ensure_server()` (`LmsClient.ensure`) checks if LM Studio is reachable. If not and `auto_start_server` is enabled, it runs `lms server start` and `lms load` (if the `lms` CLI is on PATH). Falls back to first available model if the configured model isn't loaded.
 
@@ -334,7 +343,7 @@ Before the loop starts, `ensure_server()` (`LmsClient.ensure`) checks if LM Stud
 
 ## Goal loop
 
-**Files:** `loop.py`, `checks.py`
+**Files:** `loop.py`, `verify/checks.py`
 
 `until` is a while-statement around isolated `act()` calls. The maker does not declare the goal done — exit codes or a **fresh** eval thread do.
 
@@ -366,7 +375,7 @@ until goal:
 - REPL `/continue` resumes `state.until_run` (the run this session started). `/new` clears that pointer and does not auto-resume a disk until-run. CLI `lmloop until` with no goal still resumes the latest open run.
 - After the run stops (pass, pause, or interrupt), the REPL appends a handoff so follow-up questions have context. `lmloop until` on a TTY then enters the prompt loop (piped stdin still exits).
 - Run state is append-only JSONL under `projects/<slug>/until/<ts>.jsonl`. The event is written **after** the step, so a crash retries the same role. Maker rows may include `snapshot_ref` (`HEAD` or `refs/lmloop/…`) from `snapshot.take_snapshot` when `autonomous_snapshot` is `git` and the workspace is a git repo. With `until_control` ≠ `off`, sidecar files live in `until/<ts>.meta/` (`state.md`, `artifacts.jsonl`).
-- `agent.py` / `stream.py` / `display.py` must not import `loop`. Handlers stay in `cli.py` / `repl.py`.
+- `agent.py` / `model/stream.py` / `model/display.py` must not import `loop`. Handlers stay in `entry/cli.py` / `entry/repl.py`.
 
 This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`use_graph`) in `knowledge_graph.py`: JSONL nodes/edges, `recall_memory` hops, `/memory graph` and `/memory reconcile`. See [DESIGN_LOOP_AND_GRAPH.md](archived/DESIGN_LOOP_AND_GRAPH.md).
 
@@ -389,7 +398,7 @@ edge <from> -> <to> [on pass|fail|blocked]
 edge <from> -> <a> <b> …              fan-out on pass only (one row per `(from, on)`)
 ```
 
-- Packaged graphs live in `lmloop/graphs/*.md`; `~/.lmloop/graphs/<name>.md` overrides the same name.
+- Packaged graphs live in `lmloop/flow/graphs/*.md`; `~/.lmloop/graphs/<name>.md` overrides the same name.
 - One packaged graph: `company` (ceo → build → qa → mine).
 - Each node is an isolated thread. Handoff is the last assistant summary, not the eval `STATUS:` line or the tool transcript.
 - Missing edge for fail/blocked → HITL gate; pass with no outgoing edge is terminal success.
@@ -397,13 +406,13 @@ edge <from> -> <a> <b> …              fan-out on pass only (one row per `(from
 - REPL `/continue` prefers a paused `state.graph_run` over `state.until_run`. `/new` clears both pointers.
 - `lmloop graph <name>` starts a run (name required). `lmloop graph` with no name resumes the latest open graph run.
 - Run logs: `projects/<slug>/graphs/<name>/<ts>.jsonl`. Event written last, so a crash retries the same node.
-- `loop.py` must not import `graph`. `agent.py` / `stream.py` / `display.py` must not import `graph`. Handlers stay in `cli.py` / `repl.py`.
+- `loop.py` must not import `graph`. `agent.py` / `model/stream.py` / `model/display.py` must not import `graph`. Handlers stay in `entry/cli.py` / `entry/repl.py`.
 
 ---
 
 ## Tools
 
-**File:** `tools.py` (registry) + `web.py` (search/fetch)
+**File:** `capabilities/tools.py` (registry) + `capabilities/web.py` (search/fetch)
 
 Each tool has a JSON Schema spec (for the model) and a Python callable (for execution). The `build_tools()` function returns both the OpenAI tool spec list and an impl dispatch dict.
 
@@ -446,7 +455,7 @@ Every gate is one call, `confirm_gate(command: str) -> bool`. The string is eith
 
 ## Memory System
 
-**File:** `memory.py` (JSONL CRUD) + `knowledge_graph.py` (`KnowledgeGraph`)
+**File:** `memory/__init__.py` (JSONL CRUD) + `memory/knowledge_graph.py` (`KnowledgeGraph`)
 
 All state is human-readable files under `~/.lmloop/projects/<slug>/`. No database, no migrations. JSONL files assume a **single writer** (one REPL or CLI process per project); concurrent appends are out of scope. ISO timestamps use `config.utc_now()`.
 
@@ -525,14 +534,14 @@ Opt-in (`use_graph`, default false). Owned by a `KnowledgeGraph` dataclass in `k
 
 ## Context Injection
 
-**File:** `skills.py::system_prompt()`
+**File:** `prompts/skills/__init__.py::system_prompt()`
 
 At session start (and each isolated `/until` or graph `act()`), the system prompt is assembled from:
 
-1. `skills/system.md` — standing harness: curiosity, learning, growth, and the safety floor. Repo-specific practice is learned, not added as more lines here.
+1. `prompts/skills/system.md` — standing harness: curiosity, learning, growth, and the safety floor. Repo-specific practice is learned, not added as more lines here.
 2. Live tool name list
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
-4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
+4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/prompts/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
 5. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
 6. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
 
@@ -549,7 +558,7 @@ This keeps the system prompt small for local models with limited context windows
 
 ## REPL
 
-**File:** `repl.py` + `prompt.py`
+**File:** `entry/repl.py` + `entry/prompt.py`
 
 The interactive mode uses `prompt_toolkit` for:
 
@@ -567,7 +576,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 
 ## CLI
 
-**File:** `cli.py`
+**File:** `entry/cli.py`
 
 `argparse`-based subcommands:
 
@@ -604,7 +613,7 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 
 ## Assertion gates
 
-**Files:** `contracts.py`, `traces.py`, `evals/golden/`
+**Files:** `harness/contracts.py`, `harness/traces.py`, `evals/golden/`
 
 `lmloop eval` without a gate flag still aggregates `usage.jsonl`. `--abstention` scores Act/Abstain/Pair on fixture pairs; that is separate from the trajectory abstain checker below. `--gate` runs the packaged golden cases with no model call:
 

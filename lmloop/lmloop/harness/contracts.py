@@ -197,7 +197,7 @@ def _grammar_python(text: str) -> str | None:
 
 
 def _grammar_graph(text: str) -> str | None:
-    from ..graph_dsl import GraphError, parse_graph
+    from ..flow.graph_dsl import GraphError, parse_graph
 
     try:
         parse_graph(text, "golden")
@@ -243,7 +243,7 @@ def check_grammar(case: dict) -> list[str]:
 
 
 def check_tool_args(case: dict) -> list[str]:
-    from ..tools import tool_names, validate_tool_arguments
+    from ..capabilities.tools import tool_names, validate_tool_arguments
 
     name = str(case.get("tool") or "")
     if name not in tool_names():

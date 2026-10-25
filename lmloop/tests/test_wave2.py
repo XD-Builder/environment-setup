@@ -11,7 +11,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop.canvas_tui import (
+from lmloop.memory.canvas_tui import (
     CanvasSession,
     Viewport,
     bucket_collisions,
@@ -19,9 +19,9 @@ from lmloop.canvas_tui import (
     open_memory_canvas,
     try_fullscreen,
 )
-from lmloop.checks import apply_baseline
+from lmloop.verify.checks import apply_baseline
 from lmloop.core.config import DEFAULTS
-from lmloop.exec import (
+from lmloop.capabilities.exec import (
     CLIENT_GUARD_EXTRA_S,
     CmdResult,
     ContainerRow,
@@ -45,7 +45,7 @@ from lmloop.exec import (
     workspace_rejection,
 )
 from lmloop.loop import UntilRun, _until_outcome_label, abstain_reason, run_check, run_until
-from lmloop.tools import format_exec_result, run_shell
+from lmloop.capabilities.tools import format_exec_result, run_shell
 from lmloop.harness import evals
 
 
@@ -108,7 +108,7 @@ class LocalBackendTests(unittest.TestCase):
             LocalBackend().run("true", timeout_s=5, cwd=Path("."), readonly=True)
 
     def test_no_flag_skips_path_lookup(self):
-        with patch("lmloop.exec.shutil.which") as which:
+        with patch("lmloop.capabilities.exec.shutil.which") as which:
             backend = build_backend({}, docker=False)
         which.assert_not_called()
         self.assertIsInstance(backend, LocalBackend)
@@ -299,9 +299,9 @@ class DockerArgvTests(unittest.TestCase):
 
 class SandboxCliTests(unittest.TestCase):
     def test_bad_image_rejected_and_docker_aborts_before_handler(self):
-        from lmloop.cli import main
+        from lmloop.entry.cli import main
 
-        with patch("lmloop.cli.cmd_eval_cli") as handler:
+        with patch("lmloop.entry.cli.cmd_eval_cli") as handler:
             code = main(["--docker-image", "python:latest", "eval"])
         self.assertEqual(code, 2)
         handler.assert_not_called()
@@ -310,7 +310,7 @@ class SandboxCliTests(unittest.TestCase):
             previous = Path.cwd()
             os.chdir(d)
             try:
-                with patch("lmloop.cli.cmd_eval_cli") as handler:
+                with patch("lmloop.entry.cli.cmd_eval_cli") as handler:
                     code = main(["--docker", "eval"])
                 handler.assert_not_called()
                 self.assertEqual(code, 1)
@@ -318,14 +318,14 @@ class SandboxCliTests(unittest.TestCase):
                 os.chdir(previous)
 
     def test_persist_implies_docker_and_status_is_local(self):
-        from lmloop.cli import main
+        from lmloop.entry.cli import main
 
         with tempfile.TemporaryDirectory() as d:
             previous = Path.cwd()
             os.chdir(d)
             try:
                 with patch.object(DockerBackend, "start", return_value=PreflightReport(("no daemon",))):
-                    with patch("lmloop.cli.cmd_eval_cli") as handler:
+                    with patch("lmloop.entry.cli.cmd_eval_cli") as handler:
                         code = main(["--docker-persist", "eval"])
                 handler.assert_not_called()
                 self.assertEqual(code, 1)
@@ -340,21 +340,21 @@ class SandboxCliTests(unittest.TestCase):
                 reset_active_backend()
 
     def test_bridge_appends_port_steering(self):
-        from lmloop import skills
+        from lmloop.prompts import skills
 
         with tempfile.TemporaryDirectory() as d:
             backend = _backend(Path(d))
             install_backend(backend)
             self.addCleanup(reset_active_backend)
-            with patch("lmloop.steer.clock_block", return_value="## Clock\n\nNOW"), \
-                 patch("lmloop.steer.steering_block", return_value=""), \
+            with patch("lmloop.prompts.steer.clock_block", return_value="## Clock\n\nNOW"), \
+                 patch("lmloop.prompts.steer.steering_block", return_value=""), \
                  patch("lmloop.memory.context_block", return_value=""):
                 text = skills.system_prompt({})
         self.assertIn("3000-3010", text)
         self.assertIn("127.0.0.1", text)
         reset_active_backend()
-        with patch("lmloop.steer.clock_block", return_value="## Clock\n\nNOW"), \
-             patch("lmloop.steer.steering_block", return_value=""), \
+        with patch("lmloop.prompts.steer.clock_block", return_value="## Clock\n\nNOW"), \
+             patch("lmloop.prompts.steer.steering_block", return_value=""), \
              patch("lmloop.memory.context_block", return_value=""):
             host = skills.system_prompt({})
         self.assertNotIn("3000-3010", host)
@@ -404,11 +404,14 @@ class CanvasTuiTests(unittest.TestCase):
         self.assertIn("a ≠ b", rendered)
 
     def test_module_does_not_import_agent_loop_or_graph(self):
-        path = Path(__file__).resolve().parents[1] / "lmloop" / "canvas_tui.py"
+        path = Path(__file__).resolve().parents[1] / "lmloop" / "memory" / "canvas_tui.py"
         text = path.read_text(encoding="utf-8")
-        for banned in ("from .agent", "from .loop", "from .graph", "import agent", "import loop"):
+        for banned in (
+            "lmloop.agent", "lmloop.loop", "lmloop.graph",
+            "import agent", "import loop", "import graph",
+        ):
             self.assertNotIn(banned, text)
-        with patch("lmloop.canvas_tui.sys.stdin.isatty", return_value=False):
+        with patch("lmloop.memory.canvas_tui.sys.stdin.isatty", return_value=False):
             self.assertFalse(try_fullscreen(lambda _q: None))
 
     def test_graph_off_is_text(self):
@@ -417,13 +420,18 @@ class CanvasTuiTests(unittest.TestCase):
 
     def test_workflow_leaf_modules_avoid_agent_and_loop(self):
         root = Path(__file__).resolve().parents[1] / "lmloop"
-        for name in ("run_log.py", "graph_dsl.py", "until_parse.py"):
-            text = (root / name).read_text(encoding="utf-8")
+        files = (
+            root / "run" / "run_log.py",
+            root / "flow" / "graph_dsl.py",
+            root / "run" / "until_parse.py",
+        )
+        for path in files:
+            text = path.read_text(encoding="utf-8")
             for banned in (
-                "from .agent", "from .loop", "from .graph",
+                "lmloop.agent", "lmloop.loop", "lmloop.graph",
                 "import agent", "import loop", "import graph",
             ):
-                self.assertNotIn(banned, text, msg=name)
+                self.assertNotIn(banned, text, msg=path.name)
 
 
 class AbstentionTests(unittest.TestCase):
@@ -461,7 +469,7 @@ class AbstentionTests(unittest.TestCase):
         self.assertEqual(evals.score_abstention([destructive])["abstain"], 0.0)
 
     def test_eval_cli_abstention_json(self):
-        from lmloop.cli import main
+        from lmloop.entry.cli import main
 
         out = StringIO()
         with patch("sys.stdout", out):
@@ -510,7 +518,7 @@ class AbstentionTests(unittest.TestCase):
         self.assertEqual(_until_outcome_label(run.events), "abstain")
 
     def test_abstain_reason_ignores_typed_missing_binary(self):
-        from lmloop.checks import PlannedCheck
+        from lmloop.verify.checks import PlannedCheck
 
         blocked = apply_baseline(
             (PlannedCheck("pytest", "check", "flag", "authoritative", "--check", True),),

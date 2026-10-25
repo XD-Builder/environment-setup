@@ -15,7 +15,7 @@ Follow [lmloop/DEVELOPMENT.md](lmloop/DEVELOPMENT.md). Architecture:
   unused args, `_safe_*` wrappers, or `except Exception` that hides bugs.
 - **Coverage:** new behavior, fixes, and refactors ship tests in the same diff.
   Prefer fakes over network. Patch names where they are looked up
-  (`lmloop.display._rich_live_available`, not `lmloop.agent`).
+  (`lmloop.model.display._rich_live_available`, not `lmloop.agent`).
 - **Share via types, not copies.** Tools = `ToolDef` rows; commands =
   `CommandMeta`; session state = `SessionState`; TTY = `Console`. Do not add a
   second name list.

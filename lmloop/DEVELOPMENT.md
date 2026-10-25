@@ -105,35 +105,41 @@ find yourself updating two lists, you have already added debt.
 
 ### Where code goes
 
+The package root stays five Python files: `__init__.py`, `__main__.py`,
+`agent.py`, `loop.py`, and `graph.py`. Other modules live in a category
+package. A category holds at most five modules (`memory/__init__.py` is the
+memory module). Do not add a sixth module to a category or a sixth file at
+the package root.
+
 | Change | Module |
 |---|---|
 | Multi-round tool loop, skill drafting | `agent.py` |
-| Chat HTTP (`POST /v1/chat/completions`) | `chat.py` |
-| Skill filesystem, name validation, system-prompt assembly | `skills.py` |
-| LMS bring-up, model listing, context length, VLM detection | `server.py` |
-| SSE ingest, cumulative snapshots, overlap, repeat-halt | `stream.py` |
-| Spinner, live printers, thinking lines, TTY writes | `display.py` |
-| Tool schema + impl + validation | `tools.py` (`ToolDef` rows) |
-| Web search / fetch / HTML parsers | `web.py` |
-| JSONL memory (learnings, decisions, sessions, checkpoints) | `memory.py` |
-| Knowledge-graph nodes/edges (`use_graph`) | `knowledge_graph.py` |
-| Until run JSONL (shared roles, append-only rows) | `run_log.py` (leaf: `memory`, `config`) |
-| Until flag parsing (`--check` / `--keep`) | `until_parse.py` (leaf) |
-| Until state machine (`run_until`, `isolated_act`) | `until_runner.py` |
+| Chat HTTP (`POST /v1/chat/completions`) | `model/chat.py` |
+| Skill filesystem, name validation, system-prompt assembly | `prompts/skills/` |
+| LMS bring-up, model listing, context length, VLM detection | `model/server.py` |
+| SSE ingest, cumulative snapshots, overlap, repeat-halt | `model/stream.py` |
+| Spinner, live printers, thinking lines, TTY writes | `model/display.py` |
+| Tool schema + impl + validation | `capabilities/tools.py` (`ToolDef` rows) |
+| Web search / fetch / HTML parsers | `capabilities/web.py` |
+| JSONL memory (learnings, decisions, sessions, checkpoints) | `memory/__init__.py` |
+| Knowledge-graph nodes/edges (`use_graph`) | `memory/knowledge_graph.py` |
+| Until run JSONL (shared roles, append-only rows) | `run/run_log.py` (leaf: `memory`, `config`) |
+| Until flag parsing (`--check` / `--keep`) | `run/until_parse.py` (leaf) |
+| Until state machine (`run_until`, `isolated_act`) | `run/until_runner.py` |
 | Until public facade (tests patch `lmloop.loop.*`) | `loop.py` |
-| Graph DSL parse/load | `graph_dsl.py` (leaf; uses `until_parse`) |
-| Graph frontier + `run_graph` | `graph_runner.py` |
+| Graph DSL parse/load | `flow/graph_dsl.py` (leaf; uses `until_parse`) |
+| Graph frontier + `run_graph` | `flow/graph_runner.py` |
 | Graph public facade | `graph.py` |
-| Workflow terminal hooks (usage finish, KG run row) | `workflow_finish.py` |
-| Derived check plans (no model calls) | `checks.py` |
-| Git snapshots before autonomous maker steps | `snapshot.py` |
-| Model slots + concurrency | `server.py` |
-| Shell backend seam (host default, opt-in Docker) | `exec.py` |
-| Knowledge canvas projection and keys | `canvas_tui.py` |
-| Memory FTS5/scan index | `memory_index.py` |
-| Flow stats (`lmloop flow`) | `workflow.py` |
-| Always-on steering markdown + live clock | `steer.py` |
-| argparse routing, non-REPL subcommands | `cli.py` |
+| Workflow terminal hooks (usage finish, KG run row) | `flow/workflow_finish.py` |
+| Derived check plans (no model calls) | `verify/checks.py` |
+| Git snapshots before autonomous maker steps | `verify/snapshot.py` |
+| Model slots + concurrency | `model/server.py` |
+| Shell backend seam (host default, opt-in Docker) | `capabilities/exec.py` |
+| Knowledge canvas projection and keys | `memory/canvas_tui.py` |
+| Memory FTS5/scan index | `memory/index.py` |
+| Flow stats (`lmloop flow`) | `flow/workflow.py` |
+| Always-on steering markdown + live clock | `prompts/steer/` |
+| argparse routing, non-REPL subcommands | `entry/cli.py` |
 | `Config`, `ConfigSchema`, paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, `config_schema()`, project slug, `utc_now()` | `core/config.py` |
 | Slash/CLI names, reserved skill stems | `core/commands.py` |
 | Status / resume / nudge copy | `core/status.py` |
@@ -143,64 +149,65 @@ find yourself updating two lists, you have already added debt.
 | Local spans, eval queue, golden inbox | `harness/traces.py` |
 | Harness bundle fingerprint (H1) | `harness/harness_bundle.py` |
 | Harness execution report (H2) | `harness/harness_report.py` |
-| Live-thread file manifest (`/context`) | `context.py` |
-| Company manifest, allowlist, worktrees, orchestrator | `company/` (`chat` may import `company.allowlist` only) |
-| Campaign plan, board, ticks | `campaign.py` (host writer; workers do not import it to append) |
+| Live-thread file manifest (`/context`) | `memory/context.py` |
+| Company manifest, allowlist, worktrees, orchestrator | `company/` (`model/chat.py` may import `company.allowlist` only) |
+| Campaign plan, board, ticks | `host/campaign.py` (host writer; workers do not import it to append) |
 | Spirit seed, actions, thoughts, self | `spirit/` |
-| `@path` completion + ref expansion | `files_index.py` |
-| PDF/Office/image/audio extraction | `extract.py` |
-| REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
-| prompt_toolkit session, completers, key bindings, input lexer | `prompt.py` |
+| `@path` completion + ref expansion | `capabilities/files_index.py` |
+| PDF/Office/image/audio extraction | `capabilities/extract.py` |
+| REPL session + slash handlers (grouped by CommandMeta domain) | `entry/repl.py` |
+| prompt_toolkit session, completers, key bindings, input lexer | `entry/prompt.py` |
 | ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui/console.py` (`from lmloop.ui import …` via package `__getattr__`) |
 | rich Console / markdown / pager | `ui/markdown_view.py` |
 
-`agent.py` imports display helpers that `act()` calls, and `chat._chat` for
-completions. Tests patch `lmloop.display` / `lmloop.stream` / `lmloop.chat`
-where those names are looked up — do not re-export privates through `agent`
-for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
-`patch.object(agent, "_chat")` tests keep working. New HTTP logic belongs in
-`chat.py`, not as more private helpers in `agent.py`.
+`agent.py` imports display helpers that `act()` calls, and `model.chat._chat`
+for completions. Tests patch `lmloop.model.display` / `lmloop.model.stream` /
+`lmloop.model.chat` where those names are looked up — do not re-export privates
+through `agent` for tests. `_chat` / `_chat_stream` stay imported into `agent`
+so existing `patch.object(agent, "_chat")` tests keep working. New HTTP logic
+belongs in `model/chat.py`, not as more private helpers in `agent.py`.
 
 Import and patch **where names are defined** (`lmloop.core.config.CONFIG_PATH`,
-`lmloop.harness.traces.TRACE_PATH`, `lmloop.ui.console`, `lmloop.ui.markdown_view`).
+`lmloop.harness.traces.TRACE_PATH`, `lmloop.ui.console`, `lmloop.ui.markdown_view`,
+`lmloop.model.display`).
 
 **Import graph (do not invert):**
 
-- `stream.py` must not import `agent`, `display`, or `chat`.
-- `display.py` may import stream helpers (they share `_think_line_similar`) but
+- `model/stream.py` must not import `agent`, `display`, or `chat`.
+- `model/display.py` may import stream helpers (they share `_think_line_similar`) but
   not `agent` or `chat`.
-- `chat.py` is a leaf relative to the loop: urllib, `stream._read_sse`,
+- `model/chat.py` is a leaf relative to the loop: urllib, `stream._read_sse`,
   `status.api_messages`, `server.ServerError`. It must not import `agent`,
   `tools`, `loop`, or `graph`.
-- `ui.py` must not import `agent`.
+- `ui/` must not import `agent`.
 - `commands.py` and `status.py` stay leaf modules: names and copy, no loop.
-- `checks.py` may import `tools.ShellCommand` and `memory` (learnings, until logs). It must not import `agent`, `loop`, `graph`, or `until_runner`.
-- `run_log.py` and `until_parse.py` are leaves (`memory` / `config` only for run logs). They must not import `agent`, `checks`, `loop`, or `graph`.
-- `graph_dsl.py` is a leaf (stdlib, `config` paths, `until_parse`). It must not import `agent`, `loop`, `graph_runner`, or `knowledge_graph`.
-- `workflow_finish.py` may import `knowledge_graph` and `usage`. It must not import `agent`, `loop`, or `graph`.
-- `until_runner.py` may import `run_log`, `checks`, `agent`, `snapshot`, `tools`, and `workflow_finish`. It must not import `graph_runner` or `graph_dsl`.
-- `graph_runner.py` may import `run_log`, `graph_dsl`, `until_runner`, `skills`, `workflow`, and `workflow_finish`. It must not import `repl` or `cli`.
-- `workflow.py` may import `graph_dsl` (authored node names for the dead-node rule). It must not import `agent`, `loop`, `graph`, or `graph_runner`.
+- `verify/checks.py` may import `tools.ShellCommand` and `memory` (learnings, until logs). It must not import `agent`, `loop`, `graph`, or `until_runner`.
+- `run/run_log.py` and `run/until_parse.py` are leaves (`memory` / `config` only for run logs). They must not import `agent`, `checks`, `loop`, or `graph`.
+- `flow/graph_dsl.py` is a leaf (stdlib, `config` paths, `until_parse`). It must not import `agent`, `loop`, `graph_runner`, or `knowledge_graph`.
+- `flow/workflow_finish.py` may import `knowledge_graph` and `usage`. It must not import `agent`, `loop`, or `graph`.
+- `run/until_runner.py` may import `run_log`, `checks`, `agent`, `snapshot`, `tools`, and `workflow_finish`. It must not import `graph_runner` or `graph_dsl`.
+- `flow/graph_runner.py` may import `run_log`, `graph_dsl`, `until_runner`, `skills`, `workflow`, and `workflow_finish`. It must not import `repl` or `cli`.
+- `flow/workflow.py` may import `graph_dsl` (authored node names for the dead-node rule). It must not import `agent`, `loop`, `graph`, or `graph_runner`.
 - `loop.py` is a facade over `until_runner` (re-exports for harnesses and tests). It must not import `graph`.
 - `graph.py` is a facade over `graph_dsl` + `graph_runner` + `until_runner` entry points. It must not be imported by `until_runner` at module load (runtime import for patched paths is OK).
-- `snapshot.py` is a leaf: git via subprocess. It must not import `agent`, `loop`, or `graph`.
-- `knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.
-- `steer.py` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
-- `context.py` is a leaf: `extract`, `files_index`, `memory`, `tools` parsers. It must not import `agent`, `loop`, `graph`, or `repl`.
-- `extract.py` is a leaf: stdlib + optional CLIs (`pdftotext`, `whisper`). It must not import `agent`, `tools`, `loop`, or `graph`. `tools.py`, `agent.py`, `repl.py`, `memory.py`, `markdown_view.py`, and `web.py` may import it.
-- `agent.py`, `tools.py`, and `skills.py` may import `steer`.
-- `skills.py` may import `tools.tool_names`, `steer`, and `memory.context_block`. It must not import `agent` (drafting stays in `agent.generate_skill_draft`).
-- `server.py` is a leaf relative to the loop: urllib, `lms` CLI, `status` copy. It must not import `agent`, `tools`, `loop`, `graph`, or `chat`.
+- `verify/snapshot.py` is a leaf: git via subprocess. It must not import `agent`, `loop`, or `graph`.
+- `memory/knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory/__init__.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.
+- `prompts/steer/` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
+- `memory/context.py` is a leaf: `extract`, `files_index`, `memory`, `tools` parsers. It must not import `agent`, `loop`, `graph`, or `repl`.
+- `capabilities/extract.py` is a leaf: stdlib + optional CLIs (`pdftotext`, `whisper`). It must not import `agent`, `tools`, `loop`, or `graph`. `tools.py`, `agent.py`, `repl.py`, `memory`, `markdown_view.py`, and `web.py` may import it.
+- `agent.py`, `capabilities/tools.py`, and `prompts/skills/` may import `steer`.
+- `prompts/skills/` may import `tools.tool_names`, `steer`, and `memory.context_block`. It must not import `agent` (drafting stays in `agent.generate_skill_draft`).
+- `model/server.py` is a leaf relative to the loop: urllib, `lms` CLI, `status` copy. It must not import `agent`, `tools`, `loop`, `graph`, or `chat`.
 - `agent.py` may import `server` (`ServerError`, `model_has_vision`) and `chat` (`_chat`).
-- `tools.py` may import `web` (`web_search`, `fetch_url`). `web.py` must not
+- `capabilities/tools.py` may import `web` (`web_search`, `fetch_url`). `web.py` must not
   import `tools` at module load (lazy `ToolResult` only for image attachments).
-- `agent.py` / `stream.py` / `display.py` / `chat.py` must not import `loop`, `graph`, `until_runner`, or `graph_runner`.
+- `agent.py` / `model/stream.py` / `model/display.py` / `model/chat.py` must not import `loop`, `graph`, `until_runner`, or `graph_runner`.
 - `contracts.py` stays a stdlib import. Grammar checkers lazy-import `graph_dsl` and `tools`. It must not import `agent` at module load.
 - `traces.py` may import `contracts`, `usage`, `config`, and `memory`. It must not import `agent`, `loop`, or `graph`.
 - `agent.py` may import `traces` lazily inside `act` / `_dispatch_tools`.
 - `company/` may import `graph`, `loop`, and `exec`. `graph` and `loop` must not import `company`.
-- `chat.py` may import `company.allowlist` only (leaf). It must not import the orchestrator.
-- `campaign.py` and `spirit/` must not import `agent`, `loop`, `graph`, or `company.orchestrator`.
+- `model/chat.py` may import `company.allowlist` only (leaf). It must not import the orchestrator.
+- `host/campaign.py` and `spirit/` must not import `agent`, `loop`, `graph`, or `company.orchestrator`.
 - Workers do not append learnings, decisions, campaign rows, or spirit distill output.
 
 ### Keep components small
@@ -499,8 +506,8 @@ Docs are part of the diff, not a follow-up.
 | Internals | `docs/ARCHITECTURE.md` | Component map, loop, memory layout, design choices |
 | Next-step proposals | `docs/DESIGN_*.md`, `docs/IMPLEMENTATION_PLAN.md` | Shipped standalone specs move to `docs/archived/`. Partial docs keep `Status: partial` until done. Leftover ideas stay in Non-goals / Open questions. |
 | Contributors | `DEVELOPMENT.md` | Module ownership, contracts, conventions |
-| Skills | `lmloop/skills/*.md` | Opt-in playbooks the model follows when that job is named |
-| Steering | `lmloop/steer/*.md` | Always-on iron laws injected into the system prompt |
+| Skills | `lmloop/prompts/skills/*.md` | Opt-in playbooks the model follows when that job is named |
+| Steering | `lmloop/prompts/steer/*.md` | Always-on iron laws injected into the system prompt |
 
 Rules:
 

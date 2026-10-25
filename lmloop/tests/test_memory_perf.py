@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmloop.knowledge_graph import KnowledgeGraph
+from lmloop.memory.knowledge_graph import KnowledgeGraph
 
 PERF = os.environ.get("LMLOOP_MEMORY_PERF") == "1"
 
