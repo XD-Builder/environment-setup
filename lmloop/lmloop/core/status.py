@@ -1,0 +1,231 @@
+"""Owned status / resume copy — single source of truth for agent + REPL UX."""
+
+STATUS_PREFIX = "[lmloop]"
+MSG_RESUME = "type /continue to resume"
+
+# Message metadata key for internal control messages (stripped before API send).
+LMLOOP_META = "_lmloop"
+META_NUDGE = "nudge"
+META_ANSWER = "answer"
+_CONTROL_META = frozenset({META_NUDGE, META_ANSWER})
+
+NUDGE_CONTINUE_TEXT = (
+    f"{STATUS_PREFIX} You described a next step but did not call any tools and did not "
+    "finish the user's request. Continue now: either call the tools you need, "
+    "or give the final answer. Do not restart or repeat what you already wrote; "
+    "continue from the last line."
+)
+
+ANSWER_TEXT = (
+    f"{STATUS_PREFIX} Tools are no longer available. Give the final answer now. "
+    "Do not call tools."
+)
+
+
+def status(msg: str) -> str:
+    """Format an lmloop status line for echo_status."""
+    msg = (msg or "").strip()
+    if msg.startswith(STATUS_PREFIX):
+        return msg
+    return f"{STATUS_PREFIX} {msg}"
+
+
+def msg_paused_continuing() -> str:
+    return status("model paused mid-task — continuing…")
+
+
+def msg_halted_continuing() -> str:
+    return status("thinking loop — continuing…")
+
+
+def msg_stopped_unfinished() -> str:
+    return status(f"model stopped without finishing — {MSG_RESUME}")
+
+
+def msg_hit_max_rounds() -> str:
+    return status(f"hit max_rounds — stopping. {MSG_RESUME}")
+
+
+def msg_repeated_tools() -> str:
+    return status("repeated tools — writing final answer")
+
+
+def msg_gather_budget() -> str:
+    return status("gather budget — writing final answer")
+
+
+def msg_until_step(role: str, step: int, max_steps: int) -> str:
+    return status(f"until {role} · cycle {step}/{max_steps}")
+
+
+def msg_until_paused() -> str:
+    return status(f"until paused. {MSG_RESUME}")
+
+
+def msg_until_max_steps() -> str:
+    return status(f"until hit until_max_steps — stopping. {MSG_RESUME}")
+
+
+def msg_until_token_budget() -> str:
+    return status(f"until hit run_token_budget — stopping. {MSG_RESUME}")
+
+
+def msg_until_blocked() -> str:
+    return status("until checker is blocked — need a yes/no")
+
+
+def msg_until_abstain(reason: str) -> str:
+    detail = f" · {reason}" if reason else ""
+    return status(
+        f"until abstain{detail} — the goal is infeasible here; not starting a maker step"
+    )
+
+
+def msg_until_baseline() -> str:
+    return status("until baseline · running the check plan once before any work")
+
+
+def msg_until_note(note: str) -> str:
+    return status(f"until · {note}")
+
+
+def msg_until_check_blocked(cmd: str) -> str:
+    named = f" — {cmd} is not runnable here" if cmd else ""
+    return status(f"until checker is blocked{named}")
+
+
+def msg_gates_denied(count: int, label: str = "until") -> str:
+    noun = "action" if count == 1 else "actions"
+    return status(f"{label}: {count} irreversible {noun} denied this cycle — need a yes/no")
+
+
+def gates_denied_prompt(count: int) -> str:
+    noun = "action was" if count == 1 else "actions were"
+    return (
+        f"{count} irreversible {noun} denied. Approve for the next step? [y/N] "
+    )
+
+
+APPROVED_NOTE = (
+    "Approved for this step (the user said yes; run these exactly as before):\n"
+    "{commands}\n\n"
+)
+
+
+def msg_until_mining() -> str:
+    return status("until passed — mining learnings")
+
+
+def msg_until_done() -> str:
+    return status("until: goal met")
+
+
+def msg_until_continue() -> str:
+    return status("until done — type to continue")
+
+
+MSG_UNTIL_FOLLOWUP = "Ready to continue from this until-run. Ask a follow-up."
+
+
+def msg_graph_step(node: str, step: int, max_steps: int) -> str:
+    return status(f"graph {node} · step {step}/{max_steps}")
+
+
+def msg_graph_paused() -> str:
+    return status(f"graph paused. {MSG_RESUME}")
+
+
+def msg_graph_max_steps() -> str:
+    return status(f"graph hit graph_max_steps — stopping. {MSG_RESUME}")
+
+
+def msg_graph_blocked() -> str:
+    return status("graph node has no edge for this outcome — need a yes/no")
+
+
+def msg_graph_mining() -> str:
+    return status("graph passed — mining learnings")
+
+
+def msg_graph_done() -> str:
+    return status("graph: done")
+
+
+def msg_graph_continue() -> str:
+    return status("graph done — type to continue")
+
+
+MSG_GRAPH_FOLLOWUP = "Ready to continue from this graph-run. Ask a follow-up."
+
+
+def msg_context_pressure(pct: int) -> str:
+    return status(
+        f"context ~{pct}% full — /compact or /save recommended before continuing"
+    )
+
+
+def msg_context_overflow() -> str:
+    return status(
+        f"context window overflow from the server — /compact or /new, then {MSG_RESUME}"
+    )
+
+
+def msg_starting_server() -> str:
+    return status("LM Studio server not reachable — starting it with `lms server start`...")
+
+
+def msg_loading_model(want: str) -> str:
+    label = want or "(first available)"
+    return status(f"No model loaded — running `lms load {label}`...")
+
+
+def msg_model_fallback(want: str, used: str) -> str:
+    return status(f"configured model '{want}' is not loaded; using '{used}'")
+
+
+def msg_no_models(base: str) -> str:
+    return (
+        f"No models available at {base}. Start LM Studio (or `lms server start`) "
+        "and load a model (`lms load <model>`), or fix base_url via "
+        "`lmloop config set base_url <url>`."
+    )
+
+
+def nudge_message() -> dict:
+    """User-role nudge with structured metadata (not string-identity for rollback)."""
+    return {
+        "role": "user",
+        "content": NUDGE_CONTINUE_TEXT,
+        LMLOOP_META: META_NUDGE,
+    }
+
+
+def answer_message() -> dict:
+    """User-role prompt for the tools-off answer round."""
+    return {
+        "role": "user",
+        "content": ANSWER_TEXT,
+        LMLOOP_META: META_ANSWER,
+    }
+
+
+def is_nudge_message(msg: dict) -> bool:
+    return isinstance(msg, dict) and msg.get(LMLOOP_META) == META_NUDGE
+
+
+def is_answer_message(msg: dict) -> bool:
+    return isinstance(msg, dict) and msg.get(LMLOOP_META) == META_ANSWER
+
+
+def is_control_message(msg: dict) -> bool:
+    return isinstance(msg, dict) and msg.get(LMLOOP_META) in _CONTROL_META
+
+
+def api_messages(messages: list) -> list:
+    """Strip internal lmloop metadata keys before sending to the model API."""
+    out = []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        out.append({k: v for k, v in m.items() if not str(k).startswith("_")})
+    return out

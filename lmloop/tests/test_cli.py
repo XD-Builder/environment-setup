@@ -1276,7 +1276,7 @@ class EvalCliTests(unittest.TestCase):
             out = io.StringIO()
             with patch("lmloop.evals.load_stats", return_value=stats), \
                  patch("lmloop.workflow.collect_flow_stats", return_value=flow), \
-                 patch("lmloop.evals.last_report_path", return_value=report), \
+                 patch("lmloop.harness.evals.last_report_path", return_value=report), \
                  redirect_stdout(out):
                 code = main(["eval", "--json"])
             self.assertEqual(code, 0)

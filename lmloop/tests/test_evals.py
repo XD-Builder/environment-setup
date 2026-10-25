@@ -141,8 +141,10 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("budget-bound", loose)
 
     def test_unreadable_run_logs_become_a_gap(self):
-        with mock.patch("lmloop.evals.join_run_logs", side_effect=PermissionError("denied")), \
-             mock.patch("lmloop.evals.read_events", return_value=[]):
+        with mock.patch(
+            "lmloop.harness.evals.join_run_logs",
+            side_effect=PermissionError("denied"),
+        ), mock.patch("lmloop.harness.evals.read_events", return_value=[]):
             stats = evals.load_stats(Path("/tmp/unused-usage.jsonl"))
         self.assertIn("PermissionError", stats.run_log_error)
         payload = evals.report_dict(stats, evals.find_gaps(stats))
@@ -166,6 +168,11 @@ class InstrumentationRegistryTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "lmloop"
         found: set[str] = set()
         for path in root.rglob("*.py"):
+            rel = path.relative_to(root)
+            if rel.parts[:1] == ("core",) and path.name == "usage.py":
+                continue
+            if rel.parts[:1] == ("harness",) and path.name == "evals.py":
+                continue
             if path.name in ("evals.py", "usage.py"):
                 continue
             text = path.read_text(encoding="utf-8")
@@ -181,7 +188,7 @@ class EvalCliIntegrationTests(unittest.TestCase):
     def test_load_stats_from_temp_file(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "usage.jsonl"
-            with mock.patch.object(usage, "USAGE_PATH", path):
+            with mock.patch("lmloop.core.usage.USAGE_PATH", path):
                 usage.record("cli.repl", has_task=False)
                 stats = evals.load_stats(path)
             self.assertEqual(stats.features["cli.repl"], 1)
@@ -193,7 +200,7 @@ class ToolErrorInstrumentationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "usage.jsonl"
-            with mock.patch.object(usage, "USAGE_PATH", path):
+            with mock.patch("lmloop.core.usage.USAGE_PATH", path):
                 _specs, impls = build_tools({})
                 out = dispatch(impls, "read_file", "{}")
             self.assertTrue(out.startswith("ERROR:"))
