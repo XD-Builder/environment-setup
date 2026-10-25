@@ -347,7 +347,7 @@ Follow [PEP 8](https://peps.python.org/pep-0008/) and [PEP 257](https://peps.pyt
 | Functions / methods | `snake_case`, verb or query | `build_tools()`, `list_skills()`, `is_destructive()` |
 | Instance attrs | `snake_case` | `session_log`, `thinking_history` |
 | Module constants | `UPPER_SNAKE` | `MAX_OUTPUT`, `COMMANDS`, `WEB_HEADERS` |
-| Config reads in the loop | `cfg_get` / `cfg_int` / … from `config.py` | Not `cfg.get(k) or default` (breaks zero values) |
+| Config reads in the loop | `cfg_get` / `cfg_int` / … from `core/config.py` | Not `cfg.get(k) or default` (breaks zero values) |
 | Module-private | leading `_` | `_tty_write`, `_TOOL_DEFS`, `_HtmlToolParser` |
 | Type aliases / records | `CapWords` dataclass | `CommandMeta` |
 | Boolean helpers | `is_` / `has_` / `needs_` | `needs_shell`, `is_nudge_message` |
