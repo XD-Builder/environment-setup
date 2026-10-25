@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import memory
-from ..config import cfg_bool, utc_now
+from ..config import Config, cfg_bool, utc_now
 
 SEED_FILE = Path(__file__).with_name("seed.md")
 SELF_MAX_CHARS = 4000
@@ -95,12 +95,12 @@ def poisoned(text: str) -> bool:
     return any(phrase in low for phrase in POISON_PHRASES)
 
 
-def _worker_blocked(cfg: dict) -> bool:
+def _worker_blocked(cfg: Config) -> bool:
     from ..company.allowlist import worker_memory_blocked
     return worker_memory_blocked(cfg)
 
 
-def _link(cfg: dict, typ: str, key: str, label: str) -> None:
+def _link(cfg: Config, typ: str, key: str, label: str) -> None:
     if not cfg_bool(cfg, "use_graph") or _worker_blocked(cfg):
         return
     from .. import knowledge_graph
@@ -138,7 +138,7 @@ def _should_log(name: str, ok: bool, args: dict) -> bool:
     return False
 
 
-def note_tool(cfg: dict, *, name: str, args, result: str, session_log=None, ok: bool = True) -> "dict | None":
+def note_tool(cfg: Config, *, name: str, args, result: str, session_log=None, ok: bool = True) -> "dict | None":
     if not cfg_bool(cfg, "use_spirit") or not cfg_bool(cfg, "spirit_actions"):
         return None
     if _worker_blocked(cfg):
@@ -166,7 +166,7 @@ def looks_like_correction(text: str) -> bool:
     return bool(tokens) and tokens[0] in _CORRECTION_WORDS
 
 
-def note_user_text(cfg: dict, text: str, session_log=None) -> "dict | None":
+def note_user_text(cfg: Config, text: str, session_log=None) -> "dict | None":
     if not looks_like_correction(text):
         return None
     return note_tool(
@@ -176,7 +176,7 @@ def note_user_text(cfg: dict, text: str, session_log=None) -> "dict | None":
 
 
 def add_thought(kind: str, text: str, *, evidence: "list | None" = None,
-                cfg: "dict | None" = None, slug: "str | None" = None) -> dict:
+                cfg: Config | None = None, slug: "str | None" = None) -> dict:
     if kind not in THOUGHT_KINDS:
         raise SpiritError(f"thought kind must be one of {sorted(THOUGHT_KINDS)}")
     body = (text or "").strip()
@@ -225,7 +225,7 @@ def open_thoughts(slug: "str | None" = None, limit: int = OPEN_THOUGHTS) -> list
 
 
 def add_trait(text: str, *, strength: int = 5, source: str = "synthesized",
-              trait_id: str = "", cfg: "dict | None" = None,
+              trait_id: str = "", cfg: Config | None = None,
               slug: "str | None" = None) -> dict:
     body = (text or "").strip()
     if not body:
@@ -284,7 +284,7 @@ def active_traits(slug: "str | None" = None, now: "datetime | None" = None) -> l
     return live
 
 
-def write_self(text: str, slug: "str | None" = None, cfg: "dict | None" = None) -> Path:
+def write_self(text: str, slug: "str | None" = None, cfg: Config | None = None) -> Path:
     body = (text or "").strip()
     if not body:
         raise SpiritError("self.md is empty")
@@ -337,14 +337,14 @@ def _sections(text: str) -> dict:
     return {key: "\n".join(lines).strip() for key, lines in buckets.items()}
 
 
-def _remote_hides_self(cfg: dict) -> bool:
+def _remote_hides_self(cfg: Config) -> bool:
     from ..server import base_url_is_local
     if base_url_is_local(cfg):
         return False
     return not cfg_bool(cfg, "spirit_remote")
 
 
-def spirit_block(cfg: dict, slug: "str | None" = None,
+def spirit_block(cfg: Config, slug: "str | None" = None,
                  workspace: "Path | None" = None) -> str:
     if not cfg_bool(cfg, "use_spirit"):
         return ""
@@ -425,7 +425,7 @@ def _preview_promote(item: dict) -> None:
     raise SpiritError(f"unknown promote target {kind!r}")
 
 
-def _promote(item: dict, cfg: dict, slug: "str | None") -> None:
+def _promote(item: dict, cfg: Config, slug: "str | None") -> None:
     kind = item.get("promote") or "none"
     if kind == "none":
         return
@@ -460,7 +460,7 @@ def _promote(item: dict, cfg: dict, slug: "str | None") -> None:
     raise SpiritError(f"unknown promote target {kind!r}")
 
 
-def apply_distill(patch: dict, cfg: dict, slug: "str | None" = None) -> dict:
+def apply_distill(patch: dict, cfg: Config, slug: "str | None" = None) -> dict:
     """Apply a validated distill patch. Learnings are only appended, never deleted."""
     if not isinstance(patch, dict):
         raise SpiritError("distill patch must be an object")
@@ -494,7 +494,7 @@ def apply_distill(patch: dict, cfg: dict, slug: "str | None" = None) -> dict:
     return {"thoughts": applied, "self": wrote}
 
 
-def note_distill_request(cfg: dict, paths) -> "Path | None":
+def note_distill_request(cfg: Config, paths) -> "Path | None":
     if not cfg_bool(cfg, "use_spirit") or not cfg_bool(cfg, "spirit_distill_after_mine"):
         return None
     dest = spirit_dir() / "pending_distill.json"

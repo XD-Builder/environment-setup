@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .config import Config
+
 REF_PREFIX = "refs/lmloop/"
 SNAPSHOT_RETENTION_DAYS = 14
 SNAPSHOT_MAX_FILE_MB = 20
@@ -28,7 +30,7 @@ class SnapshotResult:
     tree: str = ""
 
 
-def _mode(cfg: dict) -> str:
+def _mode(cfg: Config) -> str:
     return str(cfg.get("autonomous_snapshot") or "git").strip().lower()
 
 
@@ -159,7 +161,7 @@ def _prune_old_refs(root: Path) -> None:
 
 
 def take_snapshot(
-    cfg: dict,
+    cfg: Config,
     workspace: Path,
     *,
     run_label: str,

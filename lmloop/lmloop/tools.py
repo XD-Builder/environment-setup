@@ -19,6 +19,7 @@ from pathlib import Path, PurePath
 from typing import Any, Callable
 
 from . import config, extract, knowledge_graph, memory, web
+from .config import Config
 from .files_index import list_project_paths, resolve_user_path
 from .steer import format_current_time
 from .web import DEFAULT_WEB_TIMEOUT_S
@@ -161,7 +162,7 @@ class GatePolicy:
         self.denied: "list[str]" = []
 
     @classmethod
-    def from_config(cls, cfg: dict, fallback=None, echo_status=None) -> "GatePolicy":
+    def from_config(cls, cfg: Config, fallback=None, echo_status=None) -> "GatePolicy":
         mode = config.cfg_str(cfg, "autonomous_gates").lower()
         return cls(mode, fallback=fallback, echo_status=echo_status)
 
@@ -198,7 +199,7 @@ class GatePolicy:
         return out
 
 
-def autonomous_gate(cfg: dict, confirm_gate, echo_status=None) -> "GatePolicy | None":
+def autonomous_gate(cfg: Config, confirm_gate, echo_status=None) -> "GatePolicy | None":
     """Wrap an interactive gate in a GatePolicy for until/graph runs.
 
     Returns ``confirm_gate`` unchanged when it is already a policy (nested
@@ -261,7 +262,7 @@ class ToolDef:
         }
 
 
-def tool_names(defs: "list[ToolDef] | None" = None, cfg: "dict | None" = None) -> list:
+def tool_names(defs: "list[ToolDef] | None" = None, cfg: Config | None = None) -> list:
     """Registered tool names (for prompt injection)."""
     if defs is not None:
         return [d.name for d in defs]
@@ -521,7 +522,7 @@ def _file_tool_preview(parsed: dict, path_args: tuple, resolved: dict) -> str:
 def format_tool_preview(name: str, args: str,
                         workspace_root: "Path | None" = None,
                         limit: int | None = None,
-                        cfg: "dict | None" = None) -> str:
+                        cfg: Config | None = None) -> str:
     """Compact ⚙-line args. File tools show the resolved path in full.
 
     The path is its own line and is never cut with ``...``. Other arguments
@@ -818,7 +819,7 @@ def _match_lines(text: str, needle: str) -> "list[int]":
 
 
 def _unified_diff(old: str, new: str, label: str,
-                  limit: int | None = None, cfg: "dict | None" = None) -> str:
+                  limit: int | None = None, cfg: Config | None = None) -> str:
     if limit is None:
         limit = config.cfg_positive_int(cfg, config.DIFF_LIMIT)
     lines = list(difflib.unified_diff(
@@ -835,7 +836,7 @@ def update_file(path: str, old_string: str, new_string: str,
                 workspace_root: "Path | None" = None,
                 extra_readable: "list[Path] | None" = None,
                 confirm_gate=None,
-                cfg: "dict | None" = None) -> str:
+                cfg: Config | None = None) -> str:
     """Replace an exact snippet in an existing file. Returns a unified diff."""
     root = workspace_root or _workspace_root()
     p, err = _check_workspace(path, root, extra_readable=extra_readable)
@@ -1059,7 +1060,7 @@ READONLY_OMIT = frozenset({
 })
 
 
-def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
+def shell_confirm_flags(cfg: Config) -> "tuple[bool, bool]":
     """Return (confirm_destructive, confirm_shell_syntax). confirm_shell is master."""
     if config.cfg_bool(cfg, "confirm_shell") is False:
         return False, False
@@ -1069,7 +1070,7 @@ def shell_confirm_flags(cfg: dict) -> "tuple[bool, bool]":
     )
 
 
-def build_tools(cfg: dict, confirm_gate=None,
+def build_tools(cfg: Config, confirm_gate=None,
                 workspace_root: "Path | None" = None,
                 readonly: bool = False,
                 extra_readable: "list[Path] | None" = None) -> "tuple[list[dict], dict]":
@@ -1418,7 +1419,7 @@ def tool_is_concurrent(name: str) -> bool:
     return bool(tool is not None and tool.concurrent)
 
 
-def _pool_limit(category: str, cfg: dict) -> int:
+def _pool_limit(category: str, cfg: Config) -> int:
     """In-flight cap for a ToolDef category. Unknown categories stay serial."""
     key = _POOL_LIMIT_KEYS.get(category)
     if key is None:
@@ -1456,7 +1457,7 @@ def concurrent_groups(names: list) -> "list[list[int]]":
     return groups
 
 
-def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: dict, out: list) -> None:
+def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: Config, out: list) -> None:
     """Run one concurrent wave: one pool per category, joined before return."""
     buckets: "dict[str, list[int]]" = {}
     for i in group:
@@ -1479,7 +1480,7 @@ def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: dict, out
             pool.shutdown(wait=True)
 
 
-def run_tool_calls(impls: dict, calls: list, cfg: "dict | None" = None) -> list:
+def run_tool_calls(impls: dict, calls: list, cfg: Config | None = None) -> list:
     """Dispatch ``(name, arguments)`` pairs. Consecutive concurrent tools share a wave.
 
     Results stay in call order. Side-effect tools (shell, writes, memory) stay

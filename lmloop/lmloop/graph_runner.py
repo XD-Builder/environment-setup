@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import knowledge_graph, skills, snapshot, status as status_mod, tools
-from .config import DEFAULTS, cfg_bool, cfg_int, utc_now
+from .config import Config, DEFAULTS, cfg_bool, cfg_int, utc_now
 from .graph_dsl import (
     EDGE_ON,
     GRAPHS_DIR,
@@ -257,7 +257,7 @@ def _skill_prompt(node: NodeDef, handoff: str) -> str:
     return "\n\n".join(parts)
 
 
-def _node_log_fields(cfg: dict, snap, extra: dict) -> dict:
+def _node_log_fields(cfg: Config, snap, extra: dict) -> dict:
     fields = _row_fields(cfg, None, snap)
     for key, val in extra.items():
         if val:
@@ -297,7 +297,7 @@ def _until_node_fields(until_path: str) -> dict:
 
 
 def _run_skill_node(
-    cfg: dict, model: str, node: NodeDef, handoff: str, *,
+    cfg: Config, model: str, node: NodeDef, handoff: str, *,
     confirm_gate, echo, echo_status, echo_error, echo_tool, echo_round,
     context_limit, context_reserve, workspace_root,
     ask_gate=None,
@@ -392,7 +392,7 @@ def _skill_command_status(cfg, node: NodeDef, confirm_gate, workspace_root,
 
 
 def _run_until_node(
-    cfg: dict, model: str, node: NodeDef, handoff: str, *,
+    cfg: Config, model: str, node: NodeDef, handoff: str, *,
     resume_until: "str | None",
     confirm_gate, echo, echo_status, echo_error, echo_tool, echo_round,
     context_limit, context_reserve, workspace_root, ask_gate,
@@ -430,7 +430,7 @@ def _run_until_node(
 
 
 def run_named_node(
-    cfg: dict, model: str, defn: GraphDef, node_name: str, handoff: str, *,
+    cfg: Config, model: str, defn: GraphDef, node_name: str, handoff: str, *,
     workspace_root: "Path | None" = None,
     confirm_gate=None,
 ) -> dict:
@@ -469,7 +469,7 @@ def run_named_node(
 
 
 def run_graph(
-    cfg: dict, model: str, *,
+    cfg: Config, model: str, *,
     run: GraphRun,
     defn: GraphDef,
     confirm_gate=None,
@@ -657,7 +657,7 @@ def annotate_unverified_commands(text: str, *, docker: bool) -> str:
 
 
 def propose_graph_draft(
-    cfg: dict, model: str, name: str, *,
+    cfg: Config, model: str, name: str, *,
     echo_status,
     docker: bool = False,
     slug: "str | None" = None,

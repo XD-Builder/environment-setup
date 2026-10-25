@@ -10,13 +10,13 @@ import urllib.error
 import urllib.request
 
 from . import server, status as status_mod
-from .config import cfg_bool, cfg_float, cfg_int, chat_request_headers
+from .config import Config, cfg_bool, cfg_float, cfg_int, chat_request_headers
 from .stream import StreamError, _read_sse
 
 API_CHAT_PATH = "/chat/completions"
 
 
-def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | None",
+def _chat_request(cfg: Config, model: str, messages: list, tool_specs: "list | None",
                   stream: bool) -> urllib.request.Request:
     payload = {
         "model": model,
@@ -37,7 +37,7 @@ def _chat_request(cfg: dict, model: str, messages: list, tool_specs: "list | Non
     )
 
 
-def _raise_http_error(e: urllib.error.HTTPError, cfg: dict, body: "str | None" = None) -> None:
+def _raise_http_error(e: urllib.error.HTTPError, cfg: Config, body: "str | None" = None) -> None:
     if body is None:
         try:
             body = e.read().decode("utf-8", errors="replace")[:800]
@@ -51,7 +51,7 @@ def _raise_http_error(e: urllib.error.HTTPError, cfg: dict, body: "str | None" =
     raise server.ServerError(f"LM Studio returned HTTP {e.code}: {(body or '')[:500]}") from e
 
 
-def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
+def _chat_once(cfg: Config, model: str, messages: list, tool_specs: "list | None") -> "tuple[dict, dict]":
     """Non-streaming chat completion."""
     req = _chat_request(cfg, model, messages, tool_specs, stream=False)
     slots = server.model_slots(cfg)
@@ -74,7 +74,7 @@ def _chat_once(cfg: dict, model: str, messages: list, tool_specs: "list | None")
         raise server.ServerError(f"Unexpected response shape: {json.dumps(data)[:500]}")
 
 
-def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None",
+def _chat_stream(cfg: Config, model: str, messages: list, tool_specs: "list | None",
                  on_delta=None, on_activity=None, on_reasoning=None,
                  on_tools=None) -> "tuple[dict, dict]":
     """Streaming chat completion (SSE). Assembles message; optionally echoes content deltas."""
@@ -123,7 +123,7 @@ def _chat_stream(cfg: dict, model: str, messages: list, tool_specs: "list | None
         raise server.ServerError(f"Cannot reach LM Studio at {cfg['base_url']}: {e}")
 
 
-def _chat(cfg: dict, model: str, messages: list, tool_specs: "list | None",
+def _chat(cfg: Config, model: str, messages: list, tool_specs: "list | None",
           on_delta=None, on_activity=None, on_reasoning=None,
           on_tools=None) -> "tuple[dict, dict]":
     """Chat completion. Streams when cfg['stream'] is true (default)."""

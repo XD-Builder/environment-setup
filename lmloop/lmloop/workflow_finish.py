@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .config import Config
 from .knowledge_graph import record_workflow_run
 
 
@@ -29,7 +30,7 @@ def until_outcome_label(events: list) -> str:
     return f"{role}:{status}"
 
 
-def finish_until_run(cfg: dict, run, *, check_commands: list[str]) -> None:
+def finish_until_run(cfg: Config, run, *, check_commands: list[str]) -> None:
     """Usage + knowledge-graph hooks after ``run_until`` returns."""
     from . import usage
 
@@ -47,7 +48,7 @@ def finish_until_run(cfg: dict, run, *, check_commands: list[str]) -> None:
     )
 
 
-def finish_graph_run(cfg: dict, run, defn) -> None:
+def finish_graph_run(cfg: Config, run, defn) -> None:
     """Knowledge-graph hook after ``run_graph`` returns."""
     cmds: list[str] = []
     for node in defn.nodes:

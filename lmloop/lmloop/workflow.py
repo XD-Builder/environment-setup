@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import graph_dsl, memory
 from .commands import FlowRequest
-from .config import cfg_int, project_dir
+from .config import Config, cfg_int, project_dir
 
 _DROP_PREFIX = "dropped unrunnable check: "
 
@@ -80,7 +80,7 @@ def count_terminal_runs(slug: "str | None" = None) -> int:
     return total
 
 
-def compact_flow_summary(stats: FlowStats, cfg: dict) -> str:
+def compact_flow_summary(stats: FlowStats, cfg: Config) -> str:
     """Short factual summary for graph authoring prompts."""
     data = stats.to_dict()
     lines = [
@@ -260,7 +260,7 @@ def collect_flow_stats(slug: "str | None" = None) -> FlowStats:
     return stats
 
 
-def _rule_budget(stats: FlowStats, cfg: dict) -> "str | None":
+def _rule_budget(stats: FlowStats, cfg: Config) -> "str | None":
     max_steps = cfg_int(cfg, "until_max_steps")
     p90 = stats.to_dict().get("maker_cycles_p90") or 0
     if not max_steps or p90 < int(0.9 * max_steps):
@@ -270,7 +270,7 @@ def _rule_budget(stats: FlowStats, cfg: dict) -> "str | None":
     return f"p90 maker cycles {p90} ≥ 0.9×until_max_steps ({max_steps})"
 
 
-def _rule_checker(stats: FlowStats, _cfg: dict) -> "str | None":
+def _rule_checker(stats: FlowStats, _cfg: Config) -> "str | None":
     if stats.terminal_runs < 4:
         return None
     if stats.checker_only_runs * 2 < stats.terminal_runs:
@@ -281,7 +281,7 @@ def _rule_checker(stats: FlowStats, _cfg: dict) -> "str | None":
     )
 
 
-def _rule_flaky(stats: FlowStats, _cfg: dict) -> "str | None":
+def _rule_flaky(stats: FlowStats, _cfg: Config) -> "str | None":
     groups: dict[tuple[str, str], set] = {}
     for obs in stats.check_observations:
         tree = obs.get("tree") or ""
@@ -297,7 +297,7 @@ def _rule_flaky(stats: FlowStats, _cfg: dict) -> "str | None":
     return None
 
 
-def _rule_blocked(stats: FlowStats, _cfg: dict) -> "str | None":
+def _rule_blocked(stats: FlowStats, _cfg: Config) -> "str | None":
     if stats.eval_total < 4:
         return None
     rate = stats.eval_blocked / stats.eval_total
@@ -306,7 +306,7 @@ def _rule_blocked(stats: FlowStats, _cfg: dict) -> "str | None":
     return f"eval blocked {stats.eval_blocked}/{stats.eval_total} runs"
 
 
-def _rule_denial(stats: FlowStats, _cfg: dict) -> "str | None":
+def _rule_denial(stats: FlowStats, _cfg: Config) -> "str | None":
     hits = [
         (shape, len(runs))
         for shape, runs in stats.denial_shapes.items()
@@ -318,14 +318,14 @@ def _rule_denial(stats: FlowStats, _cfg: dict) -> "str | None":
     return f"{shape} denied in {count} runs"
 
 
-def _rule_dead(stats: FlowStats, _cfg: dict) -> "str | None":
+def _rule_dead(stats: FlowStats, _cfg: Config) -> "str | None":
     if not stats.dead_nodes:
         return None
     shown = ", ".join(stats.dead_nodes[:8])
     return f"never entered in ≥5 runs: {shown}"
 
 
-def _rule_hot(stats: FlowStats, _cfg: dict) -> "str | None":
+def _rule_hot(stats: FlowStats, _cfg: Config) -> "str | None":
     if len(stats.transitions) < 4:
         return None
     counts: dict[tuple[str, str], int] = {}
@@ -342,7 +342,7 @@ def _rule_hot(stats: FlowStats, _cfg: dict) -> "str | None":
     return f"{src} -> {dst} on fail: {count}/{total} transitions"
 
 
-def _rule_source(stats: FlowStats, _cfg: dict) -> "str | None":
+def _rule_source(stats: FlowStats, _cfg: Config) -> "str | None":
     hits = [
         (source, len(runs))
         for source, runs in stats.dropped_sources.items()
@@ -366,7 +366,7 @@ FLOW_RULES = (
 )
 
 
-def flow_rules(stats: FlowStats, cfg: dict) -> list[str]:
+def flow_rules(stats: FlowStats, cfg: Config) -> list[str]:
     out: list[str] = []
     for rule_id, fn in FLOW_RULES:
         evidence = fn(stats, cfg)
@@ -375,7 +375,7 @@ def flow_rules(stats: FlowStats, cfg: dict) -> list[str]:
     return out
 
 
-def render_flow(stats: FlowStats, cfg: dict, request: FlowRequest) -> str:
+def render_flow(stats: FlowStats, cfg: Config, request: FlowRequest) -> str:
     """Text or JSON body for ``lmloop flow`` and ``/flow``."""
     if request.as_json:
         return json.dumps(stats.to_dict(), indent=2)
@@ -401,7 +401,7 @@ def company_prefix_note(slug: "str | None" = None) -> str:
     return f"company prefix stable across {len(by_node)} node(s)"
 
 
-def format_flow_report(stats: FlowStats, cfg: dict) -> str:
+def format_flow_report(stats: FlowStats, cfg: Config) -> str:
     lines = ["lmloop flow · project stats", json.dumps(stats.to_dict(), indent=2)]
     prefix = company_prefix_note()
     if prefix:

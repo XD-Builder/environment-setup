@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 
+from .config import Config
+
 
 @dataclass(frozen=True)
 class Viewport:
@@ -300,7 +302,7 @@ def try_fullscreen(load_view) -> bool:
     return True
 
 
-def open_memory_canvas(cfg: dict, query: str = "") -> str:
+def open_memory_canvas(cfg: Config, query: str = "") -> str:
     """Full-screen when possible; otherwise the text canvas (or graph-off message)."""
     from .config import cfg_bool
     from . import knowledge_graph

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import memory
-from ..config import cfg_int, utc_now
+from ..config import Config, cfg_int, utc_now
 from ..server import resolve_model_concurrency
 from .allowlist import endpoint_error, effective_allowlist
 from .manifest import MANIFEST_REL, Manifest, ManifestError, allowlist_errors, load_manifest
@@ -55,7 +55,7 @@ def prefix_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-def parallel_cap(cfg: dict, manifest: Manifest) -> int:
+def parallel_cap(cfg: Config, manifest: Manifest) -> int:
     """At most two workers. A single local slot still runs one worker at a time."""
     slots = resolve_model_concurrency(cfg)
     reserve = 1 if slots > 1 else 0
@@ -79,7 +79,7 @@ def _append(path: Path, row: dict) -> None:
     memory.append_jsonl(path, row)
 
 
-def activation_errors(cfg: dict, manifest: Manifest, *, sandbox_ready: bool) -> list[str]:
+def activation_errors(cfg: Config, manifest: Manifest, *, sandbox_ready: bool) -> list[str]:
     errors = []
     if not sandbox_ready:
         errors.append("company run needs --docker or --docker-persist")
@@ -148,7 +148,7 @@ def _packet(manifest: Manifest, *, run_id: str, node, role, model: str, handoff:
 
 
 def run_company(
-    cfg: dict, *, repo: Path, goal: str, sandbox_ready: bool,
+    cfg: Config, *, repo: Path, goal: str, sandbox_ready: bool,
     launcher, manifest: "Manifest | None" = None,
     manifest_path: "Path | None" = None,
     campaign_id: str = "",

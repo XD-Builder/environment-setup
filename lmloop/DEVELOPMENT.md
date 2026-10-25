@@ -136,7 +136,7 @@ find yourself updating two lists, you have already added debt.
 | Flow stats (`lmloop flow`) | `workflow.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
-| Paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, project slug, `utc_now()` | `config.py` |
+| `Config`, `ConfigSchema`, paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, `config_schema()`, project slug, `utc_now()` | `config.py` |
 | Live-thread file manifest (`/context`) | `context.py` |
 | Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
 | Usage aggregation, gap rules, abstention pairs, `lmloop eval` report | `evals.py` (leaf: `usage`, stdlib) |

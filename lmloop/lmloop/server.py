@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import config as config_mod, status as status_mod
+from .config import Config
 
 API_MODELS_PATH = "/models"
 NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")
@@ -32,7 +33,7 @@ def _get_json(url: str, timeout: int = 5, headers: "dict | None" = None) -> dict
         return json.loads(resp.read().decode())
 
 
-def _get(base_url: str, path: str, timeout: int = 5, cfg: "dict | None" = None):
+def _get(base_url: str, path: str, timeout: int = 5, cfg: Config | None = None):
     headers = None
     if cfg is not None:
         headers = config_mod.api_auth_headers(cfg)
@@ -60,7 +61,7 @@ def _model_matches(entry: dict, model: str) -> bool:
     return False
 
 
-def _native_model_entries(cfg: dict) -> list:
+def _native_model_entries(cfg: Config) -> list:
     """LM Studio native model records, or empty if the API is unreachable."""
     base_url = cfg.get("base_url") or ""
     if not base_url:
@@ -123,7 +124,7 @@ class LmsClient:
 
     _vision_cache: "dict[tuple, bool]" = {}
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: Config):
         self.cfg = cfg
 
     def list_models(self) -> "list[str]":
@@ -197,7 +198,7 @@ class LmsClient:
         return models[0]
 
 
-def list_models(base_url: str, cfg: "dict | None" = None) -> "list[str]":
+def list_models(base_url: str, cfg: Config | None = None) -> "list[str]":
     try:
         data = _get(base_url, API_MODELS_PATH, cfg=cfg)
         return [m["id"] for m in data.get("data", [])]
@@ -205,15 +206,15 @@ def list_models(base_url: str, cfg: "dict | None" = None) -> "list[str]":
         return []
 
 
-def get_context_limit(model: str, cfg: dict) -> int:
+def get_context_limit(model: str, cfg: Config) -> int:
     return LmsClient(cfg).context_limit(model)
 
 
-def model_has_vision(model: str, cfg: dict) -> bool:
+def model_has_vision(model: str, cfg: Config) -> bool:
     return LmsClient(cfg).has_vision(model)
 
 
-def ensure_server(cfg: dict, echo=print) -> str:
+def ensure_server(cfg: Config, echo=print) -> str:
     return LmsClient(cfg).ensure(echo=echo)
 
 
@@ -222,7 +223,7 @@ def server_error_text(exc: BaseException) -> str:
     return f"error: {exc}"
 
 
-def require_model(cfg: dict, *, echo, on_error) -> str | None:
+def require_model(cfg: Config, *, echo, on_error) -> str | None:
     """Return the loaded model, or None after ``on_error(server_error_text(...))``."""
     try:
         return ensure_server(cfg, echo=echo)
@@ -250,12 +251,12 @@ def _is_local_host(host: str) -> bool:
     return False
 
 
-def base_url_is_local(cfg: dict) -> bool:
+def base_url_is_local(cfg: Config) -> bool:
     host = urlparse(config_mod.cfg_str(cfg, "base_url")).hostname or ""
     return _is_local_host(host)
 
 
-def resolve_model_concurrency(cfg: dict) -> int:
+def resolve_model_concurrency(cfg: Config) -> int:
     raw = config_mod.cfg_str(cfg, "model_concurrency").strip().lower()
     if raw == "auto":
         host = urlparse(config_mod.cfg_str(cfg, "base_url")).hostname or ""
@@ -266,19 +267,19 @@ def resolve_model_concurrency(cfg: dict) -> int:
         return 1
 
 
-def slots_dir_for(cfg: dict) -> Path:
+def slots_dir_for(cfg: Config) -> Path:
     sha = hashlib.sha256(config_mod.cfg_str(cfg, "base_url").encode()).hexdigest()[:8]
     return config_mod.STATE_ROOT / "slots" / sha
 
 
-def model_slots_status_line(cfg: dict) -> str:
+def model_slots_status_line(cfg: Config) -> str:
     limit = resolve_model_concurrency(cfg)
     host = urlparse(config_mod.cfg_str(cfg, "base_url")).hostname or ""
     profile = "local" if _is_local_host(host) else "remote"
     return f"model concurrency: {limit} · {profile} · lock {slots_dir_for(cfg)}"
 
 
-def eval_model_name(cfg: dict, main_model: str) -> str:
+def eval_model_name(cfg: Config, main_model: str) -> str:
     name = config_mod.cfg_str(cfg, "eval_model").strip()
     return name or main_model
 
@@ -286,7 +287,7 @@ def eval_model_name(cfg: dict, main_model: str) -> str:
 class ModelSlots:
     """Host-wide flock slots per base_url (no-op when flock is unavailable)."""
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: Config):
         self.limit = resolve_model_concurrency(cfg)
         self.dir = slots_dir_for(cfg)
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -331,7 +332,7 @@ class ModelSlots:
 _SLOTS: dict[str, ModelSlots] = {}
 
 
-def model_slots(cfg: dict) -> ModelSlots:
+def model_slots(cfg: Config) -> ModelSlots:
     key = config_mod.cfg_str(cfg, "base_url")
     slot = _SLOTS.get(key)
     if slot is None or slot.limit != resolve_model_concurrency(cfg):

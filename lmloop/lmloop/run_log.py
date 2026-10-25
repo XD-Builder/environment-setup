@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .config import project_dir, utc_now
+from .config import Config, project_dir, utc_now
 from . import memory
 
 META_ROLE = "meta"
@@ -61,7 +61,7 @@ class UntilRun:
         meta_checks: list,
         explicit: bool,
         until_control: "str | None" = None,
-        cfg: "dict | None" = None,
+        cfg: Config | None = None,
         workspace_root: "Path | None" = None,
     ) -> "UntilRun":
         run = cls(path=path, goal=goal, check_cmd=check_cmd or None, events=[])
@@ -192,7 +192,7 @@ class GraphRun:
         name: str,
         slug: "str | None" = None,
         *,
-        cfg: "dict | None" = None,
+        cfg: Config | None = None,
         workspace_root: "Path | None" = None,
     ) -> "GraphRun":
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")

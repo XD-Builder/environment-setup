@@ -29,6 +29,7 @@ from .commands import (
     slash_command_metas,
 )
 from .config import (
+    Config,
     HISTORY_PREVIEW_CHARS, MAX_TRANSCRIPT_TOOL_CHARS, cfg_bool, cfg_int,
     cfg_positive_int, project_slug,
 )
@@ -73,7 +74,7 @@ class SlashCommand:
 
 @dataclass
 class SessionState:
-    cfg: dict
+    cfg: Config
     model: str
     messages: list
     session_log: Path
@@ -161,7 +162,7 @@ def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
         state.stats = fresh_stats()
 
 
-def _fresh_messages(cfg: dict, workspace_root: "Path | None" = None,
+def _fresh_messages(cfg: Config, workspace_root: "Path | None" = None,
                     clock_now=None) -> list:
     return [{"role": "system", "content": skills.system_prompt(
         cfg, workspace_root, clock_now=clock_now,
@@ -411,7 +412,7 @@ def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
     return True
 
 
-def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
+def mine_sessions(cfg: Config, model: str, paths, console: Console, confirm_gate,
                   transcript: "str | None" = None, display=None) -> int:
     """Run the retro skill without touching a live REPL thread."""
     if transcript is None:
@@ -454,7 +455,7 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
     return 0
 
 
-def make_session_miner(cfg: dict, model: str, console: Console, confirm_gate,
+def make_session_miner(cfg: Config, model: str, console: Console, confirm_gate,
                        display=None):
     """Mine callback for until/graph. Empty path lists are a no-op."""
     def mine(paths):
@@ -1200,7 +1201,7 @@ def _require_prompt_toolkit(console: Console) -> bool:
         return False
 
 
-def run_repl(cfg: dict, console: "Console | None" = None,
+def run_repl(cfg: Config, console: "Console | None" = None,
              skill: "str | None" = None, first_task: "str | None" = None,
              until_run: "loop_mod.UntilRun | None" = None,
              graph_run: "graph_mod.GraphRun | None" = None) -> int:

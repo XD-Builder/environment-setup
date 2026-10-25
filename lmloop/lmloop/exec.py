@@ -19,7 +19,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import cfg_get, project_slug
+from .config import Config, cfg_get, project_slug
 
 SANDBOX_PORTS = ("3000-3010", "8000-8010")
 SANDBOX_MEMORY = "4g"
@@ -463,7 +463,7 @@ class LocalBackend:
 class DockerBackend:
     """Docker CLI backend. ``runner`` is the only subprocess seam (fake in tests)."""
 
-    cfg: dict
+    cfg: Config
     root: Path
     persist: bool = False
     image: str = ""
@@ -940,7 +940,7 @@ def prepare_scoped_secret(root: Path, name: str, text: str) -> Path:
 
 
 def build_backend(
-    cfg: dict,
+    cfg: Config,
     workspace_root: "Path | None" = None,
     *,
     docker: bool = False,

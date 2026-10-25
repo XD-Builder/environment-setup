@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import memory
-from .config import HISTORY_PREVIEW_CHARS, cfg_bool, cfg_positive_int, utc_now
+from .config import Config, HISTORY_PREVIEW_CHARS, cfg_bool, cfg_positive_int, utc_now
 
 GRAPH_NODE_TYPES = frozenset({
     "learning", "decision", "session", "file", "skill", "concept",
@@ -123,10 +123,10 @@ class KnowledgeGraph:
         return memory.project_dir(self.slug) / "graph_edges.jsonl"
 
     @staticmethod
-    def enabled(cfg: "dict | None") -> bool:
+    def enabled(cfg: Config | None) -> bool:
         return bool(cfg and cfg_bool(cfg, "use_graph"))
 
-    def ensure(self, cfg: dict) -> None:
+    def ensure(self, cfg: Config) -> None:
         if not self.enabled(cfg):
             return
         root = memory.project_dir(self.slug)
@@ -287,7 +287,7 @@ class KnowledgeGraph:
             last[(a, b, et)] = row
         return list(last.values())
 
-    def on_learning(self, row: dict, cfg: "dict | None") -> None:
+    def on_learning(self, row: dict, cfg: Config | None) -> None:
         if not self.enabled(cfg):
             return
         self.ensure(cfg)
@@ -321,7 +321,7 @@ class KnowledgeGraph:
             )
         _BACKFILL_FP.pop(str(memory.project_dir(self.slug)), None)
 
-    def on_decision(self, row: dict, cfg: "dict | None") -> None:
+    def on_decision(self, row: dict, cfg: Config | None) -> None:
         if not self.enabled(cfg):
             return
         self.ensure(cfg)
@@ -359,7 +359,7 @@ class KnowledgeGraph:
         _BACKFILL_FP.pop(str(memory.project_dir(self.slug)), None)
 
     def record_skill_use(self, skill_name: str, session: "Path | None",
-                         cfg: "dict | None") -> None:
+                         cfg: Config | None) -> None:
         if not self.enabled(cfg):
             return
         self.ensure(cfg)
@@ -517,7 +517,7 @@ class KnowledgeGraph:
                 sess_mtime = 0
         return (_stat(learn), _stat(dec), sess_mtime, session_count)
 
-    def _backfill(self, cfg: dict) -> None:
+    def _backfill(self, cfg: Config) -> None:
         existing = self.nodes()
         wrote = False
         for r in memory.get_learnings(limit=10000, slug=self.slug):
@@ -621,7 +621,7 @@ def get_graph_edges(slug: "str | None" = None) -> list:
 
 
 def record_workflow_run(
-    cfg: dict, *, run_key: str, goal: str = "", commands: "list[str] | None" = None,
+    cfg: Config, *, run_key: str, goal: str = "", commands: "list[str] | None" = None,
     slug: "str | None" = None,
 ) -> None:
     """Record one run, its goal, and hashed check-command concepts.
@@ -659,13 +659,13 @@ def record_workflow_run(
         )
 
 
-def ensure_graph(cfg: dict, slug: "str | None" = None) -> None:
+def ensure_graph(cfg: Config, slug: "str | None" = None) -> None:
     """Backfill nodes from existing memory. No-op when use_graph is off."""
     KnowledgeGraph(slug).ensure(cfg)
 
 
 def record_skill_use(skill_name: str, session: "Path | None" = None,
-                     slug: "str | None" = None, cfg: "dict | None" = None) -> None:
+                     slug: "str | None" = None, cfg: Config | None = None) -> None:
     """Record a uses_skill edge from the current (or given) session."""
     KnowledgeGraph(slug).record_skill_use(skill_name, session, cfg)
 
@@ -684,7 +684,7 @@ class ReconcilePlan:
     prompt: str = ""
 
 
-def prepare_reconcile(cfg: dict, slug: "str | None" = None) -> ReconcilePlan:
+def prepare_reconcile(cfg: Config, slug: "str | None" = None) -> ReconcilePlan:
     """Graph-off, empty cluster, missing skill, or the reconcile prompt."""
     if not cfg_bool(cfg, "use_graph"):
         return ReconcilePlan(notice=MSG_GRAPH_OFF)
@@ -705,7 +705,7 @@ def contradiction_clusters(slug: "str | None" = None) -> str:
     return KnowledgeGraph(slug).contradiction_text()
 
 
-def inspect_report(cfg: dict, slug: "str | None" = None) -> str:
+def inspect_report(cfg: Config, slug: "str | None" = None) -> str:
     """``/memory graph`` body: stats plus contradiction clusters, or how to enable."""
     if not cfg_bool(cfg, "use_graph"):
         return MSG_GRAPH_OFF
@@ -713,7 +713,7 @@ def inspect_report(cfg: dict, slug: "str | None" = None) -> str:
     return graph_stats(slug) + "\n" + contradiction_clusters(slug)
 
 
-def format_canvas_text(cfg: dict, query: str = "", slug: "str | None" = None) -> str:
+def format_canvas_text(cfg: Config, query: str = "", slug: "str | None" = None) -> str:
     """Text fallback when the full-screen canvas is unavailable."""
     if not cfg_bool(cfg, "use_graph"):
         return MSG_GRAPH_OFF

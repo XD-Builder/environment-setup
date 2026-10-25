@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..config import cfg_bool, cfg_str
+from ..config import Config, cfg_bool, cfg_str
 
 PACKAGED_ALLOWLIST = (
     Path(__file__).resolve().parents[2] / "company" / "openrouter_autonomous.yaml"
@@ -34,7 +34,7 @@ def packaged_models(text: "str | None" = None, path: "Path | None" = None) -> li
     return found
 
 
-def extra_models(cfg: dict) -> list[str]:
+def extra_models(cfg: Config) -> list[str]:
     """Comma-separated ``company_models_allowlist`` additions."""
     raw = cfg_str(cfg, "company_models_allowlist")
     found: list[str] = []
@@ -48,7 +48,7 @@ def extra_models(cfg: dict) -> list[str]:
     return found
 
 
-def effective_allowlist(cfg: dict) -> list[str]:
+def effective_allowlist(cfg: Config) -> list[str]:
     """Packaged ids union user extensions. Order is stable; ids are unique."""
     found: list[str] = []
     seen: set[str] = set()
@@ -60,11 +60,11 @@ def effective_allowlist(cfg: dict) -> list[str]:
     return found
 
 
-def base_url_host(cfg: dict) -> str:
+def base_url_host(cfg: Config) -> str:
     return (urlparse(cfg_str(cfg, "base_url")).hostname or "").lower()
 
 
-def endpoint_error(cfg: dict) -> "str | None":
+def endpoint_error(cfg: Config) -> "str | None":
     """None when this base_url may run company mode."""
     from ..server import base_url_is_local
 
@@ -80,9 +80,9 @@ def endpoint_error(cfg: dict) -> "str | None":
     return None
 
 
-def activate(cfg: dict, *, orchestrator: bool) -> dict:
+def activate(cfg: Config, *, orchestrator: bool) -> Config:
     """Return a cfg copy that enforces the allowlist on every chat call."""
-    out = dict(cfg)
+    out = Config(cfg)
     out[RUNTIME_ACTIVE] = True
     out[RUNTIME_ORCHESTRATOR] = bool(orchestrator)
     out[RUNTIME_ALLOWLIST] = effective_allowlist(cfg)
@@ -91,7 +91,7 @@ def activate(cfg: dict, *, orchestrator: bool) -> dict:
     return out
 
 
-def rejection(cfg: dict, model: str) -> "str | None":
+def rejection(cfg: Config, model: str) -> "str | None":
     """Error string when company mode is on and ``model`` is not allowlisted."""
     if not cfg.get(RUNTIME_ACTIVE):
         return None
@@ -101,6 +101,6 @@ def rejection(cfg: dict, model: str) -> "str | None":
     return f"model {model!r} is not on the company allowlist"
 
 
-def worker_memory_blocked(cfg: dict) -> bool:
+def worker_memory_blocked(cfg: Config) -> bool:
     """Workers do not write project memory. The orchestrator does, after gates."""
     return bool(cfg.get(RUNTIME_ACTIVE)) and not bool(cfg.get(RUNTIME_ORCHESTRATOR))

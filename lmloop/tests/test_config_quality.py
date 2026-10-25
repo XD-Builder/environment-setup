@@ -9,8 +9,12 @@ from unittest import mock
 
 from lmloop import config as config_mod
 from lmloop import memory
+from dataclasses import asdict, fields
+
 from lmloop.config import (
     CHECK_OUTPUT_LIMIT,
+    Config,
+    ConfigSchema,
     DEFAULTS,
     DIFF_LIMIT,
     HISTORY_PREVIEW_CHARS,
@@ -23,6 +27,7 @@ from lmloop.config import (
     cfg_int,
     cfg_positive_int,
     coerce_config_value,
+    config_schema,
     normalize_config,
 )
 from support import parametrize
@@ -50,6 +55,18 @@ README_CONFIG_KEYS = frozenset({
 
 
 class ConfigQualityTests(unittest.TestCase):
+    def test_config_schema_matches_defaults_and_readme(self):
+        names = {f.name for f in fields(ConfigSchema)}
+        self.assertEqual(names, set(DEFAULTS))
+        self.assertLessEqual(README_CONFIG_KEYS, names)
+        self.assertEqual(asdict(ConfigSchema()), DEFAULTS)
+
+    def test_config_schema_fills_partial_cfg(self):
+        s = config_schema(Config({"context_length": 0, "max_rounds": 5}))
+        self.assertEqual(s.context_length, 0)
+        self.assertEqual(s.max_rounds, 5)
+        self.assertEqual(s.timeout_s, DEFAULTS["timeout_s"])
+
     def test_readme_config_keys_round_trip_through_coerce(self):
         for key in README_CONFIG_KEYS:
             self.assertIn(key, DEFAULTS, f"{key} missing from DEFAULTS")
@@ -140,6 +157,18 @@ class ConfigQualityTests(unittest.TestCase):
         self.assertEqual(cfg_int(cfg, "context_length"), 0)
         self.assertEqual(cfg_int(cfg, "context_reserve"), 512)
         self.assertEqual(cfg_get(cfg, "max_rounds"), DEFAULTS["max_rounds"])
+
+    def test_config_reads_keys_as_attributes(self):
+        cfg = Config(DEFAULTS)
+        self.assertIsInstance(cfg, dict)
+        self.assertEqual(cfg.max_rounds, cfg["max_rounds"])
+        self.assertEqual(cfg.tool_preview_limit, DEFAULTS[TOOL_PREVIEW_LIMIT])
+        cfg["company_active"] = True
+        self.assertTrue(cfg.company_active)
+        with self.assertRaises(AttributeError):
+            cfg.not_a_setting
+        self.assertEqual(json.loads(json.dumps(cfg))["max_rounds"], cfg.max_rounds)
+        self.assertEqual(cfg_int({}, "max_rounds"), DEFAULTS["max_rounds"])
 
     def test_tool_limits_match_defaults(self):
         from lmloop import tools

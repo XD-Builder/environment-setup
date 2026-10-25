@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import memory
-from .config import project_slug, utc_now
+from .config import Config, project_slug, utc_now
 from .evals import feedback_case_ids
 from .harness_bundle import bundle_id
 from .run_log import META_ROLE
@@ -98,7 +98,7 @@ def _mode_from_path(path: Path) -> str:
 def build_harness_execution_report(
     run_path: Path,
     *,
-    cfg: dict | None = None,
+    cfg: Config | None = None,
     solver: str = "",
 ) -> dict[str, Any]:
     """Build a report dict from one until or graph JSONL file."""
@@ -129,7 +129,7 @@ def build_harness_execution_report(
 def write_harness_execution_report(
     run_path: Path,
     *,
-    cfg: dict | None = None,
+    cfg: Config | None = None,
     solver: str = "",
     dest: Path | None = None,
 ) -> Path:

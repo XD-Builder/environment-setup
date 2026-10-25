@@ -56,7 +56,7 @@ lmloop/
 │   ├── run_artifacts.py        # until sidecar state + artifact index (budget control)
 │   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
 │   ├── exec.py                 # LocalBackend (default) and opt-in DockerBackend
-│   ├── config.py               # ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
+│   ├── config.py               # Config class, ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   ├── context.py              # live-thread file manifest for /context
 │   ├── usage.py                # local feature-usage JSONL (usage.record / tracked)
 │   ├── evals.py                # usage gaps + abstention Act/Abstain/Pair

@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import Config
 from . import tools
 
 # macOS first (this repo's usual host), then Wayland / X11.
@@ -436,7 +437,7 @@ class Console:
     def stats_detail(self, stats: dict, model: str, messages: list,
                      session_log: Path, hud,
                      context_limit: int = 0, reserve: int = 2048,
-                     cfg: "dict | None" = None) -> str:
+                     cfg: Config | None = None) -> str:
         t = self.t
         counts = count_messages_by_role(messages)
         ctx_parts = [f"{counts[r]} {r}" for r in ("system", "user", "assistant", "tool") if counts[r]]

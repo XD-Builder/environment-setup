@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import memory
-from .config import cfg_bool, cfg_str
+from .config import Config, cfg_bool, cfg_str
 
 INDEX_VERSION = 2
 INDEX_FILE = "index.sqlite3"
@@ -72,7 +72,7 @@ END;
 """
 
 
-def _mode(cfg: dict) -> str:
+def _mode(cfg: Config) -> str:
     return cfg_str(cfg, "memory_index").strip().lower()
 
 
@@ -101,7 +101,7 @@ def _quote_token(token: str) -> str:
     return '"' + token.replace('"', '""') + '"'
 
 
-def sessions_enabled(cfg: dict) -> bool:
+def sessions_enabled(cfg: Config) -> bool:
     """Whether transcript snippets may enter a prompt (R-PRIV)."""
     mode = cfg_str(cfg, "recall_sessions").strip().lower()
     if mode == "off":
@@ -147,7 +147,7 @@ class MemoryIndex:
         self.backend = "scan"
         self.reason = ""
 
-    def open(self, cfg: dict) -> "MemoryIndex":
+    def open(self, cfg: Config) -> "MemoryIndex":
         mode = _mode(cfg)
         if mode == "off":
             self.backend = "off"
@@ -239,7 +239,7 @@ class MemoryIndex:
         conn.execute(f"PRAGMA busy_timeout={_BUSY_MS}")
         return conn
 
-    def sync(self, cfg: dict, *, force: bool = False) -> None:
+    def sync(self, cfg: Config, *, force: bool = False) -> None:
         if self.backend != "fts5":
             return
         conn = self._connect()
@@ -521,7 +521,7 @@ class MemoryIndex:
                 )
 
     def search(self, query: str, *, learning_limit: int, decision_limit: int,
-               cfg: dict) -> str:
+               cfg: Config) -> str:
         self.open(cfg)
         if self.backend in ("off", "scan"):
             base = memory._search_memory_scan(
@@ -644,7 +644,7 @@ class MemoryIndex:
             out.append("Spirit:\n" + "\n".join(spirit_lines))
         return "\n\n".join(out) or "(no memory matches)"
 
-    def reindex(self, cfg: dict) -> None:
+    def reindex(self, cfg: Config) -> None:
         """Delete and rebuild ``index.sqlite3`` from JSONL sources."""
         self.open(cfg)
         if self.backend != "fts5":
@@ -668,7 +668,7 @@ class MemoryIndex:
         finally:
             conn.close()
 
-    def status(self, cfg: dict) -> dict:
+    def status(self, cfg: Config) -> dict:
         self.open(cfg)
         size = self.path.stat().st_size if self.path.is_file() else 0
         reason = self.reason
@@ -700,7 +700,7 @@ class MemoryIndex:
             "last_sync": last_sync,
         }
 
-    def command_candidates(self, cfg: dict) -> list[dict]:
+    def command_candidates(self, cfg: Config) -> list[dict]:
         """Backticked tool/operational learnings, user-stated first.
 
         Scan fallback reads JSONL directly so inference does not require FTS5.
@@ -751,7 +751,7 @@ class MemoryIndex:
         return found
 
 
-def index_status_line(cfg: dict, slug: "str | None" = None) -> str:
+def index_status_line(cfg: Config, slug: "str | None" = None) -> str:
     """One-line index summary for ``/stats`` and ``memory index``."""
     st = MemoryIndex(slug).status(cfg)
     backend = st["backend"]
@@ -766,7 +766,7 @@ def index_status_line(cfg: dict, slug: "str | None" = None) -> str:
     )
 
 
-def format_index_report(cfg: dict, slug: "str | None" = None) -> str:
+def format_index_report(cfg: Config, slug: "str | None" = None) -> str:
     st = MemoryIndex(slug).status(cfg)
     lines = [index_status_line(cfg, slug), f"path: {st['path']}"]
     if st.get("reason"):
