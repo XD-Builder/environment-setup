@@ -66,7 +66,7 @@ def base_url_host(cfg: Config) -> str:
 
 def endpoint_error(cfg: Config) -> "str | None":
     """None when this base_url may run company mode."""
-    from ..server import base_url_is_local
+    from ..model.server import base_url_is_local
 
     host = base_url_host(cfg)
     remote_ok = cfg_bool(cfg, "company_remote")

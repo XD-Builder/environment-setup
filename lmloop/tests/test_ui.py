@@ -117,7 +117,7 @@ class UiTests(unittest.TestCase):
         self.assertIs(isolated["echo"], act_keys["echo"])
 
     def test_session_act_display_uses_session_fields(self):
-        from lmloop.repl import SessionState
+        from lmloop.entry.repl import SessionState
         from lmloop.ui import fresh_stats
 
         root = Path("/tmp/ws")

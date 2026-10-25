@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from lmloop.core import config as config_mod
-from lmloop.chat import _chat_request
+from lmloop.model.chat import _chat_request
 
 
 class ConfigAuthTests(unittest.TestCase):

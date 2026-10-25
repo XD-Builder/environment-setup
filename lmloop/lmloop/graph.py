@@ -1,8 +1,8 @@
 """Facade for authored workflow graphs (DSL + runner)."""
 
-from . import skills
+from .prompts import skills
 from .core.config import project_dir
-from .graph_dsl import (
+from .flow.graph_dsl import (
     EDGE_ON,
     GRAPHS_DIR,
     GRAPH_NAME_RE,
@@ -16,7 +16,7 @@ from .graph_dsl import (
     load_graph,
     parse_graph,
 )
-from .graph_runner import (
+from .flow.graph_runner import (
     JOIN_HANDOFF_CLIP,
     GraphRun,
     annotate_unverified_commands,
@@ -28,9 +28,9 @@ from .graph_runner import (
     save_proposed_graph,
     superseded_graph_hint,
 )
-from .until_runner import isolated_act, run_until
-from .graph_runner import all_graph_runs, graphs_dir
-from .tools import run_shell
+from .run.until_runner import isolated_act, run_until
+from .flow.graph_runner import all_graph_runs, graphs_dir
+from .capabilities.tools import run_shell
 
 __all__ = [
     "EDGE_ON",

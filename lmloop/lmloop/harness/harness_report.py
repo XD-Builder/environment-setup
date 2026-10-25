@@ -10,7 +10,7 @@ from .. import memory
 from ..core.config import Config, project_slug, utc_now
 from .evals import feedback_case_ids
 from .harness_bundle import bundle_id
-from ..run_log import META_ROLE
+from ..run.run_log import META_ROLE
 
 _FAILURE_ROLES = frozenset({"check", "eval", "gate", "blocked"})
 _CLIP = 240
@@ -143,7 +143,7 @@ def write_harness_execution_report(
 
 
 def latest_run_path(slug: str | None = None) -> Path | None:
-    from ..run_log import all_graph_runs, all_until_runs
+    from ..run.run_log import all_graph_runs, all_until_runs
 
     candidates: list[Path] = list(all_until_runs(slug)) + list(all_graph_runs(slug))
     if not candidates:

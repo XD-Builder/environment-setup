@@ -1,24 +1,29 @@
 """The agent loop: OpenAI-compatible multi-round tool calling against LM Studio.
 
-Chat HTTP lives in ``chat.py``. The loop is a gather/answer state machine: the
-model may call tools for up to ``max_rounds`` gather steps, then one tools-off
-answer. Gather ends early when the model stops requesting tools, or when it
-repeats a tool set already run this turn (exact name+args). Tool errors are
-reported back as text so it can self-correct instead of crashing the session.
+Chat HTTP lives in ``model/chat.py``. The loop is a gather/answer state machine:
+the model may call tools for up to ``max_rounds`` gather steps, then one
+tools-off answer. Gather ends early when the model stops requesting tools, or
+when it repeats a tool set already run this turn (exact name+args). Tool errors
+are reported back as text so it can self-correct instead of crashing the session.
 
-Stream assembly lives in ``stream.py``. Live printers live in ``display.py``.
-Skill playbooks live in ``skills.py``. LMS bring-up lives in ``server.py``.
+Stream assembly lives in ``model/stream.py``. Live printers live in
+``model/display.py``. Skill playbooks live in ``prompts/skills/``. LMS bring-up
+lives in ``model/server.py``.
 """
 
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import extract, memory, server, skills, tools
+from .capabilities import extract
+from . import memory
+from .model import server
+from .prompts import skills
+from .capabilities import tools
 from .core.config import Config, DEFAULTS, cfg_bool, cfg_int
 from .core import status as status_mod
-from .chat import _chat, _chat_stream
-from .display import (
+from .model.chat import _chat, _chat_stream
+from .model.display import (
     _GeneratingIndicator,
     _ThinkingLive,
     _emit_assistant_content,

@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
 from lmloop.harness import contracts
-from lmloop.cli import main
+from lmloop.entry.cli import main
 from support import parametrize
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lmloop.loop import UntilRun, run_until
-from lmloop.run_artifacts import (
+from lmloop.run.run_artifacts import (
     UntilArtifactStore,
     analyze_until_run,
     extract_json_object,

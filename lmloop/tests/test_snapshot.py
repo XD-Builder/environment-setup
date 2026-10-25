@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lmloop import snapshot
+from lmloop.verify import snapshot
 
 
 def _git(cwd: Path, *args: str) -> None:

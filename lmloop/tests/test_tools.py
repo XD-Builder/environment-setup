@@ -12,7 +12,7 @@ from pathlib import Path
 
 from lmloop.core.commands import RESERVED_SKILL_NAMES, slash_command_metas
 from lmloop.core.config import DIFF_LIMIT, WEB_SEARCH_CONCURRENCY
-from lmloop.tools import (
+from lmloop.capabilities.tools import (
     GATE_IRREVERSIBLE,
     GATE_RECOVERABLE,
     GatePolicy,
@@ -40,7 +40,7 @@ from lmloop.tools import (
     ShellCommand,
     ToolResult,
 )
-from lmloop.web import _search_ddgs, fetch_url, web_search
+from lmloop.capabilities.web import _search_ddgs, fetch_url, web_search
 
 from support import parametrize
 
@@ -461,7 +461,7 @@ class ToolSafetyTests(unittest.TestCase):
     def test_run_shell_kills_on_keyboard_interrupt(self):
         proc = mock.Mock()
         proc.communicate.side_effect = KeyboardInterrupt()
-        with mock.patch("lmloop.exec.subprocess.Popen", return_value=proc):
+        with mock.patch("lmloop.capabilities.exec.subprocess.Popen", return_value=proc):
             with self.assertRaises(KeyboardInterrupt):
                 run_shell("sleep 999", confirm_destructive=False)
         proc.kill.assert_called()
@@ -523,12 +523,12 @@ class ToolSafetyTests(unittest.TestCase):
 class WebResearchToolTests(unittest.TestCase):
     def setUp(self):
         # urllib-chain tests must not hit real ddgs / the network.
-        p = mock.patch("lmloop.web._search_ddgs", return_value=([], "unavailable"))
+        p = mock.patch("lmloop.capabilities.web._search_ddgs", return_value=([], "unavailable"))
         self.addCleanup(p.stop)
         p.start()
 
     def test_web_search_parses_and_unwraps_uddg(self):
-        with mock.patch("lmloop.web.urllib.request.urlopen", return_value=_FakeResp(DDG_HTML_FIXTURE)):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", return_value=_FakeResp(DDG_HTML_FIXTURE)):
             out = web_search("Fairfax early childhood", max_results=5)
         self.assertNotIn("ERROR", out)
         self.assertIn("<<<untrusted>>>", out)
@@ -539,7 +539,7 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("Early childhood resources", out)
 
     def test_web_search_captcha_falls_back_then_errors(self):
-        with mock.patch("lmloop.web.urllib.request.urlopen", return_value=_FakeResp(CAPTCHA_HTML_FIXTURE)):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", return_value=_FakeResp(CAPTCHA_HTML_FIXTURE)):
             out = web_search("test query")
         self.assertIn("ERROR:", out)
         self.assertIn("all backends", out)
@@ -554,7 +554,7 @@ class WebResearchToolTests(unittest.TestCase):
                 return _FakeResp(LITE_HTML_FIXTURE)
             raise AssertionError(f"unexpected url {url}")
 
-        with mock.patch("lmloop.web.urllib.request.urlopen", side_effect=_open):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", side_effect=_open):
             out = web_search("east coast parks")
         self.assertNotIn("ERROR", out)
         self.assertIn("National Park Service", out)
@@ -568,7 +568,7 @@ class WebResearchToolTests(unittest.TestCase):
                 return _FakeResp(WIKI_OPENSEARCH_FIXTURE, content_type="application/json")
             return _FakeResp(CAPTCHA_HTML_FIXTURE)
 
-        with mock.patch("lmloop.web.urllib.request.urlopen", side_effect=_open):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", side_effect=_open):
             out = web_search("east coast")
         self.assertNotIn("ERROR", out)
         self.assertIn("East Coast of the United States", out)
@@ -583,7 +583,7 @@ class WebResearchToolTests(unittest.TestCase):
                 return _FakeResp(DDG_INSTANT_FIXTURE, content_type="application/json")
             raise AssertionError(f"unexpected url {url}")
 
-        with mock.patch("lmloop.web.urllib.request.urlopen", side_effect=_open):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", side_effect=_open):
             out = web_search("east coast")
         self.assertNotIn("ERROR", out)
         self.assertIn("East Coast of the United States", out)
@@ -591,7 +591,7 @@ class WebResearchToolTests(unittest.TestCase):
 
     def test_web_search_empty_returns_error(self):
         with mock.patch(
-            "lmloop.web.urllib.request.urlopen",
+            "lmloop.capabilities.web.urllib.request.urlopen",
             return_value=_FakeResp("<html><body><p>no results</p></body></html>"),
         ):
             out = web_search("zzzzunlikelyquery")
@@ -605,7 +605,7 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("missing required argument 'query'", result)
 
     def test_dispatch_web_search_coerces_max_results(self):
-        with mock.patch("lmloop.web.urllib.request.urlopen", return_value=_FakeResp(DDG_HTML_FIXTURE)):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", return_value=_FakeResp(DDG_HTML_FIXTURE)):
             _, impls = build_tools({"confirm_shell": False})
             result = dispatch(impls, "web_search", '{"query": "fairfax", "max_results": "1"}')
         self.assertNotIn("ERROR", result)
@@ -632,7 +632,7 @@ class WebResearchToolTests(unittest.TestCase):
         names = {s["function"]["name"] for s in specs}
         self.assertIn("current_time", names)
         self.assertIn("current_time", impls)
-        with mock.patch("lmloop.steer.clock_snapshot", return_value=snap):
+        with mock.patch("lmloop.prompts.steer.clock_snapshot", return_value=snap):
             result = dispatch(impls, "current_time", "{}")
         self.assertNotIn("ERROR", result)
         self.assertIn("utc: 2026-08-14T17:06:00Z", result)
@@ -650,7 +650,7 @@ class WebResearchToolTests(unittest.TestCase):
             self.assertTrue(s["function"]["parameters"]["properties"] or True)
 
     def test_readonly_omits_write_tools(self):
-        from lmloop.tools import READONLY_OMIT
+        from lmloop.capabilities.tools import READONLY_OMIT
 
         full_specs, _ = build_tools({"confirm_shell": False})
         full_names = {s["function"]["name"] for s in full_specs}
@@ -674,11 +674,11 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertIn("graph_add_edge", impls)
         off, _ = build_tools({"confirm_shell": False})
         self.assertNotIn("graph_add_edge", {s["function"]["name"] for s in off})
-        from lmloop.tools import _TOOL_DEFS
+        from lmloop.capabilities.tools import _TOOL_DEFS
         self.assertIn("graph_add_edge", _TOOL_DEFS)
 
     def test_registry_survives_use_graph_false_rebuild(self):
-        from lmloop.tools import _TOOL_DEFS
+        from lmloop.capabilities.tools import _TOOL_DEFS
 
         build_tools({"confirm_shell": False, "use_graph": True})
         self.assertIn("graph_add_edge", _TOOL_DEFS)
@@ -705,7 +705,7 @@ class WebResearchToolTests(unittest.TestCase):
         err = urllib.error.HTTPError(
             "https://example.com/missing", 404, "Not Found", hdrs=None, fp=io.BytesIO(b""),
         )
-        with mock.patch("lmloop.web.urllib.request.urlopen", side_effect=err):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", side_effect=err):
             out = fetch_url("https://example.com/missing")
         self.assertIn("ERROR: HTTP 404", out)
         self.assertIn("https://example.com/missing", out)
@@ -716,7 +716,7 @@ class WebResearchToolTests(unittest.TestCase):
             url="https://www.example.gov/parks/",
             status=200,
         )
-        with mock.patch("lmloop.web.urllib.request.urlopen", return_value=resp):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", return_value=resp):
             out = fetch_url("https://www.example.gov/parks")
         self.assertIn("[fetched https://www.example.gov/parks/ | HTTP 200]", out)
         self.assertIn("Parks and Recreation", out)
@@ -730,7 +730,7 @@ class WebResearchToolTests(unittest.TestCase):
         from tests.test_extract import PNG_1X1
         resp = _FakeResp("x", url="https://example.com/a.png", content_type="image/png")
         resp._body = PNG_1X1
-        with mock.patch("lmloop.web.urllib.request.urlopen", return_value=resp):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", return_value=resp):
             out = fetch_url("https://example.com/a.png")
         self.assertIsInstance(out, ToolResult)
         self.assertIn("image/png", out.text)
@@ -742,9 +742,9 @@ class WebResearchToolTests(unittest.TestCase):
         resp = _FakeResp("x", url="https://example.com/a.pdf", content_type="application/pdf")
         resp._body = b"%PDF-1.4\nfake"
         proc = mock.Mock(returncode=0, stdout=b"Hello from PDF\n", stderr=b"")
-        with mock.patch("lmloop.web.urllib.request.urlopen", return_value=resp), \
-             mock.patch("lmloop.extract.shutil.which", return_value="/usr/bin/pdftotext"), \
-             mock.patch("lmloop.extract.subprocess.run", return_value=proc):
+        with mock.patch("lmloop.capabilities.web.urllib.request.urlopen", return_value=resp), \
+             mock.patch("lmloop.capabilities.extract.shutil.which", return_value="/usr/bin/pdftotext"), \
+             mock.patch("lmloop.capabilities.extract.subprocess.run", return_value=proc):
             out = fetch_url("https://example.com/a.pdf")
         self.assertIsInstance(out, str)
         self.assertIn("Hello from PDF", out)
@@ -774,7 +774,7 @@ class DdgsSearchTests(unittest.TestCase):
         ]
         ddgs_mod = mock.Mock(DDGS=mock.Mock(return_value=client))
         with mock.patch.dict("sys.modules", {"ddgs": ddgs_mod}), \
-             mock.patch("lmloop.web.urllib.request.urlopen") as urlopen:
+             mock.patch("lmloop.capabilities.web.urllib.request.urlopen") as urlopen:
             out = web_search("east coast parks")
         urlopen.assert_not_called()
         client.text.assert_called_once()
@@ -800,7 +800,7 @@ class DdgsSearchTests(unittest.TestCase):
             raise AssertionError(f"unexpected url {url}")
 
         with mock.patch.dict("sys.modules", {"ddgs": ddgs_mod}), \
-             mock.patch("lmloop.web.urllib.request.urlopen", side_effect=_open):
+             mock.patch("lmloop.capabilities.web.urllib.request.urlopen", side_effect=_open):
             out = web_search("east coast parks")
         self.assertNotIn("ERROR", out)
         self.assertIn("National Park Service", out)
@@ -809,7 +809,7 @@ class DdgsSearchTests(unittest.TestCase):
 
 class ConcurrentToolTests(unittest.TestCase):
     def test_consecutive_reads_share_a_group(self):
-        from lmloop.tools import concurrent_groups, run_tool_calls
+        from lmloop.capabilities.tools import concurrent_groups, run_tool_calls
 
         build_tools({"confirm_shell": False})
         # read_file + list_dir are both local_read → grouped together
@@ -825,7 +825,7 @@ class ConcurrentToolTests(unittest.TestCase):
         )
 
     def test_run_tool_calls_preserves_order(self):
-        from lmloop.tools import run_tool_calls
+        from lmloop.capabilities.tools import run_tool_calls
 
         build_tools({"confirm_shell": False})
         impls = {
@@ -839,7 +839,7 @@ class ConcurrentToolTests(unittest.TestCase):
         self.assertEqual(out, ["body:a.py", "dir:."])
 
     def test_writes_stay_serial(self):
-        from lmloop.tools import run_tool_calls
+        from lmloop.capabilities.tools import run_tool_calls
 
         build_tools({"confirm_shell": False})
         order = []
@@ -862,7 +862,7 @@ class ConcurrentToolTests(unittest.TestCase):
 
     def test_parallel_reads_overlap(self):
         import threading
-        from lmloop.tools import run_tool_calls
+        from lmloop.capabilities.tools import run_tool_calls
 
         build_tools({"confirm_shell": False})
         barrier = threading.Barrier(2)
@@ -882,7 +882,7 @@ class ConcurrentToolTests(unittest.TestCase):
         self.assertEqual(set(seen), {"a.py", "b.py"})
 
     def test_mixed_concurrent_tools_share_one_wave(self):
-        from lmloop.tools import concurrent_groups
+        from lmloop.capabilities.tools import concurrent_groups
 
         build_tools({"confirm_shell": False})
         self.assertEqual(
@@ -892,7 +892,7 @@ class ConcurrentToolTests(unittest.TestCase):
 
     def test_barrier_stops_grouping(self):
         """Non-concurrent tools must act as barriers."""
-        from lmloop.tools import concurrent_groups
+        from lmloop.capabilities.tools import concurrent_groups
 
         build_tools({"confirm_shell": False})
         groups = concurrent_groups(["read_file", "web_search", "run_shell", "read_file"])
@@ -901,7 +901,7 @@ class ConcurrentToolTests(unittest.TestCase):
         self.assertEqual(groups2, [[0, 1, 2]])
 
     def test_concurrent_tools_declare_a_pool_category(self):
-        from lmloop.tools import _POOL_LIMIT_KEYS, _TOOL_DEFS
+        from lmloop.capabilities.tools import _POOL_LIMIT_KEYS, _TOOL_DEFS
 
         build_tools({"confirm_shell": False})
         for name, tool in _TOOL_DEFS.items():
@@ -913,7 +913,7 @@ class ConcurrentToolTests(unittest.TestCase):
     def test_web_search_cap_is_two_in_flight(self):
         import threading
         import time
-        from lmloop.tools import run_tool_calls
+        from lmloop.capabilities.tools import run_tool_calls
 
         build_tools({"confirm_shell": False})
         state = {"in_flight": 0, "peak": 0}
@@ -959,7 +959,7 @@ class ConcurrentToolTests(unittest.TestCase):
 
     def test_read_overlaps_web_search(self):
         import threading
-        from lmloop.tools import run_tool_calls
+        from lmloop.capabilities.tools import run_tool_calls
 
         build_tools({"confirm_shell": False})
         barrier = threading.Barrier(2)
@@ -984,7 +984,7 @@ class ConcurrentToolTests(unittest.TestCase):
     def test_shell_barrier_keeps_reads_serial(self):
         import threading
         import time
-        from lmloop.tools import run_tool_calls
+        from lmloop.capabilities.tools import run_tool_calls
 
         build_tools({"confirm_shell": False})
         events = []
@@ -1025,7 +1025,7 @@ class ConcurrentToolTests(unittest.TestCase):
     def test_web_search_concurrency_one_is_serial(self):
         import threading
         import time
-        from lmloop.tools import run_tool_calls
+        from lmloop.capabilities.tools import run_tool_calls
 
         build_tools({"confirm_shell": False})
         state = {"in_flight": 0, "peak": 0}
@@ -1334,7 +1334,7 @@ class FileEditToolTests(unittest.TestCase):
         self.assertIn("does not exist", delete_file("a.txt", workspace_root=self.root))
 
     def test_write_tools_readonly_omitted_and_serial(self):
-        from lmloop.tools import READONLY_OMIT, concurrent_groups
+        from lmloop.capabilities.tools import READONLY_OMIT, concurrent_groups
         for name in ("update_file", "move_file", "delete_file", "write_file"):
             self.assertIn(name, READONLY_OMIT)
         specs, _ = build_tools({"confirm_shell": False}, readonly=True)
@@ -1454,7 +1454,7 @@ class GatePolicyTests(unittest.TestCase):
 
 class FindSearchToolTests(unittest.TestCase):
     def setUp(self):
-        from lmloop.files_index import clear_path_cache
+        from lmloop.capabilities.files_index import clear_path_cache
         clear_path_cache()
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name) / "ws"
@@ -1467,7 +1467,7 @@ class FindSearchToolTests(unittest.TestCase):
         (self.root / "README.md").write_text("x")
 
     def tearDown(self):
-        from lmloop.files_index import clear_path_cache
+        from lmloop.capabilities.files_index import clear_path_cache
         clear_path_cache()
         self._tmp.cleanup()
 
@@ -1495,7 +1495,7 @@ class FindSearchToolTests(unittest.TestCase):
         self.assertIn("not a directory", find_files("*", "README.md", workspace_root=self.root))
 
     def test_list_project_paths_full_list_cache(self):
-        from lmloop import files_index
+        from lmloop.capabilities import files_index
         with mock.patch.object(files_index, "_MAX_PATHS", 2):
             files_index.clear_path_cache()
             short = files_index.list_project_paths(self.root, limit=files_index._MAX_PATHS)
@@ -1511,8 +1511,8 @@ class FindSearchToolTests(unittest.TestCase):
             seen["cmd"] = cmd
             return mock.Mock(stdout="a.py:1:hit\n")
 
-        with mock.patch("lmloop.tools.shutil.which", return_value=which), \
-             mock.patch("lmloop.tools.subprocess.run", side_effect=fake_run):
+        with mock.patch("lmloop.capabilities.tools.shutil.which", return_value=which), \
+             mock.patch("lmloop.capabilities.tools.subprocess.run", side_effect=fake_run):
             out = search_files("needle", workspace_root=self.root, **kwargs)
         self.assertIn("hit", out)
         return seen["cmd"]
@@ -1544,8 +1544,8 @@ class FindSearchToolTests(unittest.TestCase):
             return mock.Mock(stdout="")
 
         _, impls = build_tools({"confirm_shell": False}, workspace_root=self.root)
-        with mock.patch("lmloop.tools.shutil.which", return_value="/usr/bin/rg"), \
-             mock.patch("lmloop.tools.subprocess.run", side_effect=fake_run):
+        with mock.patch("lmloop.capabilities.tools.shutil.which", return_value="/usr/bin/rg"), \
+             mock.patch("lmloop.capabilities.tools.subprocess.run", side_effect=fake_run):
             out = dispatch(
                 impls, "search_files",
                 '{"pattern": "x", "case_insensitive": "yes", "fixed": 0, "context": "1"}',
@@ -1575,7 +1575,7 @@ class FindSearchToolTests(unittest.TestCase):
 
 class MemoryDisclosureTests(unittest.TestCase):
     def test_user_disclosure_from_write_tools(self):
-        from lmloop.tools import user_disclosure
+        from lmloop.capabilities.tools import user_disclosure
 
         self.assertEqual(
             user_disclosure(

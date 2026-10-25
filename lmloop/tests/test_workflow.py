@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmloop import workflow
+from lmloop.flow import workflow
 from lmloop.core.commands import parse_flow_words
 from lmloop.core.config import DEFAULTS
 
@@ -13,7 +13,7 @@ class WorkflowTests(unittest.TestCase):
     def test_collect_empty_stats(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            with mock.patch("lmloop.workflow.project_dir", return_value=root):
+            with mock.patch("lmloop.flow.workflow.project_dir", return_value=root):
                 stats = workflow.collect_flow_stats()
         self.assertEqual(stats.until_runs, 0)
         self.assertEqual(stats.to_dict()["maker_cycles_max"], 0)
@@ -134,8 +134,8 @@ class FlowRuleTests(unittest.TestCase):
             ]) + "\n"
             for i in range(5):
                 (graphs / f"run-{i}.jsonl").write_text(body, encoding="utf-8")
-            with mock.patch("lmloop.workflow.project_dir", return_value=root), \
-                 mock.patch("lmloop.workflow._authored_node_names", return_value={"ceo", "qa", "docs"}):
+            with mock.patch("lmloop.flow.workflow.project_dir", return_value=root), \
+                 mock.patch("lmloop.flow.workflow._authored_node_names", return_value={"ceo", "qa", "docs"}):
                 stats = workflow.collect_flow_stats()
         self.assertEqual(stats.until_runs, 1)
         self.assertEqual(stats.until_pass, 1)

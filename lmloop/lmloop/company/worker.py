@@ -27,7 +27,7 @@ def _manifest_sha(path: Path) -> str:
 def _plan_revision(campaign_id: str) -> "int | None":
     if not campaign_id:
         return None
-    from ..campaign import revision_of
+    from ..host.campaign import revision_of
     return revision_of(campaign_id)
 
 

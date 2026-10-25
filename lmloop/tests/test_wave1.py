@@ -9,9 +9,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lmloop.harness import evals
-from lmloop import knowledge_graph, memory, memory_index
+from lmloop.memory import knowledge_graph
+from lmloop import memory
+from lmloop.memory import index as memory_index
 from lmloop.core.config import DEFAULTS
-from lmloop.repl import _MINE_LAST, _hud_line
+from lmloop.entry.repl import _MINE_LAST, _hud_line
 
 
 def _cfg(**extra):

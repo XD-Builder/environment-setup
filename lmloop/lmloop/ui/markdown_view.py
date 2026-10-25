@@ -6,7 +6,7 @@ import sys
 from io import StringIO
 from typing import Iterable
 
-from ..extract import flatten_content
+from ..capabilities.extract import flatten_content
 
 # Fold at the console width. Rich's default crop silently drops the tail of
 # list items, tables, and other laid-out renderables.

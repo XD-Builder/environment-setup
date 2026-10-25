@@ -5,22 +5,22 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lmloop.files_index import (
+from lmloop.capabilities.files_index import (
     AtRef,
     attached_heading,
     collect_at_refs,
     prompt_file_mentions,
     ref_line,
 )
-from lmloop.context import (
+from lmloop.memory.context import (
     ACTIVE_FILES_HEADING,
     DURABLE_MEMORY_HEADING,
     NO_SESSION_FILES,
     active_context_files,
     format_session_context,
 )
-from lmloop.repl import _with_ref_excerpts
-from lmloop.tools import ToolResult, read_file
+from lmloop.entry.repl import _with_ref_excerpts
+from lmloop.capabilities.tools import ToolResult, read_file
 
 
 def _read_messages(path_arg: str, result, call_id: str = "c1") -> list:

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop.files_index import (
+from lmloop.capabilities.files_index import (
     at_completion_token,
     collect_at_refs,
     clear_path_cache,
@@ -17,7 +17,7 @@ from lmloop.files_index import (
     normalize_typed_path,
     strip_at_quotes,
 )
-from lmloop.prompt import (
+from lmloop.entry.prompt import (
     LmloopCompleter,
     _at_slash_action,
     _command_arg_choices,
@@ -26,7 +26,7 @@ from lmloop.prompt import (
     _lex_prompt_line,
     _short_blurb,
 )
-from lmloop.repl import SlashCommand
+from lmloop.entry.repl import SlashCommand
 from prompt_toolkit.document import Document
 
 
@@ -42,7 +42,7 @@ class FilesIndexTests(unittest.TestCase):
             (root / "sub" / "b.py").write_text("y\n")
             (root / "node_modules").mkdir()
             (root / "node_modules" / "x.js").write_text("z\n")
-            with patch("lmloop.files_index._git_paths", return_value=None):
+            with patch("lmloop.capabilities.files_index._git_paths", return_value=None):
                 paths = list_project_paths(root)
             self.assertIn("a.py", paths)
             self.assertIn("sub/b.py", paths)
@@ -313,7 +313,7 @@ class CompleterTests(unittest.TestCase):
         self.assertFalse(_in_skill_arg("/ceo", "/ceo"))
 
     def test_filter_keeps_c_prefix(self):
-        from lmloop.prompt import _filter_names
+        from lmloop.entry.prompt import _filter_names
         names = ["/ceo", "/compact", "/help", "/checkpoints"]
         got = _filter_names(names, "/c")
         self.assertEqual(got, ["/ceo", "/compact", "/checkpoints"])
@@ -408,7 +408,7 @@ class CompleterTests(unittest.TestCase):
             root = Path(d)
             (root / "readme.md").write_text("x\n")
             clear_path_cache()
-            with patch("lmloop.prompt.list_project_paths", return_value=["readme.md", "src/"]):
+            with patch("lmloop.entry.prompt.list_project_paths", return_value=["readme.md", "src/"]):
                 c = LmloopCompleter(lambda: [], cwd_provider=lambda: root)
                 docs = Document("@re", cursor_position=3)
                 matches = list(c.get_completions(docs, None))

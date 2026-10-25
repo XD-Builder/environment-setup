@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop.checks import (
+from lmloop.verify.checks import (
     PlannedCheck,
     ROLE_CHECK,
     TIER_ADVISORY,
@@ -14,9 +14,9 @@ from lmloop.checks import (
     plan_needs_proposal,
 )
 from lmloop import graph as graph_mod
-from lmloop import knowledge_graph
-from lmloop import memory_index
-from lmloop import workflow
+from lmloop.memory import knowledge_graph
+from lmloop.memory import index as memory_index
+from lmloop.flow import workflow
 
 
 class V8ProposalTests(unittest.TestCase):
@@ -66,7 +66,7 @@ class CanvasViewTests(unittest.TestCase):
     def test_layout_stable(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            with patch("lmloop.knowledge_graph.memory.project_dir", return_value=root), \
+            with patch("lmloop.memory.knowledge_graph.memory.project_dir", return_value=root), \
                  patch("lmloop.memory.project_dir", return_value=root):
                 cfg = {"use_graph": True}
                 kg = knowledge_graph.KnowledgeGraph()
@@ -88,7 +88,7 @@ class GraphProposeTests(unittest.TestCase):
     def test_refuses_before_five_terminal_runs(self):
         with tempfile.TemporaryDirectory() as d:
             with patch("lmloop.graph.project_dir", return_value=Path(d)), \
-                 patch("lmloop.workflow.count_terminal_runs", return_value=2):
+                 patch("lmloop.flow.workflow.count_terminal_runs", return_value=2):
                 with self.assertRaises(graph_mod.GraphError) as ctx:
                     graph_mod.propose_graph_draft(
                         {}, "m", "ship", echo_status=lambda *_: None,
@@ -105,7 +105,7 @@ class TerminalRunCountTests(unittest.TestCase):
             (until / "one.jsonl").write_text(
                 '{"role":"meta"}\n{"role":"done","status":"pass"}\n',
             )
-            with patch("lmloop.workflow.project_dir", return_value=root):
+            with patch("lmloop.flow.workflow.project_dir", return_value=root):
                 self.assertEqual(workflow.count_terminal_runs(slug="x"), 1)
 
 

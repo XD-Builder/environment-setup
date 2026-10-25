@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from lmloop.extract import (
+from lmloop.capabilities.extract import (
     KIND_AUDIO,
     KIND_BINARY,
     KIND_DOCX,
@@ -171,7 +171,7 @@ class OfficeTests(unittest.TestCase):
         self.assertIn("World", extracted.text)
 
     def test_attachment_excerpt_inlines_docx(self):
-        from lmloop.extract import attachment_excerpt
+        from lmloop.capabilities.extract import attachment_excerpt
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "note.docx"
             path.write_bytes(_docx_bytes(["Hello", "World"]))
@@ -224,8 +224,8 @@ class PdfWhisperTests(unittest.TestCase):
     def test_pdftotext_cli(self):
         pdf = b"%PDF-1.4\n%fake"
         proc = mock.Mock(returncode=0, stdout=b"Hello PDF\n", stderr=b"")
-        with mock.patch("lmloop.extract.shutil.which", return_value="/usr/bin/pdftotext"), \
-             mock.patch("lmloop.extract.subprocess.run", return_value=proc) as run:
+        with mock.patch("lmloop.capabilities.extract.shutil.which", return_value="/usr/bin/pdftotext"), \
+             mock.patch("lmloop.capabilities.extract.subprocess.run", return_value=proc) as run:
             extracted = extract_bytes(pdf, name="a.pdf", label="a.pdf")
         self.assertEqual(extracted.kind, KIND_PDF)
         self.assertIn("Hello PDF", extracted.text)
@@ -248,7 +248,7 @@ class PdfWhisperTests(unittest.TestCase):
         errors = types.ModuleType("pypdf.errors")
         errors.PdfReadError = PdfReadError
         with mock.patch.dict(sys.modules, {"pypdf": pypdf, "pypdf.errors": errors}):
-            from lmloop.extract import _pypdf_text
+            from lmloop.capabilities.extract import _pypdf_text
             text, err = _pypdf_text(b"%PDF-1.4")
         self.assertIsNone(text)
         self.assertIn("PdfReadError", err or "")
@@ -269,14 +269,14 @@ class PdfWhisperTests(unittest.TestCase):
         errors = types.ModuleType("pypdf.errors")
         errors.PdfReadError = PdfReadError
         with mock.patch.dict(sys.modules, {"pypdf": pypdf, "pypdf.errors": errors}):
-            from lmloop.extract import _pypdf_text
+            from lmloop.capabilities.extract import _pypdf_text
             with self.assertRaises(RuntimeError):
                 _pypdf_text(b"%PDF-1.4")
 
     def test_pdf_missing_tools(self):
         pdf = b"%PDF-1.4\n%fake"
-        with mock.patch("lmloop.extract.shutil.which", return_value=None), \
-             mock.patch("lmloop.extract._pypdf_text", return_value=(None, "pypdf not installed")):
+        with mock.patch("lmloop.capabilities.extract.shutil.which", return_value=None), \
+             mock.patch("lmloop.capabilities.extract._pypdf_text", return_value=(None, "pypdf not installed")):
             extracted = extract_bytes(pdf, name="a.pdf")
         self.assertIn("ERROR: cannot extract PDF", extracted.text)
 
@@ -289,14 +289,14 @@ class PdfWhisperTests(unittest.TestCase):
             Path(out_base + ".txt").write_text("hello audio\n")
             return proc
 
-        with mock.patch("lmloop.extract.shutil.which", side_effect=lambda n: n == "whisper-cli"), \
-             mock.patch("lmloop.extract.subprocess.run", side_effect=fake_run):
+        with mock.patch("lmloop.capabilities.extract.shutil.which", side_effect=lambda n: n == "whisper-cli"), \
+             mock.patch("lmloop.capabilities.extract.subprocess.run", side_effect=fake_run):
             extracted = extract_bytes(audio, name="a.mp3", label="a.mp3")
         self.assertEqual(extracted.kind, KIND_AUDIO)
         self.assertIn("hello audio", extracted.text)
 
     def test_audio_missing_whisper(self):
-        with mock.patch("lmloop.extract.shutil.which", return_value=None):
+        with mock.patch("lmloop.capabilities.extract.shutil.which", return_value=None):
             extracted = extract_bytes(b"ID3xx", name="a.mp3")
         self.assertIn("ERROR: cannot transcribe", extracted.text)
 

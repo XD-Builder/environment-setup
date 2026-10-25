@@ -247,7 +247,7 @@ class JsonlAndContextTests(unittest.TestCase):
 class KnowledgeGraphTests(unittest.TestCase):
     def test_use_graph_false_creates_no_files(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:
@@ -263,7 +263,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_ensure_skips_backfill_when_sources_unchanged(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         kg_mod._BACKFILL_FP.clear()
@@ -280,7 +280,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_backfill_and_hops(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:
@@ -307,7 +307,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_auto_edges_from_learning(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:
@@ -338,7 +338,7 @@ class KnowledgeGraphTests(unittest.TestCase):
     def test_decay_hides_learning_nodes(self):
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         old = (datetime.now(timezone.utc) - timedelta(days=40)).strftime(
@@ -362,7 +362,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_graph_add_edge_requires_note(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:
@@ -383,7 +383,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_graph_stats_lists_contradicts(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:
@@ -418,7 +418,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_use_graph_false_skips_auto_edges_when_files_exist(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:
@@ -440,7 +440,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_record_skill_use_writes_on_act_session(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:
@@ -464,7 +464,7 @@ class KnowledgeGraphTests(unittest.TestCase):
 
     def test_context_block_includes_neighbor(self):
         from unittest.mock import patch
-        from lmloop import knowledge_graph as kg_mod
+        from lmloop.memory import knowledge_graph as kg_mod
         from lmloop import memory as memory_mod
 
         with tempfile.TemporaryDirectory() as d:

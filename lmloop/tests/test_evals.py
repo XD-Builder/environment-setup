@@ -132,7 +132,7 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("unknown-features", ids)
 
     def test_flow_section_uses_caller_budget(self):
-        from lmloop.workflow import FlowStats
+        from lmloop.flow.workflow import FlowStats
 
         flow = FlowStats(maker_cycles=[10, 10, 10, 10])
         stats = evals.EvalStats()
@@ -195,7 +195,7 @@ class EvalCliIntegrationTests(unittest.TestCase):
 
 class ToolErrorInstrumentationTests(unittest.TestCase):
     def test_dispatch_records_tool_error_on_validation(self):
-        from lmloop.tools import build_tools, dispatch
+        from lmloop.capabilities.tools import build_tools, dispatch
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "usage.jsonl"

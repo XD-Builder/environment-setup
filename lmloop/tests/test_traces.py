@@ -149,8 +149,8 @@ class ActTraceTests(unittest.TestCase):
             with mock.patch("lmloop.harness.traces.TRACE_PATH", trace_path), \
                  mock.patch("lmloop.harness.traces.QUEUE_PATH", queue_path), \
                  mock.patch.object(agent, "_chat", side_effect=fake_chat), \
-                 mock.patch("lmloop.tools.dispatch", return_value="listed"), \
-                 mock.patch("lmloop.display._rich_live_available", return_value=False):
+                 mock.patch("lmloop.capabilities.tools.dispatch", return_value="listed"), \
+                 mock.patch("lmloop.model.display._rich_live_available", return_value=False):
                 agent.act(
                     cfg, "m", [{"role": "user", "content": "hi"}],
                     echo=lambda *_args: None, echo_delta=False,
