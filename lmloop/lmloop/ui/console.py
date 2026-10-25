@@ -14,8 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config
-from . import tools
+from ..config import Config
+from .. import tools
 
 # macOS first (this repo's usual host), then Wayland / X11.
 _CLIPBOARD_CMDS = (
@@ -497,12 +497,12 @@ class Console:
             lines.append(row("tokens", "(server did not report usage)", t.dim))
         lines.append(row("memory", f"{hud.learnings} learnings, {hud.decisions} active decisions"))
         if cfg is not None:
-            from .memory_index import index_status_line
+            from ..memory_index import index_status_line
             lines.append(row("memory index", index_status_line(cfg)))
         lines.append(row("graph", "on" if hud.graph_on else "off"))
         lines.append(row("checkpoint", "yes" if hud.checkpoint else "no"))
         lines.append(row("hud", hud.line()))
-        from .exec import describe_exec
+        from ..exec import describe_exec
         lines.append(row("exec", describe_exec()))
         lines.append(row("cwd", str(Path.cwd()), t.dim))
         return "\n".join(lines)

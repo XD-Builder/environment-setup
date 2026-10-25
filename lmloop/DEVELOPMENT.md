@@ -151,8 +151,8 @@ find yourself updating two lists, you have already added debt.
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
 | prompt_toolkit session, completers, key bindings, input lexer | `prompt.py` |
-| ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui.py` |
-| rich Console / markdown / pager | `markdown_view.py` |
+| ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui/console.py` (`from lmloop.ui import …` via package `__getattr__`) |
+| rich Console / markdown / pager | `ui/markdown_view.py` (shim: `markdown_view.py`) |
 
 `agent.py` imports display helpers that `act()` calls, and `chat._chat` for
 completions. Tests patch `lmloop.display` / `lmloop.stream` / `lmloop.chat`

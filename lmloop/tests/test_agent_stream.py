@@ -181,7 +181,7 @@ class StreamPrinterTests(unittest.TestCase):
         fake_live = mock.MagicMock()
         fake_live.auto_refresh = False
         with mock.patch("lmloop.display._load_rich") as load_rich, \
-             mock.patch("lmloop.markdown_view.make_console") as make_console, \
+             mock.patch("lmloop.ui.markdown_view.make_console") as make_console, \
              mock.patch("lmloop.display.terminal_size", return_value=(80, 40)):
             Console = mock.MagicMock()
             make_console.return_value.soft_wrap = False

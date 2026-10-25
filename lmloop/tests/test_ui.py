@@ -55,8 +55,8 @@ class UiTests(unittest.TestCase):
         from lmloop.ui import format_input_prompt, short_path
 
         cwd = Path("/home/u/demo")
-        with patch("lmloop.ui.Path.cwd", return_value=cwd), \
-             patch("lmloop.ui.Path.home", return_value=Path("/home/u")), \
+        with patch("lmloop.ui.console.Path.cwd", return_value=cwd), \
+             patch("lmloop.ui.console.Path.home", return_value=Path("/home/u")), \
              patch.object(Path, "resolve", lambda self: self):
             text = Console().prompt("org/my-model")
             self.assertEqual(short_path(Path("/home/u/proj")), "~/proj")
@@ -86,7 +86,7 @@ class UiTests(unittest.TestCase):
 
     def test_terminal_size_never_raises(self):
         from lmloop.ui import terminal_size
-        with patch("lmloop.ui.shutil.get_terminal_size", side_effect=OSError):
+        with patch("lmloop.ui.console.shutil.get_terminal_size", side_effect=OSError):
             cols, lines = terminal_size()
         self.assertGreater(cols, 0)
         self.assertGreater(lines, 0)
@@ -142,7 +142,7 @@ class UiTests(unittest.TestCase):
         from contextlib import redirect_stdout
         from lmloop.memory import ViewLine
 
-        with patch("lmloop.ui._supports_color", return_value=True):
+        with patch("lmloop.ui.console._supports_color", return_value=True):
             console = Console(color=True)
         buf = StringIO()
         long_name = "/tmp/" + ("n" * 180) + ".md"
@@ -205,8 +205,8 @@ class UiTests(unittest.TestCase):
 class ClipboardTests(unittest.TestCase):
     def test_write_clipboard_uses_first_available_tool(self):
         proc = Mock(returncode=0, stdout="", stderr="")
-        with patch("lmloop.ui.shutil.which", side_effect=lambda n: "/bin/" + n if n == "pbcopy" else None), \
-             patch("lmloop.ui.subprocess.run", return_value=proc) as run:
+        with patch("lmloop.ui.console.shutil.which", side_effect=lambda n: "/bin/" + n if n == "pbcopy" else None), \
+             patch("lmloop.ui.console.subprocess.run", return_value=proc) as run:
             self.assertIsNone(write_clipboard("hello"))
         run.assert_called_once()
         args, kwargs = run.call_args
@@ -214,14 +214,14 @@ class ClipboardTests(unittest.TestCase):
         self.assertEqual(kwargs["input"], "hello")
 
     def test_write_clipboard_reports_missing_tool(self):
-        with patch("lmloop.ui.shutil.which", return_value=None):
+        with patch("lmloop.ui.console.shutil.which", return_value=None):
             err = write_clipboard("hello")
         self.assertIn("no clipboard tool", err)
 
     def test_write_clipboard_reports_nonzero_exit(self):
         proc = Mock(returncode=1, stdout="", stderr="denied")
-        with patch("lmloop.ui.shutil.which", return_value="/usr/bin/pbcopy"), \
-             patch("lmloop.ui.subprocess.run", return_value=proc):
+        with patch("lmloop.ui.console.shutil.which", return_value="/usr/bin/pbcopy"), \
+             patch("lmloop.ui.console.subprocess.run", return_value=proc):
             self.assertEqual(write_clipboard("hello"), "denied")
 
 

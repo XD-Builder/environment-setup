@@ -1396,7 +1396,7 @@ class FileEditToolTests(unittest.TestCase):
         from lmloop.ui import Console, make_confirm_gate
         console = Console(color=False)
         gate = make_confirm_gate(console)
-        with mock.patch("lmloop.ui.ask_yes_no", return_value=False) as ask, \
+        with mock.patch("lmloop.ui.console.ask_yes_no", return_value=False) as ask, \
              mock.patch.object(console, "warn") as warn:
             self.assertFalse(gate("overwrite /ws/a.txt"))
         self.assertTrue(ask.called)
