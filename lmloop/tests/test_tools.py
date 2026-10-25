@@ -11,6 +11,7 @@ from unittest import mock
 from pathlib import Path
 
 from lmloop.commands import RESERVED_SKILL_NAMES, slash_command_metas
+from lmloop.config import DIFF_LIMIT, WEB_SEARCH_CONCURRENCY
 from lmloop.tools import (
     GATE_IRREVERSIBLE,
     GATE_RECOVERABLE,
@@ -811,6 +812,9 @@ class ConcurrentToolTests(unittest.TestCase):
         from lmloop.tools import concurrent_groups, run_tool_calls
 
         build_tools({"confirm_shell": False})
+        # read_file + list_dir are both local_read → grouped together
+        # write_file is a barrier → single
+        # read_file at end → single (separate from first group)
         self.assertEqual(
             concurrent_groups(["read_file", "list_dir", "write_file", "read_file"]),
             [[0, 1], [2], [3]],
@@ -876,6 +880,176 @@ class ConcurrentToolTests(unittest.TestCase):
         ])
         self.assertEqual(set(out), {"a.py", "b.py"})
         self.assertEqual(set(seen), {"a.py", "b.py"})
+
+    def test_mixed_concurrent_tools_share_one_wave(self):
+        from lmloop.tools import concurrent_groups
+
+        build_tools({"confirm_shell": False})
+        self.assertEqual(
+            concurrent_groups(["read_file", "web_search", "web_search", "read_file"]),
+            [[0, 1, 2, 3]],
+        )
+
+    def test_barrier_stops_grouping(self):
+        """Non-concurrent tools must act as barriers."""
+        from lmloop.tools import concurrent_groups
+
+        build_tools({"confirm_shell": False})
+        groups = concurrent_groups(["read_file", "web_search", "run_shell", "read_file"])
+        self.assertEqual(groups, [[0, 1], [2], [3]])
+        groups2 = concurrent_groups(["read_file", "read_file", "read_file"])
+        self.assertEqual(groups2, [[0, 1, 2]])
+
+    def test_concurrent_tools_declare_a_pool_category(self):
+        from lmloop.tools import _POOL_LIMIT_KEYS, _TOOL_DEFS
+
+        build_tools({"confirm_shell": False})
+        for name, tool in _TOOL_DEFS.items():
+            if tool.concurrent:
+                self.assertIn(tool.category, _POOL_LIMIT_KEYS, name)
+            else:
+                self.assertEqual(tool.category, "", name)
+
+    def test_web_search_cap_is_two_in_flight(self):
+        import threading
+        import time
+        from lmloop.tools import run_tool_calls
+
+        build_tools({"confirm_shell": False})
+        state = {"in_flight": 0, "peak": 0}
+        lock = threading.Lock()
+        release = threading.Event()
+
+        def search(query, max_results=8):
+            with lock:
+                state["in_flight"] += 1
+                state["peak"] = max(state["peak"], state["in_flight"])
+            release.wait(timeout=2)
+            with lock:
+                state["in_flight"] -= 1
+            return query
+
+        def run():
+            state["out"] = run_tool_calls(impls, calls)
+
+        impls = {"web_search": search}
+        calls = [
+            ("web_search", '{"query": "a"}'),
+            ("web_search", '{"query": "b"}'),
+            ("web_search", '{"query": "c"}'),
+        ]
+        worker = threading.Thread(target=run)
+        worker.start()
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            with lock:
+                if state["peak"] >= 2 and state["in_flight"] >= 2:
+                    break
+            time.sleep(0.01)
+        time.sleep(0.05)
+        with lock:
+            peak = state["peak"]
+            inflight = state["in_flight"]
+        release.set()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(peak, 2)
+        self.assertEqual(inflight, 2)
+        self.assertEqual(state["out"], ["a", "b", "c"])
+
+    def test_read_overlaps_web_search(self):
+        import threading
+        from lmloop.tools import run_tool_calls
+
+        build_tools({"confirm_shell": False})
+        barrier = threading.Barrier(2)
+
+        def read(path, start_line=1, max_lines=400):
+            barrier.wait(timeout=2)
+            return path
+
+        def search(query, max_results=8):
+            barrier.wait(timeout=2)
+            return query
+
+        out = run_tool_calls({
+            "read_file": read,
+            "web_search": search,
+        }, [
+            ("read_file", '{"path": "a.py"}'),
+            ("web_search", '{"query": "parks"}'),
+        ])
+        self.assertEqual(out, ["a.py", "parks"])
+
+    def test_shell_barrier_keeps_reads_serial(self):
+        import threading
+        import time
+        from lmloop.tools import run_tool_calls
+
+        build_tools({"confirm_shell": False})
+        events = []
+        lock = threading.Lock()
+
+        def read(path, start_line=1, max_lines=400):
+            with lock:
+                events.append(f"start-{path}")
+            if path == "a.py":
+                time.sleep(0.05)
+            with lock:
+                events.append(f"end-{path}")
+            return path
+
+        def shell(command):
+            with lock:
+                events.append("start-shell")
+            time.sleep(0.05)
+            with lock:
+                events.append("end-shell")
+            return "s"
+
+        out = run_tool_calls({
+            "read_file": read,
+            "run_shell": shell,
+        }, [
+            ("read_file", '{"path": "a.py"}'),
+            ("run_shell", '{"command": "true"}'),
+            ("read_file", '{"path": "b.py"}'),
+        ])
+        self.assertEqual(out, ["a.py", "s", "b.py"])
+        self.assertEqual(events, [
+            "start-a.py", "end-a.py",
+            "start-shell", "end-shell",
+            "start-b.py", "end-b.py",
+        ])
+
+    def test_web_search_concurrency_one_is_serial(self):
+        import threading
+        import time
+        from lmloop.tools import run_tool_calls
+
+        build_tools({"confirm_shell": False})
+        state = {"in_flight": 0, "peak": 0}
+        lock = threading.Lock()
+
+        def search(query, max_results=8):
+            with lock:
+                state["in_flight"] += 1
+                state["peak"] = max(state["peak"], state["in_flight"])
+            time.sleep(0.05)
+            with lock:
+                state["in_flight"] -= 1
+            return query
+
+        out = run_tool_calls(
+            {"web_search": search},
+            [
+                ("web_search", '{"query": "a"}'),
+                ("web_search", '{"query": "b"}'),
+            ],
+            cfg={WEB_SEARCH_CONCURRENCY: 1},
+        )
+        self.assertEqual(out, ["a", "b"])
+        self.assertEqual(state["peak"], 1)
 
 
 class _Gate:
@@ -1046,6 +1220,18 @@ class FileEditToolTests(unittest.TestCase):
             '{"path": "a.txt", "old_string": "a", "new_string": "b", "replace_all": "maybe"}',
         )
         self.assertIn("must be true or false", bad)
+
+    def test_update_file_diff_limit_comes_from_cfg(self):
+        old = "\n".join(f"line {i}" for i in range(12)) + "\n"
+        new = "\n".join(f"row {i}" for i in range(12)) + "\n"
+        (self.root / "a.txt").write_text(old)
+        _, impls = build_tools(
+            {"confirm_shell": False, DIFF_LIMIT: 3},
+            workspace_root=self.root,
+        )
+        out = impls["update_file"]("a.txt", old, new)
+        self.assertIn("Updated", out)
+        self.assertIn("diff truncated", out)
 
     # --- write_file ---
 

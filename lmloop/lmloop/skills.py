@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import memory, steer, tools
 from .commands import RESERVED_SKILL_NAMES
-from .config import STATE_ROOT
+from .config import Config, STATE_ROOT
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 USER_SKILLS_DIR = STATE_ROOT / "skills"
@@ -106,7 +106,7 @@ class SkillLibrary:
         path.write_text(content if content.endswith("\n") else content + "\n")
         return path
 
-    def system_prompt(self, cfg: dict, workspace_root: "Path | None" = None,
+    def system_prompt(self, cfg: Config, workspace_root: "Path | None" = None,
                       clock_now=None, memory_block: "str | None" = None) -> str:
         base = self.load("system")
         names = tools.tool_names(cfg=cfg)
@@ -204,7 +204,7 @@ def save_user_skill(name: str, content: str) -> Path:
     return _library().save_user(name, content)
 
 
-def system_prompt(cfg: dict, workspace_root: "Path | None" = None,
+def system_prompt(cfg: Config, workspace_root: "Path | None" = None,
                   clock_now=None, memory_block: "str | None" = None) -> str:
     return _library().system_prompt(
         cfg, workspace_root, clock_now=clock_now, memory_block=memory_block,

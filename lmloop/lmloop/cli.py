@@ -79,6 +79,7 @@ from .commands import (
     parse_memory_words,
 )
 from .config import (
+    Config,
     CONFIG_PATH,
     DEFAULTS,
     cfg_bool,
@@ -128,11 +129,11 @@ examples:
 _MINE_DETAIL_CLI = "  N is a positive session count (default 3)"
 
 
-def _require_model(cfg: dict, console: Console) -> "str | None":
+def _require_model(cfg: Config, console: Console) -> "str | None":
     return server.require_model(cfg, echo=console.info, on_error=console.error)
 
 
-def _cli_display(cfg: dict, console: Console, model: str):
+def _cli_display(cfg: Config, console: Console, model: str):
     return console.act_display(
         context_limit=server.get_context_limit(model, cfg),
         context_reserve=cfg_int(cfg, "context_reserve"),
@@ -147,7 +148,7 @@ def _reject_memory(console: Console, request) -> int:
     return 1
 
 
-def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
+def cmd_memory_mine(cfg: Config, count: int, console: Console) -> int:
     sessions = memory.list_sessions(limit=count)
     if not sessions:
         console.info("no sessions recorded yet")
@@ -162,7 +163,7 @@ def cmd_memory_mine(cfg: dict, count: int, console: Console) -> int:
         return 1
 
 
-def cmd_retro(cfg: dict, count: int, console: Console) -> int:
+def cmd_retro(cfg: Config, count: int, console: Console) -> int:
     console.hint(MSG_DEPRECATE_RETRO)
     console.hint("[memory mine]")
     return cmd_memory_mine(cfg, count, console)
@@ -194,7 +195,7 @@ def cmd_skills(console: Console, names_only: bool = False, *, repl: bool = False
     return 0
 
 
-def cmd_skills_new(cfg: dict, name: str, brief: str, console: Console) -> int:
+def cmd_skills_new(cfg: Config, name: str, brief: str, console: Console) -> int:
     """Generate a skill draft, show it, and save to ~/.lmloop/skills/ on confirm."""
     err = skills.validate_skill_name(name)
     if err:
@@ -333,7 +334,7 @@ compdef _lmloop lmloop
     return 0
 
 
-def cmd_config(cfg: dict, words: list, console: Console) -> int:
+def cmd_config(cfg: Config, words: list, console: Console) -> int:
     if len(words) >= 2 and words[0] == "set":
         key, value = words[1], " ".join(words[2:])
         if key not in DEFAULTS:
@@ -361,7 +362,7 @@ def cmd_config(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
-def cmd_memory(cfg: dict, words: list, console: Console) -> int:
+def cmd_memory(cfg: Config, words: list, console: Console) -> int:
     request = parse_memory_words(
         words,
         mine_default=3,
@@ -383,7 +384,7 @@ def cmd_memory(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
-def _reconcile_cli(cfg: dict, console: Console) -> int:
+def _reconcile_cli(cfg: Config, console: Console) -> int:
     plan = knowledge_graph.prepare_reconcile(cfg)
     if plan.notice:
         console.info(plan.notice)
@@ -406,13 +407,13 @@ def _reconcile_cli(cfg: dict, console: Console) -> int:
     return 0
 
 
-def cmd_decisions(cfg: dict, words: list, console: Console) -> int:
+def cmd_decisions(cfg: Config, words: list, console: Console) -> int:
     console.hint(MSG_DEPRECATE_DECISIONS)
     console.write_lines(memory.decision_list_lines(limit=30))
     return 0
 
 
-def cmd_history(cfg: dict, words: list, console: Console) -> int:
+def cmd_history(cfg: Config, words: list, console: Console) -> int:
     request = parse_count_words(
         words,
         default=HISTORY_DEFAULT_CLI,
@@ -426,13 +427,13 @@ def cmd_history(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
-def cmd_models(cfg: dict, words: list, console: Console) -> int:
+def cmd_models(cfg: Config, words: list, console: Console) -> int:
     models = server.list_models(cfg["base_url"], cfg=cfg)
     console.info("\n".join(models) if models else f"(no server at {cfg['base_url']} or nothing loaded)")
     return 0
 
 
-def cmd_until_analyze(cfg: dict, words: list, console: Console) -> int:
+def cmd_until_analyze(cfg: Config, words: list, console: Console) -> int:
     from .run_artifacts import analyze_until_run, format_until_analyze
 
     as_json = False
@@ -464,7 +465,7 @@ def cmd_until_analyze(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
-def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_until_cli(cfg: Config, words: list, console: Console) -> int:
     if words and words[0] == "analyze":
         return cmd_until_analyze(cfg, words[1:], console)
     if not words:
@@ -496,7 +497,7 @@ def cmd_until_cli(cfg: dict, words: list, console: Console) -> int:
     return _cli_run_until(cfg, console, run, model=model)
 
 
-def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
+def _cli_run_until(cfg: Config, console: Console, run: loop_mod.UntilRun,
                    model: "str | None" = None) -> int:
     if model is None:
         model = _require_model(cfg, console)
@@ -519,7 +520,7 @@ def _cli_run_until(cfg: dict, console: Console, run: loop_mod.UntilRun,
     return 0
 
 
-def cmd_flow_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_flow_cli(cfg: Config, words: list, console: Console) -> int:
     from . import workflow
 
     request = parse_flow_words(words, invocation="lmloop flow")
@@ -531,7 +532,7 @@ def cmd_flow_cli(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
-def offer_proposed_graph(cfg: dict, model: str, name: str, console: Console) -> int:
+def offer_proposed_graph(cfg: Config, model: str, name: str, console: Console) -> int:
     """Draft a graph, show the diff, and save only on an explicit ``y``."""
     try:
         draft = graph_mod.propose_graph_draft(
@@ -561,7 +562,7 @@ def offer_proposed_graph(cfg: dict, model: str, name: str, console: Console) -> 
     return 0
 
 
-def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_graph_cli(cfg: Config, words: list, console: Console) -> int:
     request = parse_graph_words(
         words,
         run_usage="usage: lmloop graph <name>",
@@ -606,7 +607,7 @@ def cmd_graph_cli(cfg: dict, words: list, console: Console) -> int:
     return _cli_run_graph(cfg, console, run, defn, model=model)
 
 
-def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
+def _cli_run_graph(cfg: Config, console: Console, run: graph_mod.GraphRun,
                    defn: graph_mod.GraphDef, model: "str | None" = None) -> int:
     if model is None:
         model = _require_model(cfg, console)
@@ -629,7 +630,7 @@ def _cli_run_graph(cfg: dict, console: Console, run: graph_mod.GraphRun,
     return 0
 
 
-def cmd_retro_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_retro_cli(cfg: Config, words: list, console: Console) -> int:
     request = parse_memory_words(
         ["mine", *words],
         mine_default=3,
@@ -642,7 +643,7 @@ def cmd_retro_cli(cfg: dict, words: list, console: Console) -> int:
     return cmd_retro(cfg, request.mine_count or 3, console)
 
 
-def cmd_skills_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_skills_cli(cfg: Config, words: list, console: Console) -> int:
     if words and words[0] == "new":
         if len(words) < 2:
             console.error("usage: lmloop skills new <name> [brief…]")
@@ -652,7 +653,7 @@ def cmd_skills_cli(cfg: dict, words: list, console: Console) -> int:
     return cmd_skills(console, names_only=names_only)
 
 
-def cmd_skill_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_skill_cli(cfg: Config, words: list, console: Console) -> int:
     if not words:
         console.error("usage: lmloop skill <name> [task]")
         console.info(f"  skills: {', '.join(skills.list_skills()) or '(none)'}")
@@ -667,7 +668,7 @@ def cmd_skill_cli(cfg: dict, words: list, console: Console) -> int:
     return run_repl(cfg, console=console, skill=name, first_task=task)
 
 
-def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_eval_cli(cfg: Config, words: list, console: Console) -> int:
     from . import contracts, evals, traces
 
     request = parse_eval_words(words, invocation="lmloop eval")
@@ -744,7 +745,7 @@ def cmd_eval_cli(cfg: dict, words: list, console: Console) -> int:
     return 0
 
 
-def cmd_sandbox(cfg: dict, words: list, console: Console) -> int:
+def cmd_sandbox(cfg: Config, words: list, console: Console) -> int:
     """``lmloop sandbox`` — status by default. Build persists a digest, never a tag."""
     from . import exec as exec_mod
 
@@ -790,7 +791,7 @@ def cmd_sandbox(cfg: dict, words: list, console: Console) -> int:
     return 1
 
 
-def _sandbox_build(cfg: dict, console: Console) -> int:
+def _sandbox_build(cfg: Config, console: Console) -> int:
     from . import exec as exec_mod
 
     dockerfile = Path(__file__).resolve().parent.parent / "sandbox" / "Dockerfile"
@@ -821,7 +822,7 @@ def _sandbox_build(cfg: dict, console: Console) -> int:
     return 0
 
 
-def cmd_completion_cli(cfg: dict, words: list, console: Console) -> int:
+def cmd_completion_cli(cfg: Config, words: list, console: Console) -> int:
     shell = words[0] if words else ""
     if not shell:
         console.error("usage: lmloop completion zsh")
@@ -834,7 +835,7 @@ def _sandbox_ready() -> bool:
     return isinstance(active_backend(), DockerBackend)
 
 
-def cmd_company(cfg: dict, words: list, console: Console) -> int:
+def cmd_company(cfg: Config, words: list, console: Console) -> int:
     from .company.manifest import MANIFEST_REL, ManifestError, allowlist_errors, load_manifest
     from .company.allowlist import effective_allowlist
     from .company.orchestrator import CompanyError, read_company_goal, run_company
@@ -874,7 +875,7 @@ def cmd_company(cfg: dict, words: list, console: Console) -> int:
     return 0 if result.status == "pass" else 1
 
 
-def cmd_worker(cfg: dict, words: list, console: Console) -> int:
+def cmd_worker(cfg: Config, words: list, console: Console) -> int:
     from .company.worker import main_worker
 
     if words and words[0] not in ("run",):
@@ -883,7 +884,7 @@ def cmd_worker(cfg: dict, words: list, console: Console) -> int:
     return main_worker(cfg)
 
 
-def cmd_campaign(cfg: dict, words: list, console: Console) -> int:
+def cmd_campaign(cfg: Config, words: list, console: Console) -> int:
     from . import campaign as campaign_mod
 
     verb = words[0] if words else "status"
@@ -923,7 +924,7 @@ def cmd_campaign(cfg: dict, words: list, console: Console) -> int:
     return 1
 
 
-def cmd_spirit(cfg: dict, words: list, console: Console) -> int:
+def cmd_spirit(cfg: Config, words: list, console: Console) -> int:
     from .spirit import SpiritError, apply_distill, log_text, review_text
 
     verb = words[0] if words else "log"
@@ -974,7 +975,7 @@ def cli_handlers() -> dict:
     }
 
 
-def activate_sandbox(cfg: dict, args, console: Console) -> int:
+def activate_sandbox(cfg: Config, args, console: Console) -> int:
     """Start a sandbox when the flag asked for one. No flag: do not probe Docker.
 
     Returns 0 to continue, or an exit code that stops the process before any

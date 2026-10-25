@@ -28,7 +28,11 @@ from .commands import (
     parse_positive_count,
     slash_command_metas,
 )
-from .config import cfg_bool, cfg_int, project_slug
+from .config import (
+    Config,
+    HISTORY_PREVIEW_CHARS, MAX_TRANSCRIPT_TOOL_CHARS, cfg_bool, cfg_int,
+    cfg_positive_int, project_slug,
+)
 
 _MINE_LAST = re.compile(r"(?i)^mine last (\d+) sessions?$")
 from .context import active_context_files, context_view_lines
@@ -70,7 +74,7 @@ class SlashCommand:
 
 @dataclass
 class SessionState:
-    cfg: dict
+    cfg: Config
     model: str
     messages: list
     session_log: Path
@@ -158,7 +162,7 @@ def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
         state.stats = fresh_stats()
 
 
-def _fresh_messages(cfg: dict, workspace_root: "Path | None" = None,
+def _fresh_messages(cfg: Config, workspace_root: "Path | None" = None,
                     clock_now=None) -> list:
     return [{"role": "system", "content": skills.system_prompt(
         cfg, workspace_root, clock_now=clock_now,
@@ -408,7 +412,7 @@ def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
     return True
 
 
-def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
+def mine_sessions(cfg: Config, model: str, paths, console: Console, confirm_gate,
                   transcript: "str | None" = None, display=None) -> int:
     """Run the retro skill without touching a live REPL thread."""
     if transcript is None:
@@ -451,7 +455,7 @@ def mine_sessions(cfg: dict, model: str, paths, console: Console, confirm_gate,
     return 0
 
 
-def make_session_miner(cfg: dict, model: str, console: Console, confirm_gate,
+def make_session_miner(cfg: Config, model: str, console: Console, confirm_gate,
                        display=None):
     """Mine callback for until/graph. Empty path lists are a no-op."""
     def mine(paths):
@@ -677,7 +681,9 @@ def _cmd_history(state: SessionState, arg: str) -> bool:
     current = state.session_log.resolve()
     for i, path in enumerate(sessions, base):
         tag = " (current)" if path.resolve() == current else ""
-        preview = memory.session_preview(path)
+        preview = memory.session_preview(
+            path, max_chars=cfg_positive_int(state.cfg, HISTORY_PREVIEW_CHARS),
+        )
         state.console.info(f"  {i:2}. {path.stem}{tag}  — {preview}")
     state.console.hint("  restore with: /restore <#|stem|latest>")
     return True
@@ -1030,11 +1036,19 @@ def _cmd_context(state: SessionState, _arg: str) -> bool:
     return True
 
 
+def _transcript_tool_limit(state: SessionState) -> int:
+    """``0`` keeps /transcript tool rows whole."""
+    return max(0, cfg_int(state.cfg, MAX_TRANSCRIPT_TOOL_CHARS))
+
+
 def _cmd_transcript(state: SessionState, _arg: str) -> bool:
     """Open the rendered session transcript in less (q to return)."""
     from .markdown_view import page_transcript
     state.console.hint("[opening transcript in less — press q to return · /copy for last answer]")
-    page_transcript(state.messages, color=state.console.t._on)
+    page_transcript(
+        state.messages, color=state.console.t._on,
+        tool_char_limit=_transcript_tool_limit(state),
+    )
     return True
 
 
@@ -1049,7 +1063,9 @@ def _cmd_copy(state: SessionState, arg: str) -> bool:
             return True
         label = "answer"
     elif key == "transcript":
-        text = session_transcript(state.messages)
+        text = session_transcript(
+            state.messages, tool_char_limit=_transcript_tool_limit(state),
+        )
         if text is None:
             state.console.info("(empty transcript)")
             return True
@@ -1185,7 +1201,7 @@ def _require_prompt_toolkit(console: Console) -> bool:
         return False
 
 
-def run_repl(cfg: dict, console: "Console | None" = None,
+def run_repl(cfg: Config, console: "Console | None" = None,
              skill: "str | None" = None, first_task: "str | None" = None,
              until_run: "loop_mod.UntilRun | None" = None,
              graph_run: "graph_mod.GraphRun | None" = None) -> int:

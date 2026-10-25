@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 
-from .config import utc_now
+from .config import Config, utc_now
 
 
 def _clip(text: str, limit: int) -> str:
@@ -330,7 +330,7 @@ def artifact_excerpts(store: UntilArtifactStore, ids: "list[str]") -> str:
     return "\n".join(chunks) if chunks else "(none — use tools to inspect prior sessions)"
 
 
-def analyze_until_run(run_path: Path, cfg: dict) -> dict:
+def analyze_until_run(run_path: Path, cfg: Config) -> dict:
     """Offline metrics from one until log + artifact sidecar (M4.1)."""
     from . import memory
     from .config import cfg_int, cfg_str

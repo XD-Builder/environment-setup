@@ -183,8 +183,14 @@ def page_ansi(rendered: str) -> int:
         return 0
 
 
-def messages_to_markdown(messages: Iterable[dict]) -> str:
-    """Build a readable markdown transcript from chat messages."""
+_TRANSCRIPT_TOOL_CUT = "\n... [truncated]"
+
+
+def messages_to_markdown(messages: Iterable[dict], tool_char_limit: int = 0) -> str:
+    """Build a readable markdown transcript from chat messages.
+
+    Tool rows are included in full unless ``tool_char_limit`` is positive.
+    """
     parts = ["# Session transcript", ""]
     for m in messages:
         role = m.get("role") or "?"
@@ -194,10 +200,12 @@ def messages_to_markdown(messages: Iterable[dict]) -> str:
         if role == "tool":
             if not content:
                 continue
+            if tool_char_limit > 0 and len(content) > tool_char_limit:
+                content = content[:tool_char_limit] + _TRANSCRIPT_TOOL_CUT
             parts.append("### Tool")
             parts.append("")
             parts.append("```")
-            parts.append(content[:4000])
+            parts.append(content)
             parts.append("```")
             parts.append("")
             continue
@@ -212,17 +220,17 @@ def messages_to_markdown(messages: Iterable[dict]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
-def session_transcript(messages: list) -> "str | None":
+def session_transcript(messages: list, tool_char_limit: int = 0) -> "str | None":
     """Session markdown for paging or clipboard, or None when empty."""
-    md = messages_to_markdown(messages)
+    md = messages_to_markdown(messages, tool_char_limit=tool_char_limit)
     if md.strip() == "# Session transcript":
         return None
     return md
 
 
-def page_transcript(messages: list, color: bool = True) -> int:
+def page_transcript(messages: list, color: bool = True, tool_char_limit: int = 0) -> int:
     """Render the session as markdown and open it in less."""
-    md = session_transcript(messages)
+    md = session_transcript(messages, tool_char_limit=tool_char_limit)
     if md is None:
         print("(empty transcript)")
         return 0

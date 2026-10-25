@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, steer
-from .config import DEFAULTS, load_config
+from .config import Config, DEFAULTS, load_config
 from .skills import SKILLS_DIR
 from .tools import tool_names
 
@@ -47,7 +47,7 @@ def _steer_hashes(workspace_root: Path | None) -> dict[str, str]:
     return out
 
 
-def _config_slice(cfg: dict) -> dict[str, Any]:
+def _config_slice(cfg: Config) -> dict[str, Any]:
     keys = (
         "autonomous_gates",
         "until_control",
@@ -59,7 +59,7 @@ def _config_slice(cfg: dict) -> dict[str, Any]:
     return {key: merged.get(key) for key in keys}
 
 
-def _tool_names(cfg: dict) -> list[str]:
+def _tool_names(cfg: Config) -> list[str]:
     from . import tools as tools_mod
 
     if tools_mod._TOOL_DEFS:
@@ -83,14 +83,14 @@ def check_fingerprint(checks: list[dict] | None) -> str:
 
 
 def bundle_descriptor(
-    cfg: dict | None = None,
+    cfg: Config | None = None,
     *,
     workspace_root: Path | None = None,
     graph_name: str = "",
     checks: list[dict] | None = None,
 ) -> dict[str, Any]:
     """JSON-serializable harness bundle. Workspace source edits are excluded."""
-    resolved = load_config() if cfg is None else {**DEFAULTS, **cfg}
+    resolved = load_config() if cfg is None else Config({**DEFAULTS, **cfg})
     descriptor: dict[str, Any] = {
         "version": __version__,
         "system_skill": _sha256_file(_SYSTEM_SKILL),
@@ -108,7 +108,7 @@ def bundle_descriptor(
 
 
 def bundle_id(
-    cfg: dict | None = None,
+    cfg: Config | None = None,
     *,
     workspace_root: Path | None = None,
     graph_name: str = "",
@@ -131,7 +131,7 @@ def bundle_id(
 
 def attach_harness_meta(
     meta: dict,
-    cfg: dict | None = None,
+    cfg: Config | None = None,
     *,
     workspace_root: Path | None = None,
     graph_name: str = "",

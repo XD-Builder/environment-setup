@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import extract, memory, server, skills, tools
-from .config import DEFAULTS, cfg_bool, cfg_int
+from .config import Config, DEFAULTS, cfg_bool, cfg_int
 from . import status as status_mod
 from .chat import _chat, _chat_stream
 from .display import (
@@ -30,7 +30,7 @@ CONTEXT_PRESSURE_RATIO = 0.80
 CONTINUE_NUDGE_MAX_CHARS = 400
 
 
-def generate_skill_draft(cfg: dict, model: str, name: str, brief: str) -> str:
+def generate_skill_draft(cfg: Config, model: str, name: str, brief: str) -> str:
     """One-shot (no tools) generation of a new skill markdown body."""
     author = skills.load_skill("_author")
     brief = brief.strip() or f"A reusable playbook named '{name}'."
@@ -484,7 +484,7 @@ class RoundDisplay:
 def _dispatch_tools(
     turn: GatherTurn, tool_calls: list, *, round_idx: int, impls: dict,
     echo_tool, echo_status, stats, session_log, workspace_root, messages: list,
-    cfg: dict, model: str,
+    cfg: Config, model: str,
 ) -> None:
     from . import traces as traces_mod
 
@@ -495,12 +495,13 @@ def _dispatch_tools(
         fn = call.get("function", {})
         name, args = fn.get("name", ""), fn.get("arguments", "")
         arg_preview = tools.format_tool_preview(
-            name, args, workspace_root=workspace_root,
+            name, args, workspace_root=workspace_root, cfg=cfg,
         )
         echo_tool(name, arg_preview, stats)
         prepared.append((call, call_idx, name, args, arg_preview))
     raw_results = tools.run_tool_calls(
         impls, [(name, args) for _call, _idx, name, args, _prev in prepared],
+        cfg=cfg,
     )
     for (call, call_idx, name, _args, arg_preview), raw_result in zip(
         prepared, raw_results,
@@ -536,7 +537,7 @@ def _dispatch_tools(
         })
 
 
-def act(cfg: dict, model: str, messages: list, session_log: "Path | None" = None,
+def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = None,
         confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
         echo_status=None, stats: "dict | None" = None, echo_round=None,
         on_thinking=None, context_limit: int = 0,

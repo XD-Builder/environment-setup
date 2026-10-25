@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .commands import MEMORY_VIEW_VERBS, MemoryRequest
-from .config import cfg_bool, cfg_int, cfg_str, project_dir, utc_now
+from .config import Config, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
 from .extract import flatten_content
 
 LEARNING_TYPES = ("pattern", "pitfall", "preference", "architecture", "tool", "operational")
@@ -175,7 +175,7 @@ def decisions_file(slug: "str | None" = None) -> Path:
 
 def add_learning(insight: str, type: str = "pattern", key: str = "",
                  confidence: int = 7, source: str = "observed",
-                 slug: "str | None" = None, cfg: "dict | None" = None) -> dict:
+                 slug: "str | None" = None, cfg: Config | None = None) -> dict:
     if type not in LEARNING_TYPES:
         type = "pattern"
     key = re.sub(r"[^a-zA-Z0-9_-]", "-", key or insight[:40].strip().lower().replace(" ", "-"))
@@ -405,7 +405,7 @@ def decision_list_lines(limit: int = MEMORY_DECISIONS_LIMIT,
     return _section_lines("Decisions", [decision_view_lines(d) for d in rows])
 
 
-def memory_peek_lines(cfg: dict, slug: "str | None" = None) -> "list[ViewLine]":
+def memory_peek_lines(cfg: Config, slug: "str | None" = None) -> "list[ViewLine]":
     """Default ``/memory`` view: HUD, top learnings + decisions, navigation hints."""
     hud = memory_hud(cfg, slug)
     lines = [
@@ -424,7 +424,7 @@ def memory_peek_lines(cfg: dict, slug: "str | None" = None) -> "list[ViewLine]":
     return lines
 
 
-def render_memory_view(cfg: dict, request: MemoryRequest, console) -> None:
+def render_memory_view(cfg: Config, request: MemoryRequest, console) -> None:
     """Print a read-only memory verb. CLI and REPL share this path.
 
     ``mine``, ``audit``, and ``reconcile`` need a model and are not views.
@@ -521,7 +521,7 @@ def get_learnings(query: str = "", limit: "int | None" = 20,
 
 
 def _search_memory_scan(query: str, learning_limit: int, decision_limit: int,
-                        slug: "str | None", cfg: "dict | None") -> str:
+                        slug: "str | None", cfg: Config | None) -> str:
     if cfg and cfg_bool(cfg, "use_graph"):
         kg = _kg(slug)
         kg.ensure(cfg)
@@ -543,7 +543,7 @@ def _search_memory_scan(query: str, learning_limit: int, decision_limit: int,
 
 
 def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10,
-                  slug: "str | None" = None, cfg: "dict | None" = None) -> str:
+                  slug: "str | None" = None, cfg: Config | None = None) -> str:
     """Shared keyword search over learnings + decisions (used by recall_memory)."""
     if cfg and cfg_str(cfg, "memory_index").strip().lower() != "off":
         from .memory_index import MemoryIndex
@@ -556,7 +556,7 @@ def search_memory(query: str, learning_limit: int = 10, decision_limit: int = 10
 # ---------------------------------------------------------------- decisions
 
 def add_decision(decision: str, rationale: str = "", supersedes: str = "",
-                 slug: "str | None" = None, cfg: "dict | None" = None) -> dict:
+                 slug: "str | None" = None, cfg: Config | None = None) -> dict:
     row = {
         "id": uuid.uuid4().hex[:12],
         "kind": "supersede" if supersedes else "decide",
@@ -705,6 +705,10 @@ def format_sessions_for_retro(paths) -> str:
     return "\n\n".join(parts)
 
 
+_TRANSCRIPT_TOOL_CHARS = 500
+_ELLIPSIS = "..."
+
+
 def format_messages_transcript(messages, max_chars: int = 20000) -> str:
     """Render a live thread for compact/memory mine — honors /undo.
 
@@ -718,7 +722,9 @@ def format_messages_transcript(messages, max_chars: int = 20000) -> str:
         if not content or role == "system":
             continue
         if role == "tool":
-            lines.append(f"[tool] {content[:500]}")
+            if len(content) > _TRANSCRIPT_TOOL_CHARS:
+                content = content[:_TRANSCRIPT_TOOL_CHARS] + _ELLIPSIS
+            lines.append(f"[tool] {content}")
             continue
         if role not in ("user", "assistant"):
             continue
@@ -820,7 +826,7 @@ def session_preview(path: Path, max_chars: int = 120) -> str:
         if row.get("role") == "user":
             text = (row.get("content") or "").strip().replace("\n", " ")
             if len(text) > max_chars:
-                return text[:max_chars] + "..."
+                return text[:max_chars] + _ELLIPSIS
             return text or "(empty)"
     return "(no user messages)"
 
@@ -861,7 +867,7 @@ def _graph_populated(slug: "str | None" = None) -> bool:
     return bool(kg.nodes() or kg.edges())
 
 
-def memory_hud(cfg: dict, slug: "str | None" = None) -> MemoryHud:
+def memory_hud(cfg: Config, slug: "str | None" = None) -> MemoryHud:
     """Counts and flags for the per-turn HUD and ``/stats``."""
     return MemoryHud(
         learnings=len(get_learnings(limit=None, slug=slug)),
@@ -889,7 +895,7 @@ def _human_neighbor(line: str) -> str:
     return text
 
 
-def _injected_snapshot(cfg: dict, slug: "str | None" = None):
+def _injected_snapshot(cfg: Config, slug: "str | None" = None):
     """Decisions, learnings, and checkpoint that ``context_block`` injects.
 
     Each decision and learning is ``(row, neighbor_lines)``. Neighbor lines are
@@ -937,7 +943,7 @@ def _checkpoint_lines(path: Path) -> "list[ViewLine]":
     return lines
 
 
-def injected_memory_lines(cfg: dict, slug: "str | None" = None) -> "list[ViewLine]":
+def injected_memory_lines(cfg: Config, slug: "str | None" = None) -> "list[ViewLine]":
     """Readable view of the memory snapshot injected into the system prompt.
 
     Same decisions, learnings, and checkpoint as ``context_block``. The
@@ -968,12 +974,12 @@ def injected_memory_lines(cfg: dict, slug: "str | None" = None) -> "list[ViewLin
     return lines
 
 
-def dump_context_block(cfg: dict, slug: "str | None" = None) -> str:
+def dump_context_block(cfg: Config, slug: "str | None" = None) -> str:
     """Plain-text view of injected memory (no prompt fence)."""
     return "\n".join(line.text for line in injected_memory_lines(cfg, slug))
 
 
-def context_block(cfg: dict, slug: "str | None" = None) -> str:
+def context_block(cfg: Config, slug: "str | None" = None) -> str:
     """Bounded memory snapshot injected into the system prompt at session start."""
     decisions, learnings, cp = _injected_snapshot(cfg, slug)
     parts = []

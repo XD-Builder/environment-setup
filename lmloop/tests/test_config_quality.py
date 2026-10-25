@@ -9,7 +9,27 @@ from unittest import mock
 
 from lmloop import config as config_mod
 from lmloop import memory
-from lmloop.config import DEFAULTS, cfg_get, cfg_int, coerce_config_value, normalize_config
+from dataclasses import asdict, fields
+
+from lmloop.config import (
+    CHECK_OUTPUT_LIMIT,
+    Config,
+    ConfigSchema,
+    DEFAULTS,
+    DIFF_LIMIT,
+    HISTORY_PREVIEW_CHARS,
+    LOCAL_READ_CONCURRENCY,
+    MAX_TRANSCRIPT_TOOL_CHARS,
+    TOOL_PREVIEW_LIMIT,
+    WEB_FETCH_CONCURRENCY,
+    WEB_SEARCH_CONCURRENCY,
+    cfg_get,
+    cfg_int,
+    cfg_positive_int,
+    coerce_config_value,
+    config_schema,
+    normalize_config,
+)
 from support import parametrize
 
 # Keys documented in README.md config table (keep in sync with the table).
@@ -28,10 +48,25 @@ README_CONFIG_KEYS = frozenset({
     "company_remote", "company_models_allowlist",
     "use_spirit", "spirit_actions", "spirit_distill_after_mine", "spirit_remote",
     "campaign_daily_reflect", "campaign_end_of_day_utc", "campaign_max_days",
+    TOOL_PREVIEW_LIMIT, DIFF_LIMIT, CHECK_OUTPUT_LIMIT, HISTORY_PREVIEW_CHARS,
+    MAX_TRANSCRIPT_TOOL_CHARS,
+    WEB_SEARCH_CONCURRENCY, WEB_FETCH_CONCURRENCY, LOCAL_READ_CONCURRENCY,
 })
 
 
 class ConfigQualityTests(unittest.TestCase):
+    def test_config_schema_matches_defaults_and_readme(self):
+        names = {f.name for f in fields(ConfigSchema)}
+        self.assertEqual(names, set(DEFAULTS))
+        self.assertLessEqual(README_CONFIG_KEYS, names)
+        self.assertEqual(asdict(ConfigSchema()), DEFAULTS)
+
+    def test_config_schema_fills_partial_cfg(self):
+        s = config_schema(Config({"context_length": 0, "max_rounds": 5}))
+        self.assertEqual(s.context_length, 0)
+        self.assertEqual(s.max_rounds, 5)
+        self.assertEqual(s.timeout_s, DEFAULTS["timeout_s"])
+
     def test_readme_config_keys_round_trip_through_coerce(self):
         for key in README_CONFIG_KEYS:
             self.assertIn(key, DEFAULTS, f"{key} missing from DEFAULTS")
@@ -111,11 +146,29 @@ class ConfigQualityTests(unittest.TestCase):
         self.assertEqual(coerce_config_value("autonomous_snapshot", "GIT"), "git")
         self.assertIsNone(coerce_config_value("autonomous_snapshot", "maybe"))
 
+    def test_cfg_positive_int_rejects_non_positive(self):
+        self.assertEqual(cfg_positive_int({}, WEB_SEARCH_CONCURRENCY), 2)
+        self.assertEqual(cfg_positive_int({WEB_SEARCH_CONCURRENCY: 0}, WEB_SEARCH_CONCURRENCY), 2)
+        self.assertEqual(cfg_positive_int({WEB_SEARCH_CONCURRENCY: 4}, WEB_SEARCH_CONCURRENCY), 4)
+        self.assertEqual(cfg_positive_int({DIFF_LIMIT: -3}, DIFF_LIMIT), DEFAULTS[DIFF_LIMIT])
+
     def test_cfg_get_keeps_zero_values(self):
         cfg = {"context_length": 0, "context_reserve": 512}
         self.assertEqual(cfg_int(cfg, "context_length"), 0)
         self.assertEqual(cfg_int(cfg, "context_reserve"), 512)
         self.assertEqual(cfg_get(cfg, "max_rounds"), DEFAULTS["max_rounds"])
+
+    def test_config_reads_keys_as_attributes(self):
+        cfg = Config(DEFAULTS)
+        self.assertIsInstance(cfg, dict)
+        self.assertEqual(cfg.max_rounds, cfg["max_rounds"])
+        self.assertEqual(cfg.tool_preview_limit, DEFAULTS[TOOL_PREVIEW_LIMIT])
+        cfg["company_active"] = True
+        self.assertTrue(cfg.company_active)
+        with self.assertRaises(AttributeError):
+            cfg.not_a_setting
+        self.assertEqual(json.loads(json.dumps(cfg))["max_rounds"], cfg.max_rounds)
+        self.assertEqual(cfg_int({}, "max_rounds"), DEFAULTS["max_rounds"])
 
     def test_tool_limits_match_defaults(self):
         from lmloop import tools

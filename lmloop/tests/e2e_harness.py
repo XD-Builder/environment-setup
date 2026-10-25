@@ -23,6 +23,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
+from lmloop.config import Config
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_ROOT.parent
 SKIP_AGENT_E2E = os.environ.get("LMLOOP_SKIP_AGENT_E2E") == "1"
@@ -201,7 +203,7 @@ def default_config(base_url: str, **overrides) -> dict:
     return cfg
 
 
-def write_config(home: Path, cfg: dict) -> None:
+def write_config(home: Path, cfg: Config) -> None:
     home.mkdir(parents=True, exist_ok=True)
     (home / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
 

@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from lmloop.memory import (
+    _ELLIPSIS,
+    _TRANSCRIPT_TOOL_CHARS,
     all_sessions,
     format_messages_transcript,
     format_sessions_for_retro,
@@ -141,7 +143,11 @@ class SessionRestoreTests(unittest.TestCase):
         self.assertIn("[assistant] world", text)
         self.assertNotIn("secret", text)
         self.assertIn("[tool] run_shell(ls)", text)
-        self.assertLess(len([ln for ln in text.splitlines() if ln.startswith("[tool]")][0]), 520)
+        tool_line = next(ln for ln in text.splitlines() if ln.startswith("[tool]"))
+        body = tool_line.removeprefix("[tool] ")
+        self.assertEqual(len(body), _TRANSCRIPT_TOOL_CHARS + len(_ELLIPSIS))
+        self.assertTrue(body.endswith(_ELLIPSIS))
+        self.assertEqual(_TRANSCRIPT_TOOL_CHARS, 500)
 
     def test_format_messages_transcript_flattens_images(self):
         text = format_messages_transcript([{

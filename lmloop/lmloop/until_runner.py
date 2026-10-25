@@ -21,7 +21,16 @@ from .checks import (
     PROPOSE_PROMPT,
     shell_evidence_table,
 )
-from .config import DEFAULTS, cfg_bool, cfg_int, cfg_str, utc_now
+from .config import (
+    Config,
+    CHECK_OUTPUT_LIMIT,
+    DEFAULTS,
+    cfg_bool,
+    cfg_int,
+    cfg_positive_int,
+    cfg_str,
+    utc_now,
+)
 from .run_artifacts import (
     CONTROL_PROPOSAL_MIN,
     UntilArtifactStore,
@@ -50,8 +59,8 @@ STATUS_LINE_PREFIX = "STATUS:"
 EXIT_CODE_PREFIX = "[exit code:"
 VALID_EVAL_STATUS = frozenset({"pass", "fail", "blocked"})
 
-CHECK_OUTPUT_LIMIT = 2000
 _CHECK_TRUNCATED = "\n... [truncated, {total} chars total]"
+
 
 MAKER_PROMPT = """You are working toward this goal until an external checker says it is done.
 You do not get to declare the overall goal complete.
@@ -123,8 +132,10 @@ Budget (this until run):
 """
 
 
-def clip_check_output(output: str, limit: int = CHECK_OUTPUT_LIMIT) -> str:
+def clip_check_output(output: str, limit: int | None = None, cfg: Config | None = None) -> str:
     """Bound check-command text for display/handoff. Never silent: mark the cut."""
+    if limit is None:
+        limit = cfg_positive_int(cfg, CHECK_OUTPUT_LIMIT)
     body = output or ""
     if len(body) <= limit:
         return body
@@ -173,13 +184,13 @@ def check_status_from_output(output: str) -> str:
     return "fail"
 
 
-def eval_max_rounds(cfg: dict) -> int:
+def eval_max_rounds(cfg: Config) -> int:
     """Gather-round budget for an eval ``act()``. Maker keeps ``max_rounds``."""
     return max(1, cfg_int(cfg, "eval_max_rounds"))
 
 
 def isolated_act(
-    cfg: dict, model: str, user_text: str, *,
+    cfg: Config, model: str, user_text: str, *,
     confirm_gate=None, echo=print, echo_status=None, echo_error=None,
     echo_tool=None, echo_round=None, context_limit: int = 0,
     context_reserve: int = DEFAULTS["context_reserve"], workspace_root: "Path | None" = None,
@@ -346,7 +357,7 @@ class UntilRun(_UntilRun):
         return "maker"
 
 
-    def until_control(self, cfg: dict) -> str:
+    def until_control(self, cfg: Config) -> str:
         """Resolved control mode for this run (meta row, else config)."""
         if self.events and self.events[0].get("role") == META_ROLE:
             raw = self.events[0].get("until_control")
@@ -411,7 +422,7 @@ def abstain_reason(outcome) -> "str | None":
     return None
 
 
-def run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> str:
+def run_check(cfg: Config, command: str, confirm_gate, workspace_root: Path) -> str:
     from . import loop as loop_facade
     """Run an until/graph ``--check`` command and return the tool output."""
     destructive, syntax = shell_confirm_flags(cfg)
@@ -425,7 +436,7 @@ def run_check(cfg: dict, command: str, confirm_gate, workspace_root: Path) -> st
     )
 
 
-def run_plan_commands(cfg: dict, commands, confirm_gate, workspace_root: Path) -> list:
+def run_plan_commands(cfg: Config, commands, confirm_gate, workspace_root: Path) -> list:
     """Run each planned command. One result dict per command."""
     results = []
     for cmd in commands:
@@ -433,18 +444,18 @@ def run_plan_commands(cfg: dict, commands, confirm_gate, workspace_root: Path) -
         results.append({
             "cmd": cmd,
             "status": check_status_from_output(output),
-            "output": clip_check_output(output),
+            "output": clip_check_output(output, cfg=cfg),
         })
     drop_denied(confirm_gate)
     return results
 
 
-def _plan_handoff(results: list) -> str:
+def _plan_handoff(results: list, cfg: Config | None = None) -> str:
     parts = [f"$ {row['cmd']}\n{row['output']}" for row in results]
-    return clip_check_output("\n".join(parts))
+    return clip_check_output("\n".join(parts), cfg=cfg)
 
 
-def _choice_on(cfg: dict, key: str) -> bool:
+def _choice_on(cfg: Config, key: str) -> bool:
     return cfg_str(cfg, key).strip().lower() != "off"
 
 
@@ -457,7 +468,7 @@ def _read_plan_line(prompt: str = "") -> str:
 
 
 def _model_propose_checks(
-    cfg: dict, model: str, goal: str, root: Path, echo_status,
+    cfg: Config, model: str, goal: str, root: Path, echo_status,
     *, memory_block: "str | None", clock_now,
 ) -> tuple:
     """One no-tools call; returns up to two advisory PlannedChecks (V8)."""
@@ -485,7 +496,7 @@ def _model_propose_checks(
 
 
 def _maybe_propose_checks(
-    planned: list, cfg: dict, model: str, goal: str, root: Path,
+    planned: list, cfg: Config, model: str, goal: str, root: Path,
     echo_status, *, memory_block, clock_now,
 ) -> list:
     if not _choice_on(cfg, "check_inference"):
@@ -523,7 +534,7 @@ def _dropped_checks(planned: list, notes: tuple) -> list:
     return dropped
 
 
-def _row_fields(cfg: dict, root: "Path | None", snap=None, *, tree_now: bool = False) -> dict:
+def _row_fields(cfg: Config, root: "Path | None", snap=None, *, tree_now: bool = False) -> dict:
     """Policy fields plus the git tree when a snapshot exists or is requested."""
     from .exec import run_log_fields
     from . import snapshot
@@ -541,7 +552,7 @@ def _row_fields(cfg: dict, root: "Path | None", snap=None, *, tree_now: bool = F
     return fields
 
 
-def _prepare_plan(run: UntilRun, cfg: dict, root: Path, echo_status,
+def _prepare_plan(run: UntilRun, cfg: Config, root: Path, echo_status,
                   interactive: bool, confirm_gate, *, model: str,
                   memory_block: "str | None" = None,
                   clock_now=None) -> None:
@@ -658,7 +669,7 @@ def _maker_event_count(events: list) -> int:
 
 
 def _budget_block_for_run(
-    run: UntilRun, cfg: dict, *, run_tokens: int, makers_this_call: int,
+    run: UntilRun, cfg: Config, *, run_tokens: int, makers_this_call: int,
 ) -> str:
     return format_budget_block(
         run_tokens=run_tokens,
@@ -671,7 +682,7 @@ def _budget_block_for_run(
 
 def _maker_prompt(
     run: UntilRun,
-    cfg: dict,
+    cfg: Config,
     store: UntilArtifactStore,
     *,
     control_mode: str,
@@ -760,7 +771,7 @@ def _register_until_artifact(
 def _host_assess_after_fail(
     store: UntilArtifactStore,
     run: UntilRun,
-    cfg: dict,
+    cfg: Config,
     *,
     control_mode: str,
     run_tokens: int,
@@ -813,7 +824,7 @@ def _control_context_block(
 
 
 def _run_control_stage(
-    cfg: dict,
+    cfg: Config,
     eval_model: str,
     *,
     stage: str,
@@ -887,7 +898,7 @@ def _finish_control_dispatch(
 
 def _run_aped_control(
     run: UntilRun,
-    cfg: dict,
+    cfg: Config,
     store: UntilArtifactStore,
     *,
     control_mode: str,
@@ -1039,7 +1050,7 @@ def _run_aped_control(
     return tokens_added, abstain
 
 
-def _record_until_budget_usage(run: UntilRun, cfg: dict) -> None:
+def _record_until_budget_usage(run: UntilRun, cfg: Config) -> None:
     from . import usage
 
     run_tokens = sum(
@@ -1079,7 +1090,7 @@ def _pause_interrupted(run: UntilRun, echo_status) -> UntilRun:
 
 
 def run_until(
-    cfg: dict, model: str, *,
+    cfg: Config, model: str, *,
     run: UntilRun,
     confirm_gate=None,
     echo=print,
@@ -1131,7 +1142,7 @@ def run_until(
 
 
 def _run_until_body(
-    cfg: dict, model: str, *,
+    cfg: Config, model: str, *,
     run: UntilRun,
     confirm_gate=None,
     echo=print,
@@ -1278,7 +1289,7 @@ def _run_until_body(
                 )
                 for row in results:
                     echo_status(row["output"])
-                check_output = _plan_handoff(results)
+                check_output = _plan_handoff(results, cfg=cfg)
                 status = judge_cycle(
                     tuple(planned), results,
                     baseline_on=any(

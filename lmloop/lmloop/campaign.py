@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import memory
-from .config import cfg_bool, cfg_int, cfg_str, utc_now
+from .config import Config, cfg_bool, cfg_int, cfg_str, utc_now
 
 PLAN_MAX_CHARS = 4000
 BOARD_CLIP = 800
@@ -404,7 +404,7 @@ def _today(now: "datetime | None") -> datetime:
     return current.astimezone(timezone.utc)
 
 
-def end_of_day_reached(cfg: dict, now: "datetime | None" = None) -> bool:
+def end_of_day_reached(cfg: Config, now: "datetime | None" = None) -> bool:
     raw = cfg_str(cfg, "campaign_end_of_day_utc").strip()
     if not raw:
         return False
@@ -419,7 +419,7 @@ def age_days(meta: dict, now: "datetime | None" = None) -> int:
     return (_today(now).date() - created.date()).days
 
 
-def extend(campaign_id: str, cfg: dict, now: "datetime | None" = None) -> dict:
+def extend(campaign_id: str, cfg: Config, now: "datetime | None" = None) -> dict:
     meta = load_meta(campaign_id)
     today = _today(now).date()
     extra = max(1, cfg_int(cfg, "campaign_max_days"))
@@ -442,7 +442,7 @@ def manifest_refresh(campaign_id: str, manifest_sha: str) -> dict:
     return meta
 
 
-def prepare_resume(cfg: dict, campaign_id: str = "", *,
+def prepare_resume(cfg: Config, campaign_id: str = "", *,
                    now: "datetime | None" = None,
                    synthesizer=None,
                    workspace: "Path | None" = None) -> dict:

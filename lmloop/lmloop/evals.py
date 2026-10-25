@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .config import Config
 from .usage import USAGE_PATH, read_events
 
 # Every ``usage.record("feature", ...)`` stem should appear here (tests enforce).
@@ -478,7 +479,7 @@ def report_dict(stats: EvalStats, gaps: list[EvalGap]) -> dict[str, Any]:
 
 def format_report(
     stats: EvalStats, gaps: list[EvalGap], *, flow: "object | None" = None,
-    cfg: "dict | None" = None,
+    cfg: Config | None = None,
 ) -> str:
     lines = [
         "lmloop eval report (local usage.jsonl)",

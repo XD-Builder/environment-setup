@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ..config import Config
 from .allowlist import activate, effective_allowlist
 from .manifest import ManifestError, canonical_sha, load_manifest
 from .protocol import PacketError, envelope, parse_packet
@@ -30,7 +31,7 @@ def _plan_revision(campaign_id: str) -> "int | None":
     return revision_of(campaign_id)
 
 
-def validate_packet(packet: dict, cfg: dict) -> "str | None":
+def validate_packet(packet: dict, cfg: Config) -> "str | None":
     """Return a blocked reason, or None when the packet may run."""
     try:
         parse_packet(packet)
@@ -70,7 +71,7 @@ def validate_packet(packet: dict, cfg: dict) -> "str | None":
     return None
 
 
-def execute_packet(packet: dict, cfg: dict, *, executor=None) -> dict:
+def execute_packet(packet: dict, cfg: Config, *, executor=None) -> dict:
     """Validate, then run ``executor`` or one graph node. Never writes learnings."""
     reason = validate_packet(packet, cfg)
     if reason:
@@ -84,7 +85,7 @@ def execute_packet(packet: dict, cfg: dict, *, executor=None) -> dict:
     return _run_node(packet, active)
 
 
-def _run_node(packet: dict, cfg: dict) -> dict:
+def _run_node(packet: dict, cfg: Config) -> dict:
     from ..graph import GraphError, load_graph, run_named_node
 
     try:
@@ -127,7 +128,7 @@ def spawn_worker(packet: dict) -> dict:
         return envelope("blocked", detail[-500:])
 
 
-def main_worker(cfg: dict, stdin: "str | None" = None) -> int:
+def main_worker(cfg: Config, stdin: "str | None" = None) -> int:
     """Read one packet from stdin and print one envelope. Used by ``lmloop worker run``."""
     raw = sys.stdin.read() if stdin is None else stdin
     try:

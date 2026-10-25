@@ -7,7 +7,6 @@ from .tools import run_shell
 from .until_parse import UntilArgs, parse_until_arg_line, parse_until_args, split_check_flags
 from .until_runner import (
     APPROVE_ROLE,
-    CHECK_OUTPUT_LIMIT,
     EVAL_PROMPT,
     MAKER_PROMPT,
     STATUS_LINE_PREFIX,
@@ -37,7 +36,6 @@ _until_outcome_label = until_outcome_label
 
 __all__ = [
     "APPROVE_ROLE",
-    "CHECK_OUTPUT_LIMIT",
     "DONE_ROLES",
     "EVAL_PROMPT",
     "MAKER_PROMPT",
