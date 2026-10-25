@@ -1,7 +1,7 @@
 """Facade for authored workflow graphs (DSL + runner)."""
 
 from . import skills
-from .config import project_dir
+from .core.config import project_dir
 from .graph_dsl import (
     EDGE_ON,
     GRAPHS_DIR,

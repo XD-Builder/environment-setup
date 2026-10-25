@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import memory, steer, tools
-from .commands import RESERVED_SKILL_NAMES
-from .config import Config, STATE_ROOT
+from .core.commands import RESERVED_SKILL_NAMES
+from .core.config import Config, STATE_ROOT
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 USER_SKILLS_DIR = STATE_ROOT / "skills"

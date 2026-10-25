@@ -7,7 +7,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import STATE_ROOT
+from .core.config import STATE_ROOT
 from .until_parse import parse_until_args, split_check_flags
 
 NODE_KINDS = frozenset({"skill", "until", "mine"})

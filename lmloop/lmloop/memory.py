@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .commands import MEMORY_VIEW_VERBS, MemoryRequest
-from .config import Config, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
+from .core.commands import MEMORY_VIEW_VERBS, MemoryRequest
+from .core.config import Config, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
 from .extract import flatten_content
 
 LEARNING_TYPES = ("pattern", "pitfall", "preference", "architecture", "tool", "operational")

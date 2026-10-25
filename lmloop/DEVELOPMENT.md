@@ -134,15 +134,15 @@ find yourself updating two lists, you have already added debt.
 | Flow stats (`lmloop flow`) | `workflow.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
-| `Config`, `ConfigSchema`, paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, `config_schema()`, project slug, `utc_now()` | `core/config.py` (shim: `config.py`) |
-| Slash/CLI names (see also commands row) | `core/commands.py` (shim: `commands.py`) |
-| Status / resume copy | `core/status.py` (shim: `status.py`) |
-| Local feature-usage JSONL | `core/usage.py` (shim: `usage.py`) |
-| Usage aggregation, eval report, abstention | `harness/evals.py` (shim: `evals.py`) |
-| Assertion pyramid, golden gates | `harness/contracts.py` (shim: `contracts.py`) |
-| Local spans, eval queue, golden inbox | `harness/traces.py` (shim: `traces.py`) |
-| Harness bundle fingerprint (H1) | `harness/harness_bundle.py` (shim: `harness_bundle.py`) |
-| Harness execution report (H2) | `harness/harness_report.py` (shim: `harness_report.py`) |
+| `Config`, `ConfigSchema`, paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, `config_schema()`, project slug, `utc_now()` | `core/config.py` |
+| Slash/CLI names, reserved skill stems | `core/commands.py` |
+| Status / resume / nudge copy | `core/status.py` |
+| Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `core/usage.py` |
+| Usage aggregation, gap rules, abstention pairs, `lmloop eval` report | `harness/evals.py` |
+| Assertion pyramid, golden gates | `harness/contracts.py` |
+| Local spans, eval queue, golden inbox | `harness/traces.py` |
+| Harness bundle fingerprint (H1) | `harness/harness_bundle.py` |
+| Harness execution report (H2) | `harness/harness_report.py` |
 | Live-thread file manifest (`/context`) | `context.py` |
 | Company manifest, allowlist, worktrees, orchestrator | `company/` (`chat` may import `company.allowlist` only) |
 | Campaign plan, board, ticks | `campaign.py` (host writer; workers do not import it to append) |
@@ -151,8 +151,8 @@ find yourself updating two lists, you have already added debt.
 | PDF/Office/image/audio extraction | `extract.py` |
 | REPL session + slash handlers (grouped by CommandMeta domain) | `repl.py` |
 | prompt_toolkit session, completers, key bindings, input lexer | `prompt.py` |
-| ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui.py` |
-| rich Console / markdown / pager | `markdown_view.py` |
+| ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui/console.py` (`from lmloop.ui import …` via package `__getattr__`) |
+| rich Console / markdown / pager | `ui/markdown_view.py` |
 
 `agent.py` imports display helpers that `act()` calls, and `chat._chat` for
 completions. Tests patch `lmloop.display` / `lmloop.stream` / `lmloop.chat`
@@ -161,11 +161,8 @@ for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
 `patch.object(agent, "_chat")` tests keep working. New HTTP logic belongs in
 `chat.py`, not as more private helpers in `agent.py`.
 
-Modules moved under `core/` and `harness/` keep **top-level shims** (`config.py`,
-`usage.py`, …). Patch **canonical** names for module globals and in-package
-calls (`lmloop.core.config.CONFIG_PATH`, `lmloop.harness.traces.TRACE_PATH`,
-`lmloop.harness.evals.last_report_path`). Shims remain the stable import path
-for application code (`from lmloop import config`).
+Import and patch **where names are defined** (`lmloop.core.config.CONFIG_PATH`,
+`lmloop.harness.traces.TRACE_PATH`, `lmloop.ui.console`, `lmloop.ui.markdown_view`).
 
 **Import graph (do not invert):**
 
@@ -350,7 +347,7 @@ Follow [PEP 8](https://peps.python.org/pep-0008/) and [PEP 257](https://peps.pyt
 | Functions / methods | `snake_case`, verb or query | `build_tools()`, `list_skills()`, `is_destructive()` |
 | Instance attrs | `snake_case` | `session_log`, `thinking_history` |
 | Module constants | `UPPER_SNAKE` | `MAX_OUTPUT`, `COMMANDS`, `WEB_HEADERS` |
-| Config reads in the loop | `cfg_get` / `cfg_int` / … from `config.py` | Not `cfg.get(k) or default` (breaks zero values) |
+| Config reads in the loop | `cfg_get` / `cfg_int` / … from `core/config.py` | Not `cfg.get(k) or default` (breaks zero values) |
 | Module-private | leading `_` | `_tty_write`, `_TOOL_DEFS`, `_HtmlToolParser` |
 | Type aliases / records | `CapWords` dataclass | `CommandMeta` |
 | Boolean helpers | `is_` / `has_` / `needs_` | `needs_shell`, `is_nudge_message` |

@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest import mock
 
 from lmloop import workflow
-from lmloop.commands import parse_flow_words
-from lmloop.config import DEFAULTS
+from lmloop.core.commands import parse_flow_words
+from lmloop.core.config import DEFAULTS
 
 
 class WorkflowTests(unittest.TestCase):

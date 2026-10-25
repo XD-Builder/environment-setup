@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import extract, memory, server, skills, tools
-from .config import Config, DEFAULTS, cfg_bool, cfg_int
-from . import status as status_mod
+from .core.config import Config, DEFAULTS, cfg_bool, cfg_int
+from .core import status as status_mod
 from .chat import _chat, _chat_stream
 from .display import (
     _GeneratingIndicator,
@@ -486,7 +486,7 @@ def _dispatch_tools(
     echo_tool, echo_status, stats, session_log, workspace_root, messages: list,
     cfg: Config, model: str,
 ) -> None:
-    from . import traces as traces_mod
+    from .harness import traces as traces_mod
 
     round_media = []
     prepared = []
@@ -581,8 +581,8 @@ def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = No
     On interrupt or server error, display is cleaned up and any incomplete
     trailing tool round is rolled back; completed rounds in this turn are kept.
     """
-    from . import traces as traces_mod
-    from . import usage as usage_mod
+    from .harness import traces as traces_mod
+    from .core import usage as usage_mod
 
     usage_mod.record("agent.act", readonly=readonly, no_tools=no_tools)
     if echo_status is None:
@@ -707,7 +707,7 @@ def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = No
             interrupted=bool(stats and stats.get("interrupted")),
             ok=act_ok,
         )
-        from .harness_bundle import bundle_id as harness_bundle_id_for
+        from .harness.harness_bundle import bundle_id as harness_bundle_id_for
 
         traces_mod.finish_turn(
             rounds=turn.turn_rounds,

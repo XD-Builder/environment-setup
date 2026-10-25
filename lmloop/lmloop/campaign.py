@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import memory
-from .config import Config, cfg_bool, cfg_int, cfg_str, utc_now
+from .core.config import Config, cfg_bool, cfg_int, cfg_str, utc_now
 
 PLAN_MAX_CHARS = 4000
 BOARD_CLIP = 800

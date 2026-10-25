@@ -6,7 +6,7 @@ import sys
 from io import StringIO
 from typing import Iterable
 
-from .extract import flatten_content
+from ..extract import flatten_content
 
 # Fold at the console width. Rich's default crop silently drops the tail of
 # list items, tables, and other laid-out renderables.
@@ -147,7 +147,7 @@ def render_markdown_ansi(text: str, width: "int | None" = None, color: bool = Tr
         return ""
     if not _rich_available():
         return text if text.endswith("\n") else text + "\n"
-    from .ui import terminal_size
+    from .console import terminal_size
 
     cols = width or terminal_size((100, 24))[0]
     buf = StringIO()

@@ -2,7 +2,7 @@
 
 import unittest
 
-from lmloop import harness_bundle
+from lmloop.harness import harness_bundle
 
 
 class HarnessBundleTests(unittest.TestCase):

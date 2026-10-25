@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .config import Config, project_dir, utc_now
+from .core.config import Config, project_dir, utc_now
 from . import memory
 
 META_ROLE = "meta"
@@ -76,7 +76,7 @@ class UntilRun:
         if until_control:
             meta["until_control"] = until_control
         if cfg is not None:
-            from .harness_bundle import attach_harness_meta
+            from .harness.harness_bundle import attach_harness_meta
 
             attach_harness_meta(
                 meta, cfg, workspace_root=workspace_root, checks=meta_checks,
@@ -206,7 +206,7 @@ class GraphRun:
         run = cls(path=path, name=name, events=[])
         meta: dict = {"ts": utc_now(), "role": META_ROLE, "name": name}
         if cfg is not None:
-            from .harness_bundle import attach_harness_meta
+            from .harness.harness_bundle import attach_harness_meta
 
             attach_harness_meta(
                 meta, cfg, workspace_root=workspace_root, graph_name=name,

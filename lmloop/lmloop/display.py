@@ -199,7 +199,7 @@ class _TailMarkdown:
         self.min_rows = max(0, int(min_rows))
 
     def _lines(self, console, options) -> list:
-        from .markdown_view import render_markdown_lines
+        from .ui.markdown_view import render_markdown_lines
         cap = options.height or options.max_height or options.size.height
         lines = render_markdown_lines(console, self.text, options)
         if cap and len(lines) > cap:
@@ -277,7 +277,7 @@ class _MarkdownLivePrinter:
         if not rich:
             return
         _Console, Live, _Markdown = rich
-        from .markdown_view import make_console
+        from .ui.markdown_view import make_console
         if self._console_override is not None:
             console = self._console_override
         else:
@@ -358,7 +358,7 @@ class _MarkdownLivePrinter:
         # Real TTY: Live was transient, so reprint folded at the current
         # width (lists included). Tests that inject a console keep the Live frame.
         if body and self._console_override is None:
-            from .markdown_view import print_markdown
+            from .ui.markdown_view import print_markdown
             print_markdown(body, color=self._color)
         started = self._started
         self._emitted = True

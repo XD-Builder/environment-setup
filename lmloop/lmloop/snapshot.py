@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import Config
+from .core.config import Config
 
 REF_PREFIX = "refs/lmloop/"
 SNAPSHOT_RETENTION_DAYS = 14

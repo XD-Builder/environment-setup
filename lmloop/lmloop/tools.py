@@ -18,8 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePath
 from typing import Any, Callable
 
-from . import config, extract, knowledge_graph, memory, web
-from .config import Config
+from .core import config
+from . import extract, knowledge_graph, memory, web
+from .core.config import Config
 from .files_index import list_project_paths, resolve_user_path
 from .steer import format_current_time
 from .web import DEFAULT_WEB_TIMEOUT_S
@@ -620,7 +621,7 @@ def run_shell(
                 reason = "copy/extract"
             else:
                 reason = "destructive" if destructive else "shell-syntax"
-            from . import usage
+            from .core import usage
             usage.record("gate.denied", tool="run_shell", reason_class=reason)
             return f"DENIED: the user declined to run this {reason} command."
     from .exec import active_backend
@@ -1597,7 +1598,7 @@ def _arg_error_phase(error: str) -> str:
 
 
 def dispatch(impls: dict, name: str, arguments: str) -> str:
-    from . import usage
+    from .core import usage
 
     if not (name or "").strip():
         usage.record("tool.error", name="", phase="empty")

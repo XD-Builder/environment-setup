@@ -17,7 +17,7 @@ from prompt_toolkit.shortcuts.prompt import CompleteStyle
 from prompt_toolkit.styles import Style
 
 from . import skills
-from .config import STATE_ROOT
+from .core.config import STATE_ROOT
 from .files_index import (
     at_completion_token,
     at_token_end,
@@ -406,7 +406,7 @@ def build_prompt_session(
                     "[only this turn's thinking is stored — it already streamed live]"
                 )
         else:
-            from .markdown_view import page_ansi
+            from .ui.markdown_view import page_ansi
             page_ansi(body)
         event.app.invalidate()
 

@@ -2,7 +2,7 @@
 
 import unittest
 
-from lmloop.commands import (
+from lmloop.core.commands import (
     EVAL_FLAGS,
     HISTORY_DEFAULT_CLI,
     HISTORY_DEFAULT_REPL,
@@ -84,7 +84,7 @@ class MemoryRequestTests(unittest.TestCase):
         self.assertEqual(self._parse([], default=3).verb, "list")
 
     def test_view_renderer_rejects_model_verbs(self):
-        from lmloop.commands import MemoryRequest
+        from lmloop.core.commands import MemoryRequest
         from lmloop.memory import render_memory_view
 
         with self.assertRaises(ValueError):

@@ -7,11 +7,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmloop import config as config_mod
+from lmloop.core import config as config_mod
 from lmloop import memory
 from dataclasses import asdict, fields
 
-from lmloop.config import (
+from lmloop.core.config import (
     CHECK_OUTPUT_LIMIT,
     Config,
     ConfigSchema,

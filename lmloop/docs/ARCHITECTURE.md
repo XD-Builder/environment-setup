@@ -56,35 +56,27 @@ lmloop/
 │   ├── run_artifacts.py        # until sidecar state + artifact index (budget control)
 │   ├── workflow.py             # FlowStats, lmloop flow, graph propose inputs
 │   ├── exec.py                 # LocalBackend (default) and opt-in DockerBackend
-│   ├── core/                   # config, commands, status, usage (top-level shims re-export)
+│   ├── core/                   # config, commands, status, usage
 │   │   ├── config.py           # Config class, ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   │   ├── commands.py         # CommandMeta table (CLI + slash stems)
 │   │   ├── status.py           # resume / until copy
 │   │   └── usage.py            # local feature-usage JSONL
-│   ├── config.py               # shim → core.config
-│   ├── harness/                # evals, contracts, traces, harness reports (shims at top level)
+│   ├── harness/                # evals, contracts, traces, harness reports
 │   │   ├── evals.py            # usage gaps + abstention Act/Abstain/Pair
 │   │   ├── contracts.py        # assertion pyramid (schema, rubric, trajectory, gates)
 │   │   ├── harness_bundle.py   # harness_bundle_id fingerprint (H1, leaf)
 │   │   ├── harness_report.py   # opt-in execution report from run logs (H2)
 │   │   └── traces.py           # local spans, eval queue, golden inbox
 │   ├── context.py              # live-thread file manifest for /context
-│   ├── usage.py                # shim → core.usage
-│   ├── evals.py                # shim → harness.evals
-│   ├── contracts.py            # shim → harness.contracts
-│   ├── harness_bundle.py       # shim → harness.harness_bundle
-│   ├── harness_report.py       # shim → harness.harness_report
-│   ├── traces.py               # shim → harness.traces
 │   ├── campaign.py             # multi-day plan, board, reflect ticks (host writer)
 │   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator
 │   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
 │   ├── canvas_tui.py          # knowledge-canvas projection and full-screen keys
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
-│   ├── markdown_view.py        # render assistant markdown (no quote gutter)
-│   ├── ui.py                   # Console: ANSI theming, status bars, clipboard
-│   ├── commands.py             # slash/CLI command names + reserved skill stems
-│   ├── status.py               # status / resume / until-graph follow-up copy
+│   ├── ui/                     # Console + markdown (no top-level ui.py — package only)
+│   │   ├── console.py          # ANSI theming, status bars, clipboard
+│   │   └── markdown_view.py    # render assistant markdown (no quote gutter)
 │   ├── checks.py               # derived check plans (no model calls)
 │   ├── snapshot.py             # git temp-index refs before autonomous maker steps
 │   ├── steer.py                # always-on steering markdown + live clock

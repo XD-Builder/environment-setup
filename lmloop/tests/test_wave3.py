@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop.config import DEFAULTS
+from lmloop.core.config import DEFAULTS
 from lmloop.graph import parse_graph
 from lmloop.server import ServerError
 
@@ -475,7 +475,7 @@ class CampaignTests(unittest.TestCase):
 class CommandTests(unittest.TestCase):
     def test_manifest_cli_and_company_without_docker(self):
         from lmloop.cli import main
-        from lmloop.commands import COMMANDS
+        from lmloop.core.commands import COMMANDS
 
         names = [row.name for row in COMMANDS]
         for stem in ("company", "worker", "campaign", "spirit"):

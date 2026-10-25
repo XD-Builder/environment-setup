@@ -19,7 +19,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import Config, cfg_get, project_slug
+from .core.config import Config, cfg_get, project_slug
 
 SANDBOX_PORTS = ("3000-3010", "8000-8010")
 SANDBOX_MEMORY = "4g"
@@ -779,7 +779,7 @@ class DockerBackend:
         return (None, None)
 
     def _record_preflight(self, report: PreflightReport) -> None:
-        from . import usage
+        from .core import usage
         usage.record(
             "sandbox.preflight",
             network=self.network,
@@ -843,7 +843,7 @@ class DockerBackend:
             return
         script = egress_script(self.egress_hosts)
         applied = self.runner(self.egress_exec_argv(script), timeout=30)  # type: ignore[operator]
-        from . import usage
+        from .core import usage
         decision = "allowlist" if applied.returncode == 0 else "unenforceable"
         usage.record("sandbox.policy", rule="egress", decision=decision)
         if applied.returncode != 0:

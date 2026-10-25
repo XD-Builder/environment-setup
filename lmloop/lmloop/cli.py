@@ -61,7 +61,7 @@ from pathlib import Path
 
 from . import agent, knowledge_graph, loop as loop_mod, memory, server, skills
 from . import graph as graph_mod
-from .commands import (
+from .core.commands import (
     EVAL_FLAGS,
     GRAPH_PROPOSE_VERB,
     HISTORY_DEFAULT_CLI,
@@ -78,7 +78,7 @@ from .commands import (
     parse_graph_words,
     parse_memory_words,
 )
-from .config import (
+from .core.config import (
     Config,
     CONFIG_PATH,
     DEFAULTS,
@@ -91,7 +91,7 @@ from .config import (
 )
 from .repl import make_session_miner, mine_sessions, run_repl
 from .ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
-from . import usage
+from .core import usage
 
 EPILOG = """
 project memory commands:
@@ -669,7 +669,7 @@ def cmd_skill_cli(cfg: Config, words: list, console: Console) -> int:
 
 
 def cmd_eval_cli(cfg: Config, words: list, console: Console) -> int:
-    from . import contracts, evals, traces
+    from .harness import contracts, evals, traces
 
     request = parse_eval_words(words, invocation="lmloop eval")
     if request.error:
@@ -692,8 +692,8 @@ def cmd_eval_cli(cfg: Config, words: list, console: Console) -> int:
             console.info(contracts.format_gate(report))
         return 0 if report.ok else 1
     if request.mode == "harness-report":
-        from . import harness_report
-        from .config import load_config
+        from .harness import harness_report
+        from .core.config import load_config
         from pathlib import Path as PathLib
 
         run_path = request.harness_run.strip()

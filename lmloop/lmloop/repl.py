@@ -11,7 +11,7 @@ from typing import Callable
 from . import agent, extract, knowledge_graph, loop as loop_mod, memory, server, skills, tools
 from . import graph as graph_mod
 from .display import THINK_LINE_PREFIX
-from .commands import (
+from .core.commands import (
     ADVANCED_SKILL_SLASH,
     CHECKPOINT_DEFAULT,
     HISTORY_DEFAULT_REPL,
@@ -28,7 +28,7 @@ from .commands import (
     parse_positive_count,
     slash_command_metas,
 )
-from .config import (
+from .core.config import (
     Config,
     HISTORY_PREVIEW_CHARS, MAX_TRANSCRIPT_TOOL_CHARS, cfg_bool, cfg_int,
     cfg_positive_int, project_slug,
@@ -43,7 +43,7 @@ from .files_index import (
     prompt_file_mentions,
     resolve_user_path,
 )
-from .status import (
+from .core.status import (
     MSG_GRAPH_FOLLOWUP,
     MSG_RESUME,
     MSG_UNTIL_FOLLOWUP,
@@ -52,7 +52,7 @@ from .status import (
     status as status_line,
 )
 from .ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate, write_clipboard
-from . import usage
+from .core import usage
 
 _THINKING_HISTORY_MAX = 30
 _REF_CONTENTS_HEADER = (
@@ -876,7 +876,7 @@ def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
         state.console.info("  /continue resumes a paused until-run")
         return True
     hint = loop_mod.superseded_until_hint()
-    from .config import cfg_str
+    from .core.config import cfg_str
     control = parsed.control or cfg_str(state.cfg, "until_control")
     run = loop_mod.UntilRun.create(
         parsed.goal, checks=parsed.checks, keeps=parsed.keeps,
@@ -1043,7 +1043,7 @@ def _transcript_tool_limit(state: SessionState) -> int:
 
 def _cmd_transcript(state: SessionState, _arg: str) -> bool:
     """Open the rendered session transcript in less (q to return)."""
-    from .markdown_view import page_transcript
+    from .ui.markdown_view import page_transcript
     state.console.hint("[opening transcript in less — press q to return · /copy for last answer]")
     page_transcript(
         state.messages, color=state.console.t._on,
@@ -1054,7 +1054,7 @@ def _cmd_transcript(state: SessionState, _arg: str) -> bool:
 
 def _cmd_copy(state: SessionState, arg: str) -> bool:
     """Copy the last assistant answer, or the full session, to the clipboard."""
-    from .markdown_view import session_transcript
+    from .ui.markdown_view import session_transcript
     key = (arg or "").strip().lower()
     if not key:
         text = loop_mod.last_assistant(state.messages)
