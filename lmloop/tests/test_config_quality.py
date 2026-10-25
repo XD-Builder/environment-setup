@@ -93,8 +93,8 @@ class ConfigQualityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "config.json"
             path.write_text("{not json")
-            with mock.patch.object(config_mod, "CONFIG_PATH", path), \
-                 mock.patch.object(config_mod, "_CONFIG_WARNED", False), \
+            with mock.patch("lmloop.core.config.CONFIG_PATH", path), \
+                 mock.patch("lmloop.core.config._CONFIG_WARNED", False), \
                  mock.patch("sys.stderr"):
                 cfg = config_mod.load_config()
             self.assertEqual(cfg["max_rounds"], config_mod.DEFAULTS["max_rounds"])
@@ -114,8 +114,8 @@ class ConfigQualityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "config.json"
             path.write_text(json.dumps({"max_rounds": "nope", "stream": True}))
-            with mock.patch.object(config_mod, "CONFIG_PATH", path), \
-                 mock.patch.object(config_mod, "_CONFIG_WARNED", False), \
+            with mock.patch("lmloop.core.config.CONFIG_PATH", path), \
+                 mock.patch("lmloop.core.config._CONFIG_WARNED", False), \
                  mock.patch("sys.stderr"):
                 cfg = config_mod.load_config()
             self.assertEqual(cfg["max_rounds"], config_mod.DEFAULTS["max_rounds"])

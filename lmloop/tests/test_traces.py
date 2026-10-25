@@ -67,8 +67,8 @@ class QueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             trace_path = Path(tmp) / "traces.jsonl"
             queue_path = Path(tmp) / "queue.jsonl"
-            with mock.patch.object(traces, "TRACE_PATH", trace_path), \
-                 mock.patch.object(traces, "QUEUE_PATH", queue_path):
+            with mock.patch("lmloop.harness.traces.TRACE_PATH", trace_path), \
+                 mock.patch("lmloop.harness.traces.QUEUE_PATH", queue_path):
                 traces.start_turn()
                 traces.note_tool("read_file", "1: hello", round_idx=0)
                 traces.note_tool("read_file", "ERROR: missing", round_idx=0)
@@ -90,7 +90,7 @@ class QueueTests(unittest.TestCase):
     def test_trace_opt_out_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             trace_path = Path(tmp) / "traces.jsonl"
-            with mock.patch.object(traces, "TRACE_PATH", trace_path), \
+            with mock.patch("lmloop.harness.traces.TRACE_PATH", trace_path), \
                  mock.patch.dict(os.environ, {"LMLOOP_TRACE": "0"}):
                 traces.start_turn()
                 traces.note_tool("read_file", "ok", round_idx=0)
@@ -104,8 +104,8 @@ class QueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             trace_path = Path(tmp) / "traces.jsonl"
             queue_path = Path(tmp) / "queue.jsonl"
-            with mock.patch.object(traces, "TRACE_PATH", trace_path), \
-                 mock.patch.object(traces, "QUEUE_PATH", queue_path), \
+            with mock.patch("lmloop.harness.traces.TRACE_PATH", trace_path), \
+                 mock.patch("lmloop.harness.traces.QUEUE_PATH", queue_path), \
                  mock.patch.dict(os.environ, {"LMLOOP_TRACE_CONTENT": "1"}):
                 traces.start_turn()
                 traces.finish_turn(
@@ -145,8 +145,8 @@ class ActTraceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             trace_path = Path(tmp) / "traces.jsonl"
             queue_path = Path(tmp) / "queue.jsonl"
-            with mock.patch.object(traces, "TRACE_PATH", trace_path), \
-                 mock.patch.object(traces, "QUEUE_PATH", queue_path), \
+            with mock.patch("lmloop.harness.traces.TRACE_PATH", trace_path), \
+                 mock.patch("lmloop.harness.traces.QUEUE_PATH", queue_path), \
                  mock.patch.object(agent, "_chat", side_effect=fake_chat), \
                  mock.patch("lmloop.tools.dispatch", return_value="listed"), \
                  mock.patch("lmloop.display._rich_live_available", return_value=False):

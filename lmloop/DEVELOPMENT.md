@@ -115,8 +115,6 @@ find yourself updating two lists, you have already added debt.
 | Spinner, live printers, thinking lines, TTY writes | `display.py` |
 | Tool schema + impl + validation | `tools.py` (`ToolDef` rows) |
 | Web search / fetch / HTML parsers | `web.py` |
-| Slash/CLI names, reserved skill stems | `commands.py` |
-| Status / resume / nudge copy | `status.py` |
 | JSONL memory (learnings, decisions, sessions, checkpoints) | `memory.py` |
 | Knowledge-graph nodes/edges (`use_graph`) | `knowledge_graph.py` |
 | Until run JSONL (shared roles, append-only rows) | `run_log.py` (leaf: `memory`, `config`) |
@@ -136,12 +134,16 @@ find yourself updating two lists, you have already added debt.
 | Flow stats (`lmloop flow`) | `workflow.py` |
 | Always-on steering markdown + live clock | `steer.py` |
 | argparse routing, non-REPL subcommands | `cli.py` |
-| `Config`, `ConfigSchema`, paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, `config_schema()`, project slug, `utc_now()` | `config.py` |
+| `Config`, `ConfigSchema`, paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, `config_schema()`, project slug, `utc_now()` | `core/config.py` (shim: `config.py`) |
+| Slash/CLI names (see also commands row) | `core/commands.py` (shim: `commands.py`) |
+| Status / resume copy | `core/status.py` (shim: `status.py`) |
+| Local feature-usage JSONL | `core/usage.py` (shim: `usage.py`) |
+| Usage aggregation, eval report, abstention | `harness/evals.py` (shim: `evals.py`) |
+| Assertion pyramid, golden gates | `harness/contracts.py` (shim: `contracts.py`) |
+| Local spans, eval queue, golden inbox | `harness/traces.py` (shim: `traces.py`) |
+| Harness bundle fingerprint (H1) | `harness/harness_bundle.py` (shim: `harness_bundle.py`) |
+| Harness execution report (H2) | `harness/harness_report.py` (shim: `harness_report.py`) |
 | Live-thread file manifest (`/context`) | `context.py` |
-| Local feature-usage JSONL (`usage.record`, `@usage.tracked`) | `usage.py` |
-| Usage aggregation, gap rules, abstention pairs, `lmloop eval` report | `evals.py` (leaf: `usage`, stdlib) |
-| Assertion pyramid, golden gates | `contracts.py` (stdlib at import; grammar/tool checkers lazy-import `graph` / `tools`) |
-| Local spans, eval queue, golden inbox | `traces.py` (`contracts`, `usage`, `config`, `memory`) |
 | Company manifest, allowlist, worktrees, orchestrator | `company/` (`chat` may import `company.allowlist` only) |
 | Campaign plan, board, ticks | `campaign.py` (host writer; workers do not import it to append) |
 | Spirit seed, actions, thoughts, self | `spirit/` |
@@ -158,6 +160,12 @@ where those names are looked up — do not re-export privates through `agent`
 for tests. `_chat` / `_chat_stream` stay imported into `agent` so existing
 `patch.object(agent, "_chat")` tests keep working. New HTTP logic belongs in
 `chat.py`, not as more private helpers in `agent.py`.
+
+Modules moved under `core/` and `harness/` keep **top-level shims** (`config.py`,
+`usage.py`, …). Patch **canonical** names for module globals and in-package
+calls (`lmloop.core.config.CONFIG_PATH`, `lmloop.harness.traces.TRACE_PATH`,
+`lmloop.harness.evals.last_report_path`). Shims remain the stable import path
+for application code (`from lmloop import config`).
 
 **Import graph (do not invert):**
 

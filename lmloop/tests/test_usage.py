@@ -12,7 +12,7 @@ class UsageRecordTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "usage.jsonl"
-        self.p_path = mock.patch.object(usage, "USAGE_PATH", self.path)
+        self.p_path = mock.patch("lmloop.core.usage.USAGE_PATH", self.path)
         self.p_path.start()
         self.addCleanup(self.p_path.stop)
 
@@ -46,7 +46,7 @@ class UsageIntegrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "usage.jsonl"
-            with mock.patch.object(usage, "USAGE_PATH", path):
+            with mock.patch("lmloop.core.usage.USAGE_PATH", path):
                 _specs, impls = build_tools({})
                 dispatch(impls, "list_dir", '{"path": "."}')
             rows = usage.read_events(path)

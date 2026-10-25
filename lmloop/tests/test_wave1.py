@@ -223,7 +223,7 @@ class EvalWaveTests(unittest.TestCase):
                 + json.dumps({"role": "pause", "node": "qa", "status": "paused"}) + "\n",
                 encoding="utf-8",
             )
-            with patch("lmloop.config.project_dir", return_value=root):
+            with patch("lmloop.core.config.project_dir", return_value=root):
                 stats = evals.EvalStats()
                 stats.events = 4
                 stats.tool_errors["run_shell"] = 3
