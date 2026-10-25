@@ -202,6 +202,7 @@ def isolated_act(
     readonly: bool = False,
     no_tools: bool = False,
     max_rounds: "int | None" = None,
+    tool_only: "frozenset[str] | None" = None,
     clock_now=None,
     extra_readable: "list | None" = None,
     memory_block: "str | None" = None,
@@ -241,6 +242,7 @@ def isolated_act(
             readonly=readonly,
             no_tools=no_tools,
             max_rounds=max_rounds,
+            tool_only=tool_only,
             extra_readable=extra_readable,
             stats=stats,
         )

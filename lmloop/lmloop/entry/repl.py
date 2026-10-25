@@ -418,6 +418,17 @@ def _cmd_save(state: SessionState, arg: str, confirm_gate) -> bool:
     return True
 
 
+def _mine_called_recall_memory(messages: list) -> bool:
+    for msg in messages or []:
+        if msg.get("role") != "assistant":
+            continue
+        for call in msg.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            if fn.get("name") == "recall_memory":
+                return True
+    return False
+
+
 def mine_sessions(cfg: Config, model: str, paths, console: Console, confirm_gate,
                   transcript: "str | None" = None, display=None) -> int:
     """Run the retro skill without touching a live REPL thread."""
@@ -454,8 +465,12 @@ def mine_sessions(cfg: Config, model: str, paths, console: Console, confirm_gate
         confirm_gate=confirm_gate,
         **display.for_isolated(),
         log_label=label,
+        tool_only=tools.MINE_TOOLS,
     )
     if result is None:
+        return 1
+    messages, _session_log = result
+    if not _mine_called_recall_memory(messages):
         return 1
     console.hint(f"[learnings → {memory.learnings_file()}]")
     return 0

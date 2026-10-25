@@ -102,6 +102,8 @@ class SystemPromptMemoryTests(unittest.TestCase):
         self.assertIn("curiosity, learning, and growth", text)
         self.assertIn("Repo-specific practice is learned", text)
         self.assertIn("## Safety floor", text)
+        self.assertIn("several files", text)
+        self.assertIn("one response", text)
         seed = (skills.SKILLS_DIR.parents[1] / "spirit" / "seed.md").read_text()
         self.assertIn("Be curious, learn, and grow", seed)
         improve = skills.load_skill("improve")

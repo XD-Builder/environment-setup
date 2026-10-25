@@ -551,7 +551,8 @@ def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = No
         readonly: bool = False,
         no_tools: bool = False,
         max_rounds: "int | None" = None,
-        extra_readable: "list | None" = None) -> list:
+        extra_readable: "list | None" = None,
+        tool_only: "frozenset[str] | None" = None) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
     ``extra_readable`` is a turn-scoped list of paths the user attached with
@@ -610,7 +611,7 @@ def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = No
     else:
         tool_specs, impls = tools.build_tools(
             cfg, confirm_gate=confirm_gate, workspace_root=workspace_root,
-            readonly=readonly, extra_readable=extra_readable,
+            readonly=readonly, extra_readable=extra_readable, only=tool_only,
         )
     use_stream = cfg_bool(cfg, "stream")
     gather_budget = max_rounds if max_rounds is not None else cfg_int(cfg, "max_rounds")

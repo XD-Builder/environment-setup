@@ -189,14 +189,18 @@ class StreamPrinterTests(unittest.TestCase):
             Live = mock.MagicMock(return_value=fake_live)
             Markdown = mock.MagicMock(side_effect=lambda t: t)
             load_rich.return_value = (Console, Live, Markdown)
-            p.feed("hello")
+            try:
+                p.feed("hello")
+            finally:
+                p.reset()
             self.assertTrue(Live.called)
             kwargs = Live.call_args.kwargs
             self.assertEqual(kwargs.get("vertical_overflow"), "crop")
             self.assertFalse(kwargs.get("auto_refresh"))
             self.assertTrue(kwargs.get("transient"))
+            self.assertTrue(kwargs.get("screen"))
             self.assertTrue(make_console.call_args.kwargs.get("force_terminal"))
-            self.assertEqual(make_console.call_args.kwargs.get("height"), 38)
+            self.assertEqual(make_console.call_args.kwargs.get("height"), 40)
             self.assertEqual(make_console.call_args.kwargs.get("width"), 79)
             updated = fake_live.update.call_args.args[0]
             self.assertIsInstance(updated, display._TailMarkdown)
@@ -248,6 +252,51 @@ class StreamPrinterTests(unittest.TestCase):
             self.assertEqual(_live_preview_width(), 79)
         with mock.patch("lmloop.model.display.terminal_size", return_value=(1, 24)):
             self.assertEqual(_live_preview_width(), 1)
+
+    @requires_rich
+    def test_fullscreen_resize_retargets_console_and_clears(self):
+        """A resize must drop the old row count so cursor-up cannot leave a blank line."""
+        import signal
+        from io import StringIO
+        from rich.console import Console
+
+        console = Console(
+            file=StringIO(), width=80, height=24, force_terminal=True,
+            soft_wrap=False, highlight=False, color_system=None,
+        )
+        p = display._MarkdownLivePrinter()
+        p._fullscreen = True
+        p._live = mock.Mock()
+        p._live.console = console
+        p._live._alt_screen = True
+        p._live._live_render = mock.Mock()
+        p._live_rows = 12
+        writes = []
+        with mock.patch("lmloop.model.display.terminal_size", return_value=(120, 50)), \
+             mock.patch("lmloop.model.display._tty_write", side_effect=writes.append):
+            self.assertTrue(p._sync_live_geometry_locked())
+        self.assertEqual(console.width, 119)
+        self.assertEqual(console.height, 50)
+        self.assertEqual(p._live_rows, 0)
+        self.assertIsNone(p._live._live_render._shape)
+        self.assertEqual(writes, ["\033[2J\033[H"])
+        with mock.patch("lmloop.model.display.terminal_size", return_value=(120, 50)):
+            self.assertFalse(p._sync_live_geometry_locked())
+
+        if not hasattr(signal, "SIGWINCH"):
+            return
+        previous = signal.getsignal(signal.SIGWINCH)
+        try:
+            with mock.patch("sys.stdout.isatty", return_value=True):
+                p._arm_winch()
+                handler = signal.getsignal(signal.SIGWINCH)
+                self.assertIs(handler.__self__, p)
+                self.assertIs(handler.__func__, p._on_winch.__func__)
+                p._disarm_winch()
+                self.assertFalse(p._winch_installed)
+        finally:
+            signal.signal(signal.SIGWINCH, previous)
+            p._winch_installed = False
 
     @requires_rich
     def test_tail_markdown_never_shrinks_below_min_rows(self):
@@ -2167,6 +2216,29 @@ class ChatRequestTests(unittest.TestCase):
         self.assertNotIn("tools", payload)
         self.assertNotIn("tool_choice", payload)
         self.assertEqual(payload["stream_options"], {"include_usage": True})
+        self.assertEqual(payload["max_tokens"], 8192)
+
+    def test_max_tokens_omitted_when_zero(self):
+        from lmloop.model.chat import _chat_request
+
+        cfg = {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "temperature": 0.2,
+            "max_tokens": 0,
+        }
+        req = _chat_request(cfg, "m", [{"role": "user", "content": "hi"}], None, stream=False)
+        payload = json.loads(req.data)
+        self.assertNotIn("max_tokens", payload)
+
+    def test_max_tokens_clamps_to_context_room(self):
+        from lmloop.model.chat import completion_token_cap
+
+        messages = [{"role": "user", "content": "hi"}]
+        cap = completion_token_cap(
+            {"max_tokens": 8192, "context_length": 1000}, messages,
+        )
+        self.assertLess(cap, 1000)
+        self.assertGreater(cap, 256)
 
 
 class MalformedToolDeltaTests(unittest.TestCase):

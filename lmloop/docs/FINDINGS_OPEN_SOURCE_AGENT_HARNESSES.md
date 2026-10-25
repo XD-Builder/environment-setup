@@ -428,7 +428,7 @@ operationalizes the survey’s co-evolution diagram for this repo:
 | Life-Harness | https://github.com/OctAg0nO/harness |
 | HarnessX | https://github.com/Darwin-Agent/HarnessX |
 | dspyground | https://github.com/Scale3-Labs/dspyground |
-| lmloop harness | `lmloop/lmloop/skills/system.md`, `lmloop/docs/DESIGN_*` |
+| lmloop harness | `lmloop/lmloop/prompts/skills/system.md`, `lmloop/docs/DESIGN_*` |
 
 ---
 

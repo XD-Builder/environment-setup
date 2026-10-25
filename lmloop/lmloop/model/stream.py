@@ -20,8 +20,8 @@ _REPEAT_BLOCK_TIMES = 2
 _REPEAT_BLOCK_MIN_LINES = 5
 _REPEAT_BLOCK_MAX_LINES = 32
 # After a halt, keep reading this many extra chars for a late tool/answer
-# before closing the SSE body. No max_tokens is set, so a thinking loop
-# can otherwise run until the context window fills.
+# before closing the SSE body. The request caps completion with max_tokens,
+# but a thinking loop can still run until that cap.
 _HALT_DRAIN_CHARS = 2048
 _THINK_SIMILAR_MIN = 24
 _THINK_SIMILAR_RATIO = 0.72

@@ -148,7 +148,7 @@ Rules:
 ### New CI surface (opt-in path, not default commit gate)
 
 - Add `lmloop eval --gate harness-adopt` that runs **eval-role** + abstention validation only.  
-- Wire GitHub Actions to call it **only when paths touch harness surfaces** (`lmloop/lmloop/skills/`, `steer/`, `graphs/`, `loop.py`, `graph_runner.py`, `checks.py`, `contracts.py`, golden cases).  
+- Wire GitHub Actions to call it **only when paths touch harness surfaces** (`lmloop/lmloop/prompts/skills/`, `lmloop/lmloop/prompts/steer/`, `graphs/`, `loop.py`, `graph_runner.py`, `checks.py`, `contracts.py`, golden cases).  
 - Pin baseline in `baseline.json` before enabling required check; until then, job is **informational**.
 
 ### Regression safety

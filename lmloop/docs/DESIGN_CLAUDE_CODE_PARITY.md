@@ -15,8 +15,8 @@
 
 | Claude Code concept | lmloop today |
 |---------------------|--------------|
-| Project rules | `steer/*.md`, `<workspace>/.lmloop/steer/` |
-| Skills | `skills/*.md`, `~/.lmloop/skills/`, `/skill`, `skills new` |
+| Project rules | `lmloop/prompts/steer/*.md`, `<workspace>/.lmloop/steer/` |
+| Skills | `lmloop/prompts/skills/*.md`, `~/.lmloop/skills/`, `/skill`, `skills new` |
 | Permission prompts | `confirm_shell`, `GatePolicy`, `autonomous_gates` |
 | Long-running autonomy | `/until`, `/graph`, `campaign` |
 | Context from files | `@path`, `read_file`, git-aware index |

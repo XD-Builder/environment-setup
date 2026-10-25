@@ -667,6 +667,21 @@ class WebResearchToolTests(unittest.TestCase):
         self.assertGreaterEqual(len(full_names), 10)
         self.assertNotIn("graph_add_edge", full_names)
 
+    def test_mine_tools_only(self):
+        from lmloop.capabilities.tools import MINE_TOOLS
+
+        specs, impls = build_tools(
+            {"confirm_shell": False, "use_graph": True}, only=MINE_TOOLS,
+        )
+        names = {s["function"]["name"] for s in specs}
+        self.assertEqual(names, set(impls))
+        self.assertEqual(names, {"recall_memory", "remember", "log_decision", "graph_add_edge"})
+        off, _ = build_tools({"confirm_shell": False}, only=MINE_TOOLS)
+        self.assertEqual(
+            {s["function"]["name"] for s in off},
+            {"recall_memory", "remember", "log_decision"},
+        )
+
     def test_graph_add_edge_only_when_use_graph(self):
         specs, impls = build_tools({"confirm_shell": False, "use_graph": True})
         names = {s["function"]["name"] for s in specs}
@@ -823,6 +838,10 @@ class ConcurrentToolTests(unittest.TestCase):
             concurrent_groups(["write_file", "run_shell"]),
             [[0], [1]],
         )
+        self.assertEqual(
+            concurrent_groups(["write_file", "update_file", "run_shell"]),
+            [[0, 1], [2]],
+        )
 
     def test_run_tool_calls_preserves_order(self):
         from lmloop.capabilities.tools import run_tool_calls
@@ -837,6 +856,41 @@ class ConcurrentToolTests(unittest.TestCase):
             ("list_dir", '{"path": "."}'),
         ])
         self.assertEqual(out, ["body:a.py", "dir:."])
+
+    def test_distinct_file_edits_share_a_wave_same_path_waits(self):
+        import threading
+        from lmloop.capabilities.tools import _split_file_edit_group, run_tool_calls
+
+        build_tools({"confirm_shell": False})
+        calls = [
+            ("update_file", '{"path": "a.py", "old_string": "a", "new_string": "b"}'),
+            ("write_file", '{"path": "./b.py", "content": "x"}'),
+            ("update_file", '{"path": "a.py", "old_string": "b", "new_string": "c"}'),
+        ]
+        self.assertEqual(
+            _split_file_edit_group(calls, [0, 1, 2]),
+            [[0, 1], [2]],
+        )
+        barrier = threading.Barrier(2)
+        seen = []
+
+        def update(path, old_string, new_string, replace_all=False):
+            seen.append(path)
+            barrier.wait(timeout=2)
+            return path
+
+        def write(path, content):
+            seen.append(path)
+            barrier.wait(timeout=2)
+            return path
+
+        out = run_tool_calls(
+            {"update_file": update, "write_file": write},
+            calls[:2],
+            {"file_edit_concurrency": 6},
+        )
+        self.assertEqual(set(out), {"a.py", "./b.py"})
+        self.assertEqual(set(seen), {"a.py", "./b.py"})
 
     def test_writes_stay_serial(self):
         from lmloop.capabilities.tools import run_tool_calls
