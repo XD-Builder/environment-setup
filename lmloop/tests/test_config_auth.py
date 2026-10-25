@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest import mock
 
-from lmloop import config as config_mod
+from lmloop.core import config as config_mod
 from lmloop.chat import _chat_request
 
 

@@ -5,7 +5,7 @@ import json
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from lmloop import contracts
+from lmloop.harness import contracts
 from lmloop.cli import main
 from support import parametrize
 

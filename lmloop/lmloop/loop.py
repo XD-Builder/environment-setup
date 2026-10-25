@@ -1,7 +1,7 @@
 """Facade for the until workflow (``until_runner`` + shared run log)."""
 
 from . import agent, skills, snapshot
-from .config import project_dir
+from .core.config import project_dir
 from .run_log import DONE_ROLES, META_ROLE, PAUSE_ROLE
 from .tools import run_shell
 from .until_parse import UntilArgs, parse_until_arg_line, parse_until_args, split_check_flags

@@ -10,7 +10,7 @@ from lmloop import agent
 from lmloop import display
 from lmloop import stream as stream_mod
 from lmloop.server import ServerError
-from lmloop.status import ANSWER_TEXT, NUDGE_CONTINUE_TEXT, answer_message
+from lmloop.core.status import ANSWER_TEXT, NUDGE_CONTINUE_TEXT, answer_message
 from support import requires_rich
 
 

@@ -12,7 +12,7 @@ import urllib.request
 from html.parser import HTMLParser
 
 from . import extract
-from .config import DEFAULTS
+from .core.config import DEFAULTS
 
 MAX_WEB_RESULTS = 10
 MAX_WEB_QUERY_LEN = 400

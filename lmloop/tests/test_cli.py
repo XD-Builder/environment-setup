@@ -444,7 +444,7 @@ class CopyCommandTests(unittest.TestCase):
         self.assertIn("no assistant reply", buf.getvalue())
 
     def test_copy_transcript(self):
-        from lmloop.markdown_view import messages_to_markdown
+        from lmloop.ui.markdown_view import messages_to_markdown
         from lmloop.repl import _cmd_copy
         messages = [
             {"role": "system", "content": "sys"},
@@ -1108,7 +1108,7 @@ class MemoryMineAndUntilTests(unittest.TestCase):
     def test_until_appends_handoff_to_live_thread(self):
         from lmloop.loop import UntilRun
         from lmloop.repl import attach_until_result
-        from lmloop.status import MSG_UNTIL_FOLLOWUP
+        from lmloop.core.status import MSG_UNTIL_FOLLOWUP
 
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -1266,7 +1266,7 @@ class EvalCliTests(unittest.TestCase):
     def test_eval_json_writes_report(self):
         import json
 
-        from lmloop.evals import EvalStats
+        from lmloop.harness.evals import EvalStats
         from lmloop.workflow import FlowStats
 
         stats = EvalStats(events=2, features={"cli.command": 2})
@@ -1274,7 +1274,7 @@ class EvalCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             report = Path(d) / "last_report.json"
             out = io.StringIO()
-            with patch("lmloop.evals.load_stats", return_value=stats), \
+            with patch("lmloop.harness.evals.load_stats", return_value=stats), \
                  patch("lmloop.workflow.collect_flow_stats", return_value=flow), \
                  patch("lmloop.harness.evals.last_report_path", return_value=report), \
                  redirect_stdout(out):
@@ -1287,15 +1287,15 @@ class EvalCliTests(unittest.TestCase):
             self.assertEqual(json.loads(report.read_text(encoding="utf-8"))["events"], 2)
 
     def test_eval_design_doc_alias(self):
-        from lmloop.evals import EvalStats
+        from lmloop.harness.evals import EvalStats
         from lmloop.workflow import FlowStats
 
         with tempfile.TemporaryDirectory() as d:
             report = Path(d) / "last_report.json"
             out = io.StringIO()
-            with patch("lmloop.evals.load_stats", return_value=EvalStats()), \
+            with patch("lmloop.harness.evals.load_stats", return_value=EvalStats()), \
                  patch("lmloop.workflow.collect_flow_stats", return_value=FlowStats()), \
-                 patch("lmloop.evals.last_report_path", return_value=report), \
+                 patch("lmloop.harness.evals.last_report_path", return_value=report), \
                  redirect_stdout(out):
                 code = main(["eval", "--design-doc"])
         self.assertEqual(code, 0)
@@ -1383,7 +1383,7 @@ class EvalCliTests(unittest.TestCase):
 
 class RegistryTests(unittest.TestCase):
     def test_every_slash_meta_has_a_handler(self):
-        from lmloop.commands import slash_command_metas
+        from lmloop.core.commands import slash_command_metas
         cmds = _build_slash_commands(lambda _: False)
         names = {c.name.lstrip("/") for c in cmds}
         for meta in slash_command_metas():
@@ -1391,11 +1391,11 @@ class RegistryTests(unittest.TestCase):
 
     def test_cli_subcommands_match_registry(self):
         from lmloop.cli import cli_handlers
-        from lmloop.commands import cli_subcommand_names
+        from lmloop.core.commands import cli_subcommand_names
         self.assertEqual(set(cli_subcommand_names()), set(cli_handlers()))
 
     def test_completion_script_lists_cli_stems(self):
-        from lmloop.commands import cli_subcommand_names
+        from lmloop.core.commands import cli_subcommand_names
         out = io.StringIO()
         with redirect_stdout(out):
             code = main(["completion", "zsh"])
@@ -1598,7 +1598,7 @@ class MemoryInspectTests(unittest.TestCase):
 
 class SharedSurfaceTests(unittest.TestCase):
     def test_history_cli_honors_count(self):
-        from lmloop.commands import HISTORY_DEFAULT_CLI
+        from lmloop.core.commands import HISTORY_DEFAULT_CLI
 
         with patch("lmloop.cli.memory.list_sessions", return_value=[]) as listed, \
              redirect_stdout(io.StringIO()):
@@ -1622,7 +1622,7 @@ class SharedSurfaceTests(unittest.TestCase):
              patch("lmloop.repl.project_slug", return_value="demo"), \
              patch("lmloop.repl._fresh_messages", return_value=[{"role": "system", "content": "sys"}]), \
              patch("lmloop.repl.memory.new_session_log", return_value=Path("/tmp/s.jsonl")), \
-             patch("lmloop.repl.usage.record"), \
+             patch("lmloop.core.usage.record"), \
              patch("lmloop.repl.skills.skill_prompt", return_value="BODY\n\nTask: tidy") as prompt, \
              patch("lmloop.repl._run_turn") as turn, \
              patch("sys.stdin.isatty", return_value=False), \
@@ -1633,7 +1633,7 @@ class SharedSurfaceTests(unittest.TestCase):
         self.assertIn("Task: tidy", turn.call_args[0][1])
 
     def test_reconcile_reports_incomplete_on_both_surfaces(self):
-        from lmloop.commands import MSG_RECONCILE_INCOMPLETE
+        from lmloop.core.commands import MSG_RECONCILE_INCOMPLETE
         from lmloop.repl import SessionState, _cmd_memory
         from lmloop.ui import fresh_stats
 

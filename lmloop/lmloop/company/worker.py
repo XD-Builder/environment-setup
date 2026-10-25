@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..config import Config
+from ..core.config import Config
 from .allowlist import activate, effective_allowlist
 from .manifest import ManifestError, canonical_sha, load_manifest
 from .protocol import PacketError, envelope, parse_packet

@@ -4,7 +4,7 @@ import unittest
 
 from support import requires_rich
 
-from lmloop.markdown_view import (
+from lmloop.ui.markdown_view import (
     _TRANSCRIPT_TOOL_CUT,
     make_console,
     messages_to_markdown,

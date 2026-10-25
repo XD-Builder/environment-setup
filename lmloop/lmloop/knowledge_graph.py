@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import memory
-from .config import Config, HISTORY_PREVIEW_CHARS, cfg_bool, cfg_positive_int, utc_now
+from .core.config import Config, HISTORY_PREVIEW_CHARS, cfg_bool, cfg_positive_int, utc_now
 
 GRAPH_NODE_TYPES = frozenset({
     "learning", "decision", "session", "file", "skill", "concept",

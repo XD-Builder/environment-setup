@@ -161,7 +161,7 @@ class ComponentContractTests(unittest.TestCase):
 
     @baseline("evals", "healthy fixture has no action gaps")
     def test_healthy_usage_fixture(self):
-        from lmloop import evals
+        from lmloop.harness import evals
 
         path = Path(__file__).resolve().parent / "fixtures" / "usage_healthy.jsonl"
         events = [

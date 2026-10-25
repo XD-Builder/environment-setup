@@ -10,8 +10,8 @@ from unittest import mock
 
 from pathlib import Path
 
-from lmloop.commands import RESERVED_SKILL_NAMES, slash_command_metas
-from lmloop.config import DIFF_LIMIT, WEB_SEARCH_CONCURRENCY
+from lmloop.core.commands import RESERVED_SKILL_NAMES, slash_command_metas
+from lmloop.core.config import DIFF_LIMIT, WEB_SEARCH_CONCURRENCY
 from lmloop.tools import (
     GATE_IRREVERSIBLE,
     GATE_RECOVERABLE,
@@ -1074,7 +1074,7 @@ class FileEditToolTests(unittest.TestCase):
         self.root.mkdir()
         self.state = base / "state"
         self.state.mkdir()
-        self._patch = mock.patch("lmloop.config.project_dir", return_value=self.state)
+        self._patch = mock.patch("lmloop.core.config.project_dir", return_value=self.state)
         self._patch.start()
 
     def tearDown(self):

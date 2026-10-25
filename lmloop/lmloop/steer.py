@@ -8,7 +8,7 @@ are not an override. ``steer.py`` is a leaf: no imports of agent, tools, or loop
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import STATE_ROOT
+from .core.config import STATE_ROOT
 
 STEER_DIR = Path(__file__).parent / "steer"
 USER_STEER_DIR = STATE_ROOT / "steer"

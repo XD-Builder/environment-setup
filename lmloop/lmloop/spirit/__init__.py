@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import memory
-from ..config import Config, cfg_bool, utc_now
+from ..core.config import Config, cfg_bool, utc_now
 
 SEED_FILE = Path(__file__).with_name("seed.md")
 SELF_MAX_CHARS = 4000

@@ -16,7 +16,7 @@ R = TypeVar("R")
 
 
 def rich_available() -> bool:
-    from lmloop.markdown_view import _rich_available
+    from lmloop.ui.markdown_view import _rich_available
 
     return _rich_available()
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import memory
-from ..config import Config, cfg_int, utc_now
+from ..core.config import Config, cfg_int, utc_now
 from ..server import resolve_model_concurrency
 from .allowlist import endpoint_error, effective_allowlist
 from .manifest import MANIFEST_REL, Manifest, ManifestError, allowlist_errors, load_manifest

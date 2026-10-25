@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 
-from .config import Config, utc_now
+from .core.config import Config, utc_now
 
 
 def _clip(text: str, limit: int) -> str:
@@ -333,7 +333,7 @@ def artifact_excerpts(store: UntilArtifactStore, ids: "list[str]") -> str:
 def analyze_until_run(run_path: Path, cfg: Config) -> dict:
     """Offline metrics from one until log + artifact sidecar (M4.1)."""
     from . import memory
-    from .config import cfg_int, cfg_str
+    from .core.config import cfg_int, cfg_str
 
     path = Path(run_path)
     if not path.is_file():
@@ -411,7 +411,7 @@ def format_until_analyze(metrics: dict, *, as_json: bool = False) -> str:
 
 def worker_packet_extras(worktree: Path) -> dict:
     """Optional company packet fields from the latest until sidecar in a worktree."""
-    from .config import project_slug
+    from .core.config import project_slug
     from .loop import all_until_runs
 
     root = Path(worktree).resolve()

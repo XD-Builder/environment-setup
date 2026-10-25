@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config import Config
+from ..core.config import Config
 from .. import tools
 
 # macOS first (this repo's usual host), then Wayland / X11.

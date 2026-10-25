@@ -8,7 +8,7 @@ no ``agent``, ``loop``, or ``graph`` imports.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import Config
+from .core.config import Config
 from . import extract, memory, tools
 from .files_index import prompt_file_mentions, resolve_user_path
 

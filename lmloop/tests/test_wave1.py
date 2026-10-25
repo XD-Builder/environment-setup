@@ -8,8 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lmloop import evals, knowledge_graph, memory, memory_index
-from lmloop.config import DEFAULTS
+from lmloop.harness import evals
+from lmloop import knowledge_graph, memory, memory_index
+from lmloop.core.config import DEFAULTS
 from lmloop.repl import _MINE_LAST, _hud_line
 
 

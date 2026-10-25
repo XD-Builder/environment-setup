@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..config import Config, cfg_bool, cfg_str
+from ..core.config import Config, cfg_bool, cfg_str
 
 PACKAGED_ALLOWLIST = (
     Path(__file__).resolve().parents[2] / "company" / "openrouter_autonomous.yaml"

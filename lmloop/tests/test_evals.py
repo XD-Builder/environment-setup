@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmloop import evals, usage
+from lmloop.core import usage
+from lmloop.harness import evals
 from support import parametrize
 
 
@@ -172,8 +173,6 @@ class InstrumentationRegistryTests(unittest.TestCase):
             if rel.parts[:1] == ("core",) and path.name == "usage.py":
                 continue
             if rel.parts[:1] == ("harness",) and path.name == "evals.py":
-                continue
-            if path.name in ("evals.py", "usage.py"):
                 continue
             text = path.read_text(encoding="utf-8")
             found.update(self._FEATURE_RE.findall(text))

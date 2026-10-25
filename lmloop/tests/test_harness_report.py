@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from lmloop import harness_report
+from lmloop.harness import harness_report
 
 FIXTURE = (
     Path(__file__).resolve().parent / "fixtures" / "harness_report" / "sample_until.jsonl"

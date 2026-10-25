@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import memory
-from .config import Config, cfg_bool, cfg_str
+from .core.config import Config, cfg_bool, cfg_str
 
 INDEX_VERSION = 2
 INDEX_FILE = "index.sqlite3"

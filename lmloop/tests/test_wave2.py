@@ -20,7 +20,7 @@ from lmloop.canvas_tui import (
     try_fullscreen,
 )
 from lmloop.checks import apply_baseline
-from lmloop.config import DEFAULTS
+from lmloop.core.config import DEFAULTS
 from lmloop.exec import (
     CLIENT_GUARD_EXTRA_S,
     CmdResult,
@@ -46,7 +46,7 @@ from lmloop.exec import (
 )
 from lmloop.loop import UntilRun, _until_outcome_label, abstain_reason, run_check, run_until
 from lmloop.tools import format_exec_result, run_shell
-from lmloop import evals
+from lmloop.harness import evals
 
 
 IMAGE = "lmloop-sandbox@sha256:" + ("ab" * 32)
@@ -360,7 +360,7 @@ class SandboxCliTests(unittest.TestCase):
         self.assertNotIn("3000-3010", host)
 
     def test_help_lists_sandbox_once(self):
-        from lmloop.commands import COMMANDS
+        from lmloop.core.commands import COMMANDS
         self.assertEqual([c.name for c in COMMANDS].count("sandbox"), 1)
 
 

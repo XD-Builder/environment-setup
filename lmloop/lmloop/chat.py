@@ -9,8 +9,9 @@ import json
 import urllib.error
 import urllib.request
 
-from . import server, status as status_mod
-from .config import Config, cfg_bool, cfg_float, cfg_int, chat_request_headers
+from . import server
+from .core import status as status_mod
+from .core.config import Config, cfg_bool, cfg_float, cfg_int, chat_request_headers
 from .stream import StreamError, _read_sse
 
 API_CHAT_PATH = "/chat/completions"

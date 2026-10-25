@@ -14,8 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import config as config_mod, status as status_mod
-from .config import Config
+from .core import config as config_mod, status as status_mod
+from .core.config import Config
 
 API_MODELS_PATH = "/models"
 NATIVE_MODELS_PATHS = ("/api/v0/models", "/api/v1/models")

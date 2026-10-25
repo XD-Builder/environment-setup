@@ -9,8 +9,9 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import knowledge_graph, skills, snapshot, status as status_mod, tools
-from .config import Config, DEFAULTS, cfg_bool, cfg_int, utc_now
+from . import knowledge_graph, skills, snapshot, tools
+from .core import status as status_mod
+from .core.config import Config, DEFAULTS, cfg_bool, cfg_int, utc_now
 from .graph_dsl import (
     EDGE_ON,
     GRAPHS_DIR,
@@ -76,7 +77,7 @@ class GraphRun(_GraphRun):
     @classmethod
     def create(cls, name: str, slug: "str | None" = None) -> "GraphRun":
         from . import graph as graph_facade
-        from .config import load_config
+        from .core.config import load_config
 
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         d = graph_facade.project_dir(slug) / "graphs" / name
@@ -89,7 +90,7 @@ class GraphRun(_GraphRun):
         run = cls(path=path, name=name, events=[])
         meta: dict = {"ts": utc_now(), "role": META_ROLE, "name": name}
         cfg = load_config()
-        from .harness_bundle import attach_harness_meta
+        from .harness.harness_bundle import attach_harness_meta
 
         attach_harness_meta(meta, cfg, workspace_root=Path.cwd(), graph_name=name)
         run._write(meta)
@@ -401,7 +402,7 @@ def _run_until_node(
     if resume_until:
         urun = UntilRun.load(Path(resume_until))
     else:
-        from .config import cfg_str
+        from .core.config import cfg_str
         urun = UntilRun.create(
             node.goal, checks=node.checks, keeps=node.keeps,
             until_control=node.control or cfg_str(cfg, "until_control"),
@@ -484,7 +485,7 @@ def run_graph(
     ask_gate=None,
     mine=None,
 ) -> GraphRun:
-    from . import usage
+    from .core import usage
 
     usage.record("graph.run", name=run.name)
     if echo_status is None:

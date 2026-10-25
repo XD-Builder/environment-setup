@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import graph_dsl, memory
-from .commands import FlowRequest
-from .config import Config, cfg_int, project_dir
+from .core.commands import FlowRequest
+from .core.config import Config, cfg_int, project_dir
 
 _DROP_PREFIX = "dropped unrunnable check: "
 

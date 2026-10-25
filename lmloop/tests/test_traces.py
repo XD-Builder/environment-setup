@@ -7,8 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmloop import agent, traces
-from lmloop.contracts import anonymize, check_span
+from lmloop import agent
+from lmloop.harness import traces
+from lmloop.harness.contracts import anonymize, check_span
 
 
 def _span(**overrides) -> dict:
