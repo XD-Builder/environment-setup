@@ -81,7 +81,6 @@ lmloop/
 │   ├── canvas_tui.py          # knowledge-canvas projection and full-screen keys
 │   ├── files_index.py          # @path completion + ref expansion (~, abs, relative)
 │   ├── extract.py              # PDF/Office/image/audio extraction (leaf)
-│   ├── markdown_view.py        # render assistant markdown (no quote gutter)
 │   ├── ui/                     # Console + markdown (no top-level ui.py — package only)
 │   │   ├── console.py          # ANSI theming, status bars, clipboard
 │   │   └── markdown_view.py    # render assistant markdown (no quote gutter)
