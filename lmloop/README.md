@@ -140,6 +140,14 @@ In the REPL:
 
 - **Peek:** `/memory` (dashboard: HUD + top learnings/decisions), `/memory dump` (injected memory only), `/context` (files in this thread, then injected memory). `/decisions` is deprecated — use `/memory decisions`. `/help` lists core commands; `/help all` lists restore, compact, undo, reconcile, etc. Headings, keys, and loaded paths are colored on a TTY. Checkpoints newer than 14 days are auto-injected. A Clock block and always-on steering are injected separately on every session and `/until` cycle. Each agent reply ends with a memory HUD: `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`.
 - **Write:** `/memory mine` with no arg mines **this session**; `/memory mine n` mines the last n **prior** session files (excludes the live log). `n` must be a positive integer. `/memory audit` and `/learn` curate via the learn skill in a side session (live thread unchanged). `/save [title]` writes a checkpoint file (live thread unchanged). A failed mine prints `memory mine did not finish` instead of the learnings path.
+
+**Self-improvement (short loop):**
+
+- **Mine** — `/memory mine` (this session) or `/memory mine 3` (prior session files). Expect `recall_memory`, then a saved-vs-skipped report. `/retro` is only a deprecated alias.
+- **Curate** — `/learn` or `/memory audit`: inventory learnings, flag stale or duplicate keys.
+- **Distill** — `/spirit distill` for a `meta` or `style` thought; promotion updates `self.md` / heuristics.
+- **Improve** — `/improve`: one action gap from the eval report, smallest diff and test, no commit; then `lmloop eval --gate harness-adopt` before a harness PR.
+- **Optional** — `/until --check '<cmd>' <goal>` (Dispatch / Assess / Evaluate / Propose; abstains when budget is exhausted). With `use_graph`, mine may add graph edges; `/memory reconcile` resolves `contradicts` pairs. `/ceo` for plan review and durable decisions. Full command list: `/help all` and `core/commands.py`.
 - **Reload:** `/restore` reopens a session (shows last result, no new model turn) or a checkpoint handoff. `/compact` summarizes in a side thread; optional replace starts a new log.
 - `/undo` drops the last user turn **in memory only** — the session JSONL is not trimmed.
 
@@ -259,13 +267,13 @@ local, single-user research loop needs.
 ## Extending
 
 - **New skill:** `lmloop skills new <name> [brief]` (AI draft + confirm), or drop
-  a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/skills/<name>.md` —
+  a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/lmloop/prompts/skills/<name>.md` —
   numbered steps, English conditionals, explicit report format. Immediately
   available as `lmloop skill <name>`, `/skill <name>`, and `/name`.
 - **Steering:** always-on markdown (not a `/name` skill). The standing harness
   is curiosity, learning, and growth; add a line only when it is that stance
   or a safety floor, and a tool, skill, or learning does not already say it.
-  Drop `*.md` in `lmloop/steer/`, `~/.lmloop/steer/`, or
+  Drop `*.md` in `lmloop/lmloop/prompts/steer/`, `~/.lmloop/steer/`, or
   `<workspace>/.lmloop/steer/`. Files concatenate into the system prompt
   (packaged, then user, then project; later dirs can contradict earlier;
   same-name files add, they do not override).
@@ -329,6 +337,8 @@ zsh completion for `config set` is generated from these keys.
 | `web_search_concurrency` | `2` | In-flight `web_search` calls inside one parallel wave |
 | `web_fetch_concurrency` | `4` | In-flight `fetch_url` calls inside one parallel wave |
 | `local_read_concurrency` | `8` | In-flight local reads (`read_file`, `list_dir`, and the other read-only tools) inside one parallel wave |
+| `file_edit_concurrency` | `6` | In-flight `write_file` / `update_file` calls on different paths inside one response |
+| `max_tokens` | `8192` | Completion cap sent to the server so several file edits fit in one reply. `0` omits the field |
 | `auto_start_server` | `true` | Run `lms server start` / `lms load` when nothing is listening |
 | `color` | `true` | ANSI chrome; also honors `NO_COLOR=1` |
 | `context_length` | `0` | `0` = auto-detect from LM Studio; else token window override |

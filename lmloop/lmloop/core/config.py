@@ -53,6 +53,8 @@ MAX_TRANSCRIPT_TOOL_CHARS = "max_transcript_tool_chars"
 WEB_SEARCH_CONCURRENCY = "web_search_concurrency"
 WEB_FETCH_CONCURRENCY = "web_fetch_concurrency"
 LOCAL_READ_CONCURRENCY = "local_read_concurrency"
+FILE_EDIT_CONCURRENCY = "file_edit_concurrency"
+MAX_TOKENS = "max_tokens"
 
 
 @dataclass
@@ -116,6 +118,8 @@ class ConfigSchema:
     web_search_concurrency: int = 2
     web_fetch_concurrency: int = 4
     local_read_concurrency: int = 8
+    file_edit_concurrency: int = 6  # in-flight write_file/update_file calls on distinct paths
+    max_tokens: int = 8192  # completion cap; 0 omits the field. Several file edits fit.
 
 
 DEFAULTS: dict[str, object] = asdict(ConfigSchema())

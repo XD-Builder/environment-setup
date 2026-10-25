@@ -149,6 +149,20 @@ class SessionRestoreTests(unittest.TestCase):
         self.assertTrue(body.endswith(_ELLIPSIS))
         self.assertEqual(_TRANSCRIPT_TOOL_CHARS, 500)
 
+    def test_format_messages_transcript_skips_control_messages(self):
+        from lmloop.core import status as status_mod
+
+        text = format_messages_transcript([
+            {"role": "user", "content": "real question"},
+            status_mod.nudge_message(),
+            status_mod.answer_message(),
+            {"role": "assistant", "content": "answer"},
+        ])
+        self.assertIn("[user] real question", text)
+        self.assertIn("[assistant] answer", text)
+        self.assertNotIn("Tools are no longer available", text)
+        self.assertNotIn("did not call any tools", text)
+
     def test_format_messages_transcript_flattens_images(self):
         text = format_messages_transcript([{
             "role": "user",

@@ -4,16 +4,22 @@ Close methods (clear / finish / erase / reset) must not raise — act() calls
 them from ``finally`` during interrupt. Catch OSError at the write site.
 """
 
+import signal
 import sys
+import threading
 
 from .stream import _think_line_similar
 from ..ui import terminal_size
 
-# Live markdown grows with the answer up to the terminal and never shrinks:
-# a heading / "---" reflow that drops rows would leave leftovers in scrollback
-# if Live's cursor-up count fell. Crop to the newest lines only once the
-# render would overflow the screen. The Live console is one column short of
-# the TTY so a full-width rule cannot wrap an extra row and desync Live.
+# Live markdown on a real TTY uses the alternate screen. A resize reflows
+# lines the terminal already painted; Rich would then cursor-up by the old
+# row count and leave a blank line per SIGWINCH in scrollback. The alt
+# screen is discarded on finish(), which reprints the answer on the main
+# screen. Inline Live (tests, injected consoles) still grows and never
+# shrinks: a heading reflow that drops rows would leave leftovers if Live's
+# cursor-up count fell. Crop to the newest lines only once the render would
+# overflow. The Live console is one column short of the TTY so a full-width
+# rule cannot wrap an extra row and desync Live.
 # Refresh only on new tokens; close Live when tool_calls start.
 
 # Live thinking prints as it streams; erased when tools/answer start.
@@ -226,7 +232,7 @@ class _TailMarkdown:
 
 
 def _live_preview_height() -> int:
-    """Max Live rows: grow with content up to the terminal, not a 16-line box."""
+    """Max inline Live rows: grow with content up to the terminal, not a 16-line box."""
     _, lines = terminal_size()
     return max(4, lines - 2)
 
@@ -235,6 +241,15 @@ def _live_preview_width() -> int:
     """Live console width: one column short so a full-width rule cannot wrap."""
     cols, _ = terminal_size()
     return max(1, cols - 1)
+
+
+def _live_console_dimensions(*, fullscreen: bool) -> tuple:
+    """Width, height for the Live console at the current terminal size."""
+    width = _live_preview_width()
+    if fullscreen:
+        _, lines = terminal_size()
+        return width, max(1, lines)
+    return width, _live_preview_height()
 
 
 class _MarkdownLivePrinter:
@@ -249,6 +264,12 @@ class _MarkdownLivePrinter:
         self._live_rows = 0
         self._color = color
         self._console_override = console
+        self._fullscreen = console is None
+        self._lock = threading.Lock()
+        self._winch_installed = False
+        self._prev_winch = None
+        self._winch_gen = 0
+        self._resize_scheduled = False
 
     @property
     def visible(self) -> bool:
@@ -270,6 +291,76 @@ class _MarkdownLivePrinter:
         self._parts.append(piece)
         self._refresh()
 
+    def _on_winch(self, signum, frame) -> None:
+        """SIGWINCH: repaint on a thread. The handler itself only bumps a counter."""
+        self._winch_gen += 1
+        if self._resize_scheduled:
+            return
+        self._resize_scheduled = True
+        try:
+            threading.Thread(target=self._resize_worker, daemon=True).start()
+        except RuntimeError:
+            self._resize_scheduled = False
+
+    def _resize_worker(self) -> None:
+        seen = -1
+        try:
+            while seen != self._winch_gen and self._live is not None:
+                seen = self._winch_gen
+                self._refresh()
+        finally:
+            self._resize_scheduled = False
+            if seen != self._winch_gen and self._live is not None:
+                self._on_winch(None, None)
+
+    def _arm_winch(self) -> None:
+        if not self._fullscreen or not hasattr(signal, "SIGWINCH"):
+            return
+        if threading.current_thread() is not threading.main_thread():
+            return
+        try:
+            if not sys.stdout.isatty():
+                return
+        except OSError:
+            return
+        self._prev_winch = signal.getsignal(signal.SIGWINCH)
+        try:
+            signal.signal(signal.SIGWINCH, self._on_winch)
+        except ValueError:
+            self._prev_winch = None
+            return
+        self._winch_installed = True
+
+    def _disarm_winch(self) -> None:
+        if not self._winch_installed:
+            return
+        try:
+            signal.signal(signal.SIGWINCH, self._prev_winch)
+        except (ValueError, OSError):
+            pass
+        self._winch_installed = False
+        self._prev_winch = None
+
+    def _sync_live_geometry_locked(self) -> bool:
+        """Retarget the Live console after a resize. Caller holds ``_lock``."""
+        if not self._fullscreen or self._live is None:
+            return False
+        console = getattr(self._live, "console", None)
+        if console is None:
+            return False
+        width, height = _live_console_dimensions(fullscreen=True)
+        if console.width == width and console.height == height:
+            return False
+        console.size = (width, height)
+        render = getattr(self._live, "_live_render", None)
+        if render is not None:
+            render._shape = None
+        self._live_rows = 0
+        # Alt-screen reflow is already wrong; clear before the next full frame.
+        if getattr(self._live, "_alt_screen", False) is True:
+            _tty_write("\033[2J\033[H")
+        return True
+
     def _ensure_live(self) -> None:
         if self._live is not None:
             return
@@ -281,10 +372,11 @@ class _MarkdownLivePrinter:
         if self._console_override is not None:
             console = self._console_override
         else:
+            width, height = _live_console_dimensions(fullscreen=True)
             console = make_console(
                 self._color, force_terminal=True,
-                width=_live_preview_width(),
-                height=_live_preview_height(),
+                width=width,
+                height=height,
             )
         # crop (not ellipsis/visible): _TailMarkdown already fits the
         # terminal. ellipsis kept the *start* of a tall answer and painted a
@@ -293,8 +385,9 @@ class _MarkdownLivePrinter:
         # Refresh only on feed — auto_refresh would redraw an unchanged
         # preamble 12×/s while write_file arguments stream (minutes), and
         # those frames leak into scrollback if anything else writes.
-        # transient on a real TTY: clear the preview so finish() can reprint
-        # the full answer with terminal wrap (reflows on resize).
+        # Real TTY: alternate screen. Resize reflow stays off the main
+        # scrollback; finish() leaves the alt screen and reprints.
+        # Injected consoles stay inline and transient so tests keep the frame.
         self._live = Live(
             _TailMarkdown(""),
             console=console,
@@ -303,9 +396,11 @@ class _MarkdownLivePrinter:
             auto_refresh=False,
             redirect_stdout=False,
             redirect_stderr=False,
-            transient=self._console_override is None,
+            transient=self._fullscreen,
+            screen=self._fullscreen,
         )
         self._live.start()
+        self._arm_winch()
 
     def _measure_rows(self, md: _TailMarkdown) -> int:
         """Rows ``md`` will occupy. Skip mock consoles that tests inject."""
@@ -318,24 +413,33 @@ class _MarkdownLivePrinter:
         return md.row_count(console)
 
     def _refresh(self) -> None:
-        if self._live is None:
-            return
-        rich = _load_rich()
-        if not rich:
-            return
-        md = _TailMarkdown("".join(self._parts), min_rows=self._live_rows)
-        self._live_rows = max(self._live_rows, self._measure_rows(md))
-        md.min_rows = self._live_rows
-        self._live.update(md, refresh=not self._live.auto_refresh)
+        with self._lock:
+            if self._live is None:
+                return
+            self._sync_live_geometry_locked()
+            rich = _load_rich()
+            if not rich:
+                return
+            # Alt screen replaces the whole frame, so a reflow may shrink.
+            # Inline Live must not shrink or cursor-up leaves scrollback rows.
+            min_rows = 0 if self._fullscreen else self._live_rows
+            md = _TailMarkdown("".join(self._parts), min_rows=min_rows)
+            if not self._fullscreen:
+                self._live_rows = max(self._live_rows, self._measure_rows(md))
+                md.min_rows = self._live_rows
+            self._live.update(md, refresh=not self._live.auto_refresh)
 
     def _stop_live(self) -> None:
-        if self._live is None:
+        with self._lock:
+            live = self._live
+            self._live = None
+            self._disarm_winch()
+        if live is None:
             return
         try:
-            self._live.stop()
+            live.stop()
         except OSError:
             pass
-        self._live = None
 
     def reset(self) -> None:
         self._parts = []
@@ -355,7 +459,7 @@ class _MarkdownLivePrinter:
         if self._live is not None:
             self._refresh()
             self._stop_live()
-        # Real TTY: Live was transient, so reprint folded at the current
+        # Real TTY: alt screen is gone, so reprint folded at the current
         # width (lists included). Tests that inject a console keep the Live frame.
         if body and self._console_override is None:
             from ..ui.markdown_view import print_markdown

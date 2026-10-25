@@ -21,6 +21,7 @@ from pathlib import Path
 
 from ..core.commands import MEMORY_VIEW_VERBS, MemoryRequest
 from ..core.config import Config, cfg_bool, cfg_int, cfg_str, project_dir, utc_now
+from ..core import status as status_mod
 from ..capabilities.extract import flatten_content
 
 LEARNING_TYPES = ("pattern", "pitfall", "preference", "architecture", "tool", "operational")
@@ -717,6 +718,8 @@ def format_messages_transcript(messages, max_chars: int = 20000) -> str:
     """
     lines = []
     for m in messages or []:
+        if status_mod.is_control_message(m):
+            continue
         role = m.get("role")
         content = flatten_content(m.get("content")).strip()
         if not content or role == "system":

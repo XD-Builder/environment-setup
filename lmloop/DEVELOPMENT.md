@@ -7,6 +7,18 @@ Architecture (what the pieces are) lives in [docs/ARCHITECTURE.md](docs/ARCHITEC
 This file is the **how**: the engineering bar, where code belongs, and what
 “done” means.
 
+Paths here are relative to this directory — the `lmloop/` folder that contains
+`docs/` and the `lmloop` package. From the environment-setup repo root, prefix
+them with `lmloop/`. `docs/` is not at the repo root, and `lmloop/docs/` is not
+inside the package.
+
+| If a read stops early | Still in this file |
+|---|---|
+| Ownership, registries, import direction | Architecture for feature sharing |
+| Live display, tool waves, halt | Keep components small |
+| Patch target | `lmloop.model.display`, not `lmloop.display` |
+| Which doc to update | Docs stay in lockstep (`README.md`, `docs/ARCHITECTURE.md`, this file) |
+
 Treat this document as a contract. If a change fights it, change the code — or
 update this file in the same diff, with a reason.
 
@@ -214,8 +226,11 @@ Import and patch **where names are defined** (`lmloop.core.config.CONFIG_PATH`,
 
 - One registry: add tools as `ToolDef` rows in `build_tools()`. `tool_names()`
   reads that registry — do not keep a parallel name list. Side-effect-free tools
-  set `concurrent=True`; `run_tool_calls()` batches consecutive concurrent
-  names onto a thread pool and keeps shell/writes/memory serial.
+  set `concurrent=True` and join the shared read/search wave. `write_file` and
+  `update_file` set `wave="file_edit"` so distinct paths run together
+  (`file_edit_concurrency`, default 6) while a write still separates the reads
+  around it. A second edit of the same path waits. Shell, move, delete, and
+  memory stay serial barriers.
 - JSONL I/O is `memory.append_jsonl` / `memory.read_jsonl`. Do not wrap them
   as `_append_jsonl`. ISO timestamps use `config.utc_now()`.
 - HTTP in `web.py` returns `(info, err)` / `(body, err)` so backends do not
@@ -231,16 +246,22 @@ Import and patch **where names are defined** (`lmloop.core.config.CONFIG_PATH`,
   similar table rows in an answer are not a retry loop); `_ThinkingLive` skips
   painting near-duplicate lines that still arrived. Share `_think_line_similar`
   for thinking lines; do not copy that predicate. After halt, `_read_sse`
-  drains a short window for a late tool/answer, then closes — there is no
-  `max_tokens`, so a thinking loop can otherwise fill the context window. A
+  drains a short window for a late tool/answer, then closes. The chat
+  request sets `max_tokens` (default 8192, enough for several file edits;
+  `0` omits the field), but a thinking loop can still run until that cap. A
   halted stream with no `tool_calls` is unfinished: `_halted` is set, reasoning
   is not promoted to content. `act()` nudges gather only when content is empty
   or still narrates a next step (so "let me write the file" cannot end the
   turn). A halted long draft is kept; do not ask the model to regenerate it.
   Do not add similarity thresholds for assistant prose.
-- Live markdown must not sit on an unchanged preamble while tool arguments
-  stream. Close the printer when `tool_calls` start; refresh Live only on
-  `feed` (`auto_refresh` off). Do not halt-and-close the SSE body on a short
+- Live markdown on a real TTY uses Rich's alternate screen and retargets that
+  console on SIGWINCH (or on the next refresh if the signal cannot be
+  installed). Do not cursor-up a stale row count after a resize — that leaves
+  a blank line in scrollback. `finish()` leaves the alt screen and reprints
+  with terminal fold. Inline Live (an injected console) still never shrinks.
+  Do not sit on an unchanged preamble while tool arguments stream. Close the
+  printer when `tool_calls` start; refresh Live only on `feed` (`auto_refresh`
+  off). Do not halt-and-close the SSE body on a short
   repeated sentence while tools may still follow — that would drop a late
   `write_file`. Display skip is the paint layer for that case.
 - Cross-round stop is a gather/answer state machine in `act()`, not a fuzzy
@@ -474,8 +495,8 @@ Run the full suite before you call a change done.
 - **Optional rich:** decorate with `@requires_rich` (or call `rich_available()`)
   instead of repeating `skipTest("rich not installed")`.
 - Patch the module where the name is looked up. `_open_live_display` reads
-  `_rich_live_available` from `lmloop.display`, so patch
-  `lmloop.display._rich_live_available`, not
+  `_rich_live_available` from `lmloop.model.display`, so patch
+  `lmloop.model.display._rich_live_available`, not
   `lmloop.agent._rich_live_available`.
 - Keep tests off `prompt_toolkit` unless they exercise the prompt. TTY helpers
   live in `ui.py` so collapse tests do not import the REPL prompt stack.
@@ -557,7 +578,8 @@ When you are in a file, you own the obvious rot in the hunk you are changing.
   the new contract, update call sites and tests, delete the old one.
 - Config keys with no reader, or readers with no README line.
 - Comments that narrate what the next line does. Comments explain *why* the
-  non-obvious constraint exists (e.g. no `max_tokens` on thinking halt).
+  non-obvious constraint exists (e.g. halt-drain still closes a thinking loop
+  after `max_tokens`).
 
 If a cleanup is too large for the current diff, extract it only if it blocks
 correctness. Otherwise do the small cleanup in-place; do not leave a breadcrumb

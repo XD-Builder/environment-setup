@@ -992,6 +992,55 @@ class MemoryMineAndUntilTests(unittest.TestCase):
             self.assertIn("memory mine did not finish", err.getvalue())
             self.assertEqual(len(state.messages), 3)
 
+    def test_mine_sessions_requires_recall_memory(self):
+        from lmloop.capabilities import tools
+        from lmloop.entry.repl import mine_sessions
+
+        hints = []
+        console = Console(color=False)
+        console.hint = lambda msg: hints.append(msg)
+        display = Mock()
+        display.for_isolated.return_value = {
+            "echo": lambda *a, **k: None,
+            "echo_status": lambda *a, **k: None,
+            "context_limit": 8192,
+            "context_reserve": 4096,
+            "workspace_root": Path.cwd(),
+        }
+        session_log = Path(tempfile.gettempdir()) / "mine-test.jsonl"
+        refuse_msgs = [
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "cannot mine"},
+        ]
+        ok_msgs = [
+            {"role": "user", "content": "task"},
+            {
+                "role": "assistant",
+                "tool_calls": [{"function": {"name": "recall_memory", "arguments": "{}"}}],
+            },
+            {"role": "assistant", "content": "saved nothing"},
+        ]
+        with patch("lmloop.entry.repl.skills.load_skill", return_value="# retro"), \
+             patch("lmloop.entry.repl.loop_mod.isolated_act") as iso:
+            iso.return_value = (refuse_msgs, session_log)
+            rc = mine_sessions(
+                {"confirm_shell": False}, "m", None, console, lambda _: False,
+                transcript="transcript", display=display,
+            )
+            self.assertEqual(rc, 1)
+            self.assertEqual(iso.call_args.kwargs.get("tool_only"), tools.MINE_TOOLS)
+            self.assertFalse(any("learnings →" in h for h in hints))
+
+            hints.clear()
+            iso.return_value = (ok_msgs, session_log)
+            with patch("lmloop.memory.learnings_file", return_value=Path("/tmp/learnings.jsonl")):
+                rc = mine_sessions(
+                    {"confirm_shell": False}, "m", None, console, lambda _: False,
+                    transcript="transcript", display=display,
+                )
+            self.assertEqual(rc, 0)
+            self.assertTrue(any("learnings →" in h for h in hints))
+
     def test_memory_audit_leaves_live_thread(self):
         from lmloop.entry.repl import _build_slash_commands, _cmd_memory
 

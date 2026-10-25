@@ -17,6 +17,29 @@ from .stream import StreamError, _read_sse
 API_CHAT_PATH = "/chat/completions"
 
 
+def completion_token_cap(cfg: Config, messages: list) -> int:
+    """Completion token budget for one chat request. 0 means omit ``max_tokens``.
+
+    ``max_tokens`` is the cap (default large enough for several file-edit tool
+    calls). When ``context_length`` is set, the cap is clamped to the room
+    left after a rough prompt estimate so a small window is not rejected.
+    """
+    want = cfg_int(cfg, "max_tokens")
+    if want < 1:
+        return 0
+    ctx = cfg_int(cfg, "context_length")
+    if ctx < 1:
+        return want
+    try:
+        prompt = len(json.dumps(status_mod.api_messages(messages))) // 4
+    except (TypeError, ValueError):
+        prompt = 0
+    room = ctx - prompt - 64
+    if room < 1:
+        return 1
+    return min(want, room)
+
+
 def _chat_request(cfg: Config, model: str, messages: list, tool_specs: "list | None",
                   stream: bool) -> urllib.request.Request:
     payload = {
@@ -25,6 +48,9 @@ def _chat_request(cfg: Config, model: str, messages: list, tool_specs: "list | N
         "temperature": cfg_float(cfg, "temperature"),
         "stream": stream,
     }
+    cap = completion_token_cap(cfg, messages)
+    if cap > 0:
+        payload["max_tokens"] = cap
     if stream:
         # Ask the server for a final usage chunk (OpenAI-compatible; ignored if unsupported).
         payload["stream_options"] = {"include_usage": True}

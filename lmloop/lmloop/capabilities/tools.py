@@ -11,6 +11,7 @@ import json
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -40,12 +41,20 @@ DEFAULT_SHELL_TIMEOUT_S = config.DEFAULTS["shell_timeout_s"]
 CATEGORY_LOCAL_READ = "local_read"
 CATEGORY_WEB_SEARCH = "web_search"
 CATEGORY_WEB_FETCH = "web_fetch"
+CATEGORY_FILE_EDIT = "file_edit"
+# Empty ToolDef.wave joins the shared read/search wave. File edits stay apart
+# so a write is still a barrier between reads (the later read sees the write).
+WAVE_SHARED = "*"
+WAVE_FILE_EDIT = "file_edit"
 # Category → config key for that category's in-flight cap.
 _POOL_LIMIT_KEYS = {
     CATEGORY_LOCAL_READ: config.LOCAL_READ_CONCURRENCY,
     CATEGORY_WEB_SEARCH: config.WEB_SEARCH_CONCURRENCY,
     CATEGORY_WEB_FETCH: config.WEB_FETCH_CONCURRENCY,
+    CATEGORY_FILE_EDIT: config.FILE_EDIT_CONCURRENCY,
 }
+_PROMPT_LOCK = threading.Lock()
+_TRASH_LOCK = threading.Lock()
 
 _TRUNCATE_HINT = (
     "\n... [truncated, {total} chars total]. "
@@ -250,6 +259,7 @@ class ToolDef:
     enum_fields: dict = field(default_factory=dict)
     concurrent: bool = False
     category: str = ""  # CATEGORY_* when concurrent; empty for a barrier
+    wave: str = ""  # empty + concurrent = shared read/search wave; else a private wave
 
     def openai_spec(self) -> dict:
         return {
@@ -751,6 +761,11 @@ def backup_file(p: Path, root: Path) -> "Path | None":
     file, outside the workspace) or the copy failed. Failure never blocks
     the edit; the tool result simply omits the backup note.
     """
+    with _TRASH_LOCK:
+        return _backup_file(p, root)
+
+
+def _backup_file(p: Path, root: Path) -> "Path | None":
     try:
         if not p.is_file() or not _in_workspace(p, root):
             return None
@@ -1062,6 +1077,9 @@ READONLY_OMIT = frozenset({
     "write_file", "update_file", "move_file", "delete_file",
     "remember", "log_decision", "graph_add_edge", "reflect_thought",
 })
+MINE_TOOLS = frozenset({
+    "recall_memory", "remember", "log_decision", "graph_add_edge",
+})
 
 
 def shell_confirm_flags(cfg: Config) -> "tuple[bool, bool]":
@@ -1077,14 +1095,16 @@ def shell_confirm_flags(cfg: Config) -> "tuple[bool, bool]":
 def build_tools(cfg: Config, confirm_gate=None,
                 workspace_root: "Path | None" = None,
                 readonly: bool = False,
-                extra_readable: "list[Path] | None" = None) -> "tuple[list[dict], dict]":
+                extra_readable: "list[Path] | None" = None,
+                only: "frozenset[str] | None" = None) -> "tuple[list[dict], dict]":
     """Returns (openai tool specs, name -> callable) derived from ToolDef list.
 
     ``readonly=True`` omits the READONLY_OMIT tools (file writes, memory
-    writes, graph edges) from the returned specs and impls. The module registry
-    always keeps the full set so ``dispatch()`` validation is not poisoned
-    by the last readonly or use_graph=false build. Prompt injection uses
-    ``tool_names(cfg=...)``.
+    writes, graph edges) from the returned specs and impls. ``only`` restricts
+    the returned set to those names (after use_graph filtering). The module
+    registry always keeps the full set so ``dispatch()`` validation is not
+    poisoned by the last readonly or use_graph=false build. Prompt injection
+    uses ``tool_names(cfg=...)``.
     """
     global _TOOL_DEFS, MAX_OUTPUT
 
@@ -1197,14 +1217,19 @@ def build_tools(cfg: Config, confirm_gate=None,
             "path is relative to that workspace unless it is absolute. "
             "Overwriting an existing file asks the user first — use update_file "
             "to edit existing files. User-@ attached paths outside the workspace "
-            "may be written only after explicit user confirmation.",
+            "may be written only after explicit user confirmation. "
+            "When the task creates several files, call this once per file in "
+            "the same response.",
             {"path": s, "content": s}, ["path", "content"],
             lambda path, content: write_file(
                 path, content, workspace_root=root,
-                extra_readable=extra, confirm_gate=gate,
+                extra_readable=extra, confirm_gate=_serialize_prompts(gate),
                 confirm_overwrite=confirm_destructive,
             ),
             allow_empty=("content",),
+            concurrent=True,
+            category=CATEGORY_FILE_EDIT,
+            wave=WAVE_FILE_EDIT,
         ),
         ToolDef(
             "update_file",
@@ -1213,7 +1238,9 @@ def build_tools(cfg: Config, confirm_gate=None,
             "match the file text exactly (copy it from read_file, including "
             "indentation) and, unless replace_all is true, exactly once; include "
             "surrounding lines to disambiguate. new_string may be empty to delete. "
-            "Returns a unified diff of the change.",
+            "Returns a unified diff of the change. Independent edits to different "
+            "files belong in one response — call this once per file, not one "
+            "file per turn.",
             {
                 "path": s,
                 "old_string": s,
@@ -1223,11 +1250,15 @@ def build_tools(cfg: Config, confirm_gate=None,
             ["path", "old_string", "new_string"],
             lambda path, old_string, new_string, replace_all=False: update_file(
                 path, old_string, new_string, replace_all=replace_all,
-                workspace_root=root, extra_readable=extra, confirm_gate=gate,
+                workspace_root=root, extra_readable=extra,
+                confirm_gate=_serialize_prompts(gate),
                 cfg=cfg,
             ),
             allow_empty=("new_string",),
             bool_fields=("replace_all",),
+            concurrent=True,
+            category=CATEGORY_FILE_EDIT,
+            wave=WAVE_FILE_EDIT,
         ),
         ToolDef(
             "move_file",
@@ -1340,8 +1371,10 @@ def build_tools(cfg: Config, confirm_gate=None,
         ToolDef(
             "remember",
             "Save a durable learning to project memory so future sessions know it. "
-            "Use for reusable insights, not turn-level trivia. After saving, the "
-            "user-visible reply must include `Prior learning applied: <key>`.",
+            "Only if it would change behavior next session — a pitfall, a command "
+            "that will recur, a convention, or a user correction. Skip one-off "
+            "facts and vague advice; noisy memory is worse than none. After "
+            "saving, the user-visible reply must include `Prior learning applied: <key>`.",
             {
                 "insight": s,
                 "type": {"type": "string", "enum": list(memory.LEARNING_TYPES)},
@@ -1410,6 +1443,8 @@ def build_tools(cfg: Config, confirm_gate=None,
     _TOOL_DEFS = {d.name: d for d in defs}
     if not config.cfg_bool(cfg, "use_graph"):
         defs = [d for d in defs if d.name != "graph_add_edge"]
+    if only is not None:
+        defs = [d for d in defs if d.name in only]
     if readonly:
         defs = [d for d in defs if d.name not in READONLY_OMIT]
     specs = [d.openai_spec() for d in defs]
@@ -1419,8 +1454,66 @@ def build_tools(cfg: Config, confirm_gate=None,
 
 def tool_is_concurrent(name: str) -> bool:
     """True when consecutive calls of this tool may share a parallel wave."""
+    return tool_wave(name) is not None
+
+
+def tool_wave(name: str) -> "str | None":
+    """Wave id for ``name``, or None when the tool is a barrier.
+
+    Concurrent tools with an empty ``wave`` share ``WAVE_SHARED`` (reads and
+    web). File edits use ``WAVE_FILE_EDIT`` so they batch with each other and
+    still separate a later read from an earlier one.
+    """
     tool = _TOOL_DEFS.get(name)
-    return bool(tool is not None and tool.concurrent)
+    if tool is None or not tool.concurrent:
+        return None
+    return tool.wave or WAVE_SHARED
+
+
+def _serialize_prompts(gate):
+    """One y/N prompt at a time when file edits run together."""
+    if gate is None:
+        return None
+
+    def confirm(command: str) -> bool:
+        with _PROMPT_LOCK:
+            return bool(gate(command))
+
+    return confirm
+
+
+def _norm_edit_path(path: str) -> str:
+    text = str(path).replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text
+
+
+def _split_file_edit_group(calls: list, indices: list) -> "list[list[int]]":
+    """Keep a second edit of the same path behind the first. Unknown paths stay alone."""
+    groups: "list[list[int]]" = []
+    current: "list[int]" = []
+    seen: set = set()
+    for i in indices:
+        raw = tool_path_argument(calls[i][1])
+        if not raw:
+            if current:
+                groups.append(current)
+                current = []
+                seen = set()
+            groups.append([i])
+            continue
+        key = _norm_edit_path(raw)
+        if key in seen:
+            groups.append(current)
+            current = [i]
+            seen = {key}
+        else:
+            current.append(i)
+            seen.add(key)
+    if current:
+        groups.append(current)
+    return groups
 
 
 def _pool_limit(category: str, cfg: Config) -> int:
@@ -1434,8 +1527,10 @@ def _pool_limit(category: str, cfg: Config) -> int:
 def concurrent_groups(names: list) -> "list[list[int]]":
     """Index groups: one wave of consecutive concurrent tools; others alone.
 
-    A non-concurrent tool is a barrier. Category caps are applied inside the
-    wave, so a read and a web search in the same wave still overlap.
+    A non-concurrent tool is a barrier. Consecutive tools share a group only
+    when they are on the same wave, so a read and a web search overlap, but a
+    file edit does not join that wave. Category caps apply inside the wave.
+    A repeated path inside a file-edit group is split later, in ``run_tool_calls``.
 
     Examples::
 
@@ -1443,21 +1538,22 @@ def concurrent_groups(names: list) -> "list[list[int]]":
         → [[0, 1], [2], [3]]
         ["read_file", "web_search", "web_search", "read_file"]
         → [[0, 1, 2, 3]]
-        ["write_file", "run_shell"]
-        → [[0], [1]]
+        ["write_file", "update_file", "run_shell"]
+        → [[0, 1], [2]]
     """
     groups: "list[list[int]]" = []
     i = 0
     while i < len(names):
-        if tool_is_concurrent(names[i]):
-            j = i + 1
-            while j < len(names) and tool_is_concurrent(names[j]):
-                j += 1
-            groups.append(list(range(i, j)))
-            i = j
+        wave = tool_wave(names[i])
+        if wave is None:
+            groups.append([i])
+            i += 1
             continue
-        groups.append([i])
-        i += 1
+        j = i + 1
+        while j < len(names) and tool_wave(names[j]) == wave:
+            j += 1
+        groups.append(list(range(i, j)))
+        i = j
     return groups
 
 
@@ -1485,11 +1581,12 @@ def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: Config, o
 
 
 def run_tool_calls(impls: dict, calls: list, cfg: Config | None = None) -> list:
-    """Dispatch ``(name, arguments)`` pairs. Consecutive concurrent tools share a wave.
+    """Dispatch ``(name, arguments)`` pairs. Consecutive same-wave tools share a pool.
 
-    Results stay in call order. Side-effect tools (shell, writes, memory) stay
-    serial and act as barriers. Inside a wave, each category has its own pool
-    sized to its config cap (web_search, web_fetch, local_read).
+    Results stay in call order. Shell, move, delete, and memory stay serial
+    barriers. ``write_file`` / ``update_file`` on different paths share a file-edit
+    wave capped by ``file_edit_concurrency``; a second edit of the same path
+    waits. Inside a read/search wave, each category has its own pool.
     """
     n = len(calls)
     if n == 0:
@@ -1501,12 +1598,16 @@ def run_tool_calls(impls: dict, calls: list, cfg: Config | None = None) -> list:
     out: list = [None] * n
     names = [c[0] for c in calls]
     for group in concurrent_groups(names):
-        if len(group) == 1:
-            i = group[0]
-            name, args = calls[i]
-            out[i] = dispatch(impls, name, args)
-            continue
-        _run_wave(impls, calls, names, group, cfg, out)
+        subgroups = [group]
+        if len(group) > 1 and tool_wave(names[group[0]]) == WAVE_FILE_EDIT:
+            subgroups = _split_file_edit_group(calls, group)
+        for sub in subgroups:
+            if len(sub) == 1:
+                i = sub[0]
+                name, args = calls[i]
+                out[i] = dispatch(impls, name, args)
+                continue
+            _run_wave(impls, calls, names, sub, cfg, out)
     return out
 
 

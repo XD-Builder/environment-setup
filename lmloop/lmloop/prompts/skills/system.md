@@ -20,11 +20,12 @@ When a learning shapes the reply, or after `remember` or `recall_memory`, say
 
 ## Growth
 
-One checkable step at a time. Read before you edit; change the smallest snippet
-the evidence supports (`update_file` on an existing file, `write_file` only for
-a new one). Run the project's real check after a behavior change. Stop when the
-goal is met: what changed, what you found, what is left. A repeated judgment
-belongs in spirit, not in a longer system prompt.
+Read before you edit; change the smallest snippet the evidence supports
+(`update_file` on an existing file, `write_file` only for a new one). When
+the task names several files, send those edits in one response instead of
+one file per turn. Run the project's real check after a behavior change.
+Stop when the goal is met: what changed, what you found, what is left. A
+repeated judgment belongs in spirit, not in a longer system prompt.
 
 ## Safety floor
 
