@@ -31,17 +31,19 @@ lmloop/
 ├── lmloop/
 │   ├── __init__.py             # version string
 │   ├── __main__.py             # raise SystemExit(entry.cli.main())
-│   ├── agent.py                # gather/answer tool loop, skill drafting
+│   ├── agent.py                # gather/answer tool loop, ActTurn, skill drafting
 │   ├── loop.py                 # until facade (CLI/REPL + test patches)
 │   ├── graph.py                # graph facade
 │   ├── entry/                  # human-facing shell
 │   │   ├── cli.py              # argparse subcommands → REPL or one-shot
 │   │   ├── repl.py             # interactive loop with slash commands
-│   │   └── prompt.py           # prompt_toolkit session, completers
+│   │   ├── prompt.py           # prompt_toolkit session, completers
+│   │   ├── completion.py       # zsh completion from CommandMeta
+│   │   └── sandbox_cli.py      # sandbox subcommand and --docker startup
 │   ├── model/                  # chat, stream, display, LMS (no loop/graph)
 │   │   ├── chat.py             # POST /v1/chat/completions (leaf)
 │   │   ├── stream.py           # SSE ingest, overlap, repeat-halt
-│   │   ├── display.py          # spinner, live printers, thinking lines
+│   │   ├── display.py          # spinner, live printers, RoundDisplay, thinking lines
 │   │   └── server.py           # LMS bring-up, models, context length, vision
 │   ├── prompts/                # playbooks + steering (markdown co-located)
 │   │   ├── skills/             # packaged skill prompts + skills package
@@ -94,18 +96,19 @@ lmloop/
 │   │   └── snapshot.py         # git temp-index refs before autonomous maker steps
 │   ├── host/                   # campaign board (workers do not append here)
 │   │   └── campaign.py         # multi-day plan, board, reflect ticks
-│   ├── core/                   # config, commands, status, usage
+│   ├── core/                   # config, commands, status, usage, continue policy
 │   │   ├── config.py           # Config class, ~/.lmloop/config.json, DEFAULTS, cfg_* accessors
 │   │   ├── commands.py         # CommandMeta table (CLI + slash stems)
 │   │   ├── status.py           # resume / until copy
-│   │   └── usage.py            # local feature-usage JSONL
+│   │   ├── usage.py            # local feature-usage JSONL
+│   │   └── continue_policy.py  # intent prefixes, grounding, nudge/halt
 │   ├── harness/                # evals, contracts, traces, harness reports
 │   │   ├── evals.py            # usage gaps + abstention Act/Abstain/Pair
 │   │   ├── contracts.py        # assertion pyramid (schema, rubric, trajectory, gates)
 │   │   ├── harness_bundle.py   # harness_bundle_id fingerprint (H1, leaf)
 │   │   ├── harness_report.py   # opt-in execution report from run logs (H2)
 │   │   └── traces.py           # local spans, eval queue, golden inbox
-│   ├── company/                # manifest, allowlist, worktrees, worker, orchestrator
+│   ├── company/                # manifest (packet + envelope), allowlist, worktrees, worker, orchestrator
 │   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
 │   └── ui/                     # Console + markdown (no top-level ui.py — package only)
 │       ├── console.py          # ANSI theming, status bars, clipboard
@@ -240,7 +243,7 @@ sequenceDiagram
 
 ## The Agent Loop
 
-**Files:** `agent.py` (gather/answer), `model/chat.py` (HTTP)
+**Files:** `agent.py` (gather/answer, `ActTurn`), `model/display.py` (`RoundDisplay`), `core/continue_policy.py` (nudge/halt), `model/chat.py` (HTTP)
 
 The heart of lmloop. A single function, `act()`, implements the multi-round tool loop. Every generated token comes from `chat._chat()` posting to `{base_url}/chat/completions`. Call inventory and budgets: [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md).
 

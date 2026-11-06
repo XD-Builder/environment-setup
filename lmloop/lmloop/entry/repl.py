@@ -1,6 +1,7 @@
 """Interactive REPL for lmloop."""
 
 import re
+import shlex
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -744,7 +745,10 @@ def _restore_usage(console: Console) -> None:
 
 def parse_restore_arg(arg: str):
     """Return (kind, query, fresh) or None when usage should be shown."""
-    parts = [p for p in (arg or "").split() if p]
+    try:
+        parts = shlex.split(arg or "")
+    except ValueError:
+        return None
     if not parts:
         return None
     fresh = False

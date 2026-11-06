@@ -9,8 +9,10 @@ Design rules (borrowed from gstack):
 - Everything is human-readable JSONL/markdown under ~/.lmloop — no database.
 """
 
+import fcntl
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -59,10 +61,23 @@ def _kg(slug: "str | None" = None):
 
 
 def append_jsonl(path: Path, row: dict) -> None:
-    """Append one JSON object as a line. Creates parent dirs."""
+    """Append one JSON object as a line. Creates parent dirs.
+
+    Exclusive flock so two processes can append the same file. One line is
+    one write. Callers that must not write (company workers, campaign board
+    readers) still must not call this.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    line = (json.dumps(row, ensure_ascii=False) + "\n").encode()
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            os.write(fd, line)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _fence_memory(body: str) -> str:

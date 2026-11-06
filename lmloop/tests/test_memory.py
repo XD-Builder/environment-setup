@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -27,6 +28,31 @@ from lmloop.memory import (
 
 
 class MemoryTests(unittest.TestCase):
+    def test_append_jsonl_concurrent_writers(self):
+        from lmloop.memory import append_jsonl
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "rows.jsonl"
+            errors: list = []
+
+            def write(i: int) -> None:
+                try:
+                    for n in range(40):
+                        append_jsonl(path, {"i": i, "n": n})
+                except Exception as exc:
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=write, args=(i,)) for i in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [])
+            lines = path.read_text().splitlines()
+            self.assertEqual(len(lines), 160)
+            for line in lines:
+                json.loads(line)
+
     def test_read_session_keeps_whole_lines(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "session.jsonl"

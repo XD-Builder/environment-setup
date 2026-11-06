@@ -775,5 +775,19 @@ class GraphGatePolicyTests(unittest.TestCase):
         self.assertTrue(run.is_done())
 
 
+class UnverifiedCheckTests(unittest.TestCase):
+    def test_quoted_check_stays_one_command(self):
+        from lmloop.flow.graph_runner import annotate_unverified_commands
+
+        text = (
+            "node build until --check 'not-a-real-bin -m unittest' "
+            "make tests pass"
+        )
+        out = annotate_unverified_commands(text, docker=False)
+        self.assertIn("unverified: not-a-real-bin -m unittest", out)
+        comment = out.split("unverified:", 1)[1]
+        self.assertNotIn("make tests", comment)
+
+
 if __name__ == "__main__":
     unittest.main()

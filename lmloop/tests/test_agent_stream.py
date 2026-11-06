@@ -7,6 +7,7 @@ import urllib.error
 from unittest import mock
 
 from lmloop import agent
+from lmloop.core import continue_policy as policy
 from lmloop.model import display
 from lmloop.model import stream as stream_mod
 from lmloop.model.server import ServerError
@@ -498,15 +499,15 @@ class ContinueNudgeTests(unittest.TestCase):
             "Let me dive deeper into the source code to understand "
             "the architecture and find potential improvements."
         )
-        self.assertTrue(agent._should_nudge_continue(text, turn_tools=3, nudges=0, max_nudges=2))
-        # First-round plan-only (no tools yet) should also nudge.
-        self.assertTrue(agent._should_nudge_continue(text, turn_tools=0, nudges=0, max_nudges=2))
-        self.assertFalse(agent._should_nudge_continue(text, turn_tools=3, nudges=2, max_nudges=2))
+        self.assertTrue(policy._should_nudge_continue(text, nudges=0, max_nudges=2))
+        # First-round plan-only uses the same predicate as a post-tool plan.
+        self.assertTrue(policy._should_nudge_continue(text, nudges=0, max_nudges=2))
+        self.assertFalse(policy._should_nudge_continue(text, nudges=2, max_nudges=2))
 
     def test_empty_after_tools_is_done_not_nudge(self):
         """Many models finish a successful tool turn with an empty final message."""
-        self.assertFalse(agent._should_nudge_continue("", turn_tools=3, nudges=0, max_nudges=2))
-        self.assertFalse(agent._should_nudge_continue("   ", turn_tools=3, nudges=0, max_nudges=2))
+        self.assertFalse(policy._should_nudge_continue("", nudges=0, max_nudges=2))
+        self.assertFalse(policy._should_nudge_continue("   ", nudges=0, max_nudges=2))
 
     def test_skips_real_answers(self):
         answer = (
@@ -514,7 +515,7 @@ class ContinueNudgeTests(unittest.TestCase):
             "1. Add caching\n2. Split the API layer\n3. Tighten types"
         )
         self.assertFalse(
-            agent._should_nudge_continue(answer, turn_tools=5, nudges=0, max_nudges=2),
+            policy._should_nudge_continue(answer, nudges=0, max_nudges=2),
         )
 
     def test_skips_grounded_looking_at_answers(self):
@@ -522,7 +523,7 @@ class ContinueNudgeTests(unittest.TestCase):
             "Looking at the logs, the crash is a nil deref in main.go:42."
         )
         self.assertFalse(
-            agent._should_nudge_continue(answer, turn_tools=3, nudges=0, max_nudges=2),
+            policy._should_nudge_continue(answer, nudges=0, max_nudges=2),
         )
 
     def test_detects_intent_after_status_preamble(self):
@@ -537,7 +538,7 @@ class ContinueNudgeTests(unittest.TestCase):
             "Let me start with web searches."
         )
         self.assertTrue(
-            agent._should_nudge_continue(text, turn_tools=2, nudges=0, max_nudges=2),
+            policy._should_nudge_continue(text, nudges=0, max_nudges=2),
         )
 
     def test_act_nudges_when_model_narrates_without_tools(self):
@@ -744,13 +745,20 @@ class ContinueNudgeTests(unittest.TestCase):
         self.assertEqual(dot_only, [])  # the dot string is not kept in the thread
         self.assertEqual(messages[-1].get("content"), "Here is the review.")
 
+    def test_prefix_and_grounded_line(self):
+        self.assertTrue(policy._line_has_intent("Let me"))
+        self.assertFalse(policy._line_has_intent("Done."))
+        self.assertTrue(policy._looks_grounded("crash in main.go:42"))
+        self.assertTrue(policy._looks_grounded("see `main.py`"))
+        self.assertFalse(policy._looks_grounded("Let me look"))
+
     def test_is_noise(self):
-        self.assertTrue(agent._is_noise(""))
-        self.assertTrue(agent._is_noise(".\n\n.\n\n."))
-        self.assertTrue(agent._is_noise("--- ---"))
-        self.assertTrue(agent._is_noise("."))
-        self.assertFalse(agent._is_noise("1."))
-        self.assertFalse(agent._is_noise("Let me"))
+        self.assertTrue(policy._is_noise(""))
+        self.assertTrue(policy._is_noise(".\n\n.\n\n."))
+        self.assertTrue(policy._is_noise("--- ---"))
+        self.assertTrue(policy._is_noise("."))
+        self.assertFalse(policy._is_noise("1."))
+        self.assertFalse(policy._is_noise("Let me"))
 
     def test_accumulate_usage_without_usage_zeros_last_round(self):
         """A halted stream closes before the usage chunk; the round line must
@@ -766,16 +774,16 @@ class ContinueNudgeTests(unittest.TestCase):
         self.assertEqual(stats["prompt_tokens"], 105)
 
     def test_should_nudge_halt_empty_vs_draft(self):
-        self.assertTrue(agent._should_nudge_halt("", nudges=0, max_nudges=2))
-        self.assertTrue(agent._should_nudge_halt(
+        self.assertTrue(policy._should_nudge_halt("", nudges=0, max_nudges=2))
+        self.assertTrue(policy._should_nudge_halt(
             "Let me write the file now.", nudges=0, max_nudges=2,
         ))
         draft = (
             "1     Helios result     Group North   28,579\n"
             "5     Orion result      Group North   33,945\n"
         )
-        self.assertFalse(agent._should_nudge_halt(draft, nudges=0, max_nudges=2))
-        self.assertFalse(agent._should_nudge_halt("", nudges=2, max_nudges=2))
+        self.assertFalse(policy._should_nudge_halt(draft, nudges=0, max_nudges=2))
+        self.assertFalse(policy._should_nudge_halt("", nudges=2, max_nudges=2))
 
 
 class MergeToolCallDeltaTests(unittest.TestCase):
@@ -1390,7 +1398,7 @@ class ActIntegrationTests(unittest.TestCase):
         }
         echoed = []
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
-             mock.patch.object(agent, "_GeneratingIndicator") as ind_cls:
+             mock.patch.object(display, "_GeneratingIndicator") as ind_cls:
             ind = mock.Mock()
             ind_cls.return_value = ind
             agent.act(
@@ -1428,8 +1436,8 @@ class ActIntegrationTests(unittest.TestCase):
                 self.visible = False
 
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
-             mock.patch.object(agent, "_open_live_display", return_value=(FakeMD(), "markdown")), \
-             mock.patch.object(agent, "_GeneratingIndicator") as ind_cls:
+             mock.patch.object(display, "_open_live_display", return_value=(FakeMD(), "markdown")), \
+             mock.patch.object(display, "_GeneratingIndicator") as ind_cls:
             ind = mock.Mock()
             ind_cls.return_value = ind
             agent.act(
@@ -1519,7 +1527,7 @@ class ActIntegrationTests(unittest.TestCase):
 
         with mock.patch("urllib.request.urlopen", return_value=FakeResp(body)), \
              mock.patch.object(
-                 agent, "_open_live_display",
+                 display, "_open_live_display",
                  return_value=(TrackingPrinter(lambda *_a: None), "plain"),
              ), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
@@ -1570,7 +1578,7 @@ class ActIntegrationTests(unittest.TestCase):
             side_effect=[FakeResp(round1), FakeResp(round2)],
         ), \
              mock.patch.object(
-                 agent, "_open_live_display",
+                 display, "_open_live_display",
                  return_value=(TrackingPrinter(lambda *_a: None), "plain"),
              ), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
@@ -1637,10 +1645,10 @@ class ActIntegrationTests(unittest.TestCase):
             side_effect=[FakeResp(round1), FakeResp(round2)],
         ), \
              mock.patch.object(
-                 agent, "_open_live_display",
+                 display, "_open_live_display",
                  return_value=(QuietPrinter(None), "markdown"),
              ), \
-             mock.patch.object(agent, "_GeneratingIndicator", TrackingInd), \
+             mock.patch.object(display, "_GeneratingIndicator", TrackingInd), \
              mock.patch.object(agent.tools, "build_tools", return_value=([], {})), \
              mock.patch.object(agent.tools, "dispatch", return_value="ok"):
             agent.act(

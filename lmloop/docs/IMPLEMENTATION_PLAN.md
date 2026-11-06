@@ -37,6 +37,7 @@ and what to move to `archived/` when done.
 | [DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) | Spec | **P0–P5 shipped** | `archived/` |
 | [DESIGN_CLAUDE_CODE_PARITY.md](DESIGN_CLAUDE_CODE_PARITY.md) | Spec | **Proposed** — MCP + harness parity | Stay in `docs/` until M0–M2 ship |
 | [DESIGN_SUPERPOWERS.md](DESIGN_SUPERPOWERS.md) | Methodology port + cuts | **Shipped** — skill index, plan ledger, one review, finish menu | Stay in `docs/` so the cuts are not rebuilt |
+| [designs/2026-11-05-structural-decomposition.md](designs/2026-11-05-structural-decomposition.md) | Loop, CLI, company, JSONL, tool-wave ownership | **Shipped** — spec [plans/2026-11-05-structural-decomposition.md](plans/2026-11-05-structural-decomposition.md) | Stay until a later pass archives it with the other shipped structure notes |
 
 **Archival rule:** When a design doc’s **user-facing** behavior is in README + ARCHITECTURE and
 remaining ideas live only in Non-goals, set `Status: shipped`, move the file to

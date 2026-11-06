@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import difflib
-import re
 import shlex
 import shutil
 from datetime import datetime, timezone
@@ -645,17 +644,28 @@ def _probe_argv0(argv0: str, *, docker: bool) -> bool:
     return False
 
 
+def _until_check_command(line: str) -> str:
+    """The ``--check`` operand, or '' when the line has none."""
+    try:
+        parts = shlex.split(line)
+    except ValueError:
+        return ""
+    if "--check" not in parts:
+        return ""
+    idx = parts.index("--check")
+    if idx + 1 >= len(parts):
+        return ""
+    return parts[idx + 1]
+
+
 def annotate_unverified_commands(text: str, *, docker: bool) -> str:
     out: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("node ") and " until " in stripped:
-            if "--check" in stripped:
-                chk = re.search(r"--check\s+(\S+(?:\s+\S+)*)", stripped)
-                if chk:
-                    cmd = chk.group(1).strip("`'\"")
-                    if not _probe_argv0(_command_argv0(cmd), docker=docker):
-                        line = line.rstrip() + f"  # unverified: {cmd}"
+            cmd = _until_check_command(stripped)
+            if cmd and not _probe_argv0(_command_argv0(cmd), docker=docker):
+                line = line.rstrip() + f"  # unverified: {cmd}"
         out.append(line)
     return "\n".join(out)
 

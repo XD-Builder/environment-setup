@@ -495,6 +495,14 @@ class RestoreArgTests(unittest.TestCase):
         self.assertEqual(parse_restore_arg("session 2 fresh"), ("session", "2", True))
         self.assertEqual(parse_restore_arg("checkpoint latest"), ("checkpoint", "latest", False))
         self.assertEqual(parse_restore_arg("latest"), ("session", "latest", False))
+        self.assertEqual(
+            parse_restore_arg('session "my notes"'),
+            ("session", "my notes", False),
+        )
+        self.assertEqual(
+            parse_restore_arg("checkpoint 'plan v2' fresh"),
+            ("checkpoint", "plan v2", True),
+        )
         self.assertIsNone(parse_restore_arg(""))
         self.assertIsNone(parse_restore_arg("session 1 extra"))
 
