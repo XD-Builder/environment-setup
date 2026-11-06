@@ -82,6 +82,59 @@ class SkillsDiscoveryTests(unittest.TestCase):
                 self.assertIn("demo", skills.list_skills())
 
 
+class GrillAndDisciplineTests(unittest.TestCase):
+    def test_grill_is_public_and_slash_loadable(self):
+        self.assertIn("grill", skills.list_skills())
+        body = skills.load_skill("grill", public_only=True)
+        self.assertIn("Index: no", body)
+        self.assertIn("GLOSSARY.md", body)
+        self.assertIn("docs/adr/", body)
+        self.assertIn("Do not ask whether to record it", body)
+
+    def test_grill_stays_out_of_the_index_and_read_skill_refuses(self):
+        index = skills.skill_index_block()
+        self.assertIn("`tdd`:", index)
+        self.assertNotIn("`grill`", index)
+        refused = skills.read_skill("grill")
+        self.assertIn("The user starts this with /grill", refused)
+        self.assertNotIn("GLOSSARY.md", refused)
+        self.assertEqual(skills.read_skill("grill", "loop"), refused)
+
+    def test_user_index_opt_out_is_refused_by_read_skill(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "interview.md").write_text(
+                "# Skill: interview — ask\n\nUse when: the user asked.\n\n"
+                "Index: no\n\nSECRET_INTERVIEW\n",
+                encoding="utf-8",
+            )
+            with patch.object(skills, "USER_SKILLS_DIR", root):
+                self.assertIn("interview", skills.list_skills())
+                self.assertNotIn("`interview`", skills.skill_index_block())
+                self.assertIn("/interview", skills.read_skill("interview"))
+                self.assertIn("SECRET_INTERVIEW", skills.load_skill("interview"))
+
+    def test_investigate_requires_a_red_command_before_hypotheses(self):
+        text = skills.load_skill("investigate")
+        self.assertIn("No hypothesis until a command", text)
+        loop = skills.read_skill("investigate", "loop")
+        self.assertIn("minimised command", loop)
+        self.assertIn("Do not show the list for approval", loop)
+
+    def test_tdd_rejects_a_tautological_assertion(self):
+        text = skills.load_skill("tdd")
+        self.assertIn("recomputed the way the code does", text)
+        self.assertIn("public behavior", text)
+
+    def test_retro_pitfall_names_the_red_command(self):
+        text = skills.load_skill("retro")
+        self.assertIn("command that goes red", text)
+
+    def test_steering_reads_an_existing_glossary(self):
+        text = (skills.SKILLS_DIR.parent / "steer" / "skills.md").read_text()
+        self.assertIn("GLOSSARY.md", text)
+
+
 class SkillPromptTests(unittest.TestCase):
     def test_skill_prompt_appends_task_once(self):
         body = skills.skill_prompt("learn", "", public_only=True)

@@ -19,7 +19,7 @@ was retried, decisions made, user corrections.
 
 ## Step 2 — Extract (quality bar: would this change behavior next session?)
 Candidates worth saving:
-- A pitfall that cost more than one attempt (type "pitfall").
+- A pitfall that cost more than one attempt (type "pitfall"). The insight names the command that goes red, plus the mechanism. A story with no command does not count.
 - A command, flag, or workflow that worked and will recur (type "tool" or
   "operational").
 - A project convention or architecture fact discovered the hard way

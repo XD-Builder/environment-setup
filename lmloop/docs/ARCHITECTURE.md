@@ -51,7 +51,8 @@ lmloop/
 │   │   │   ├── _graph_mine.md  # mine phase: propose graph edges (private)
 │   │   │   ├── _reconcile.md   # review contradicts edges (private)
 │   │   │   ├── retro.md        # mine sessions → learnings
-│   │   │   ├── investigate.md  # root-cause debugging
+│   │   │   ├── investigate.md  # root-cause debugging; sibling parts under investigate/
+│   │   │   ├── grill.md        # user-started interview; Index: no
 │   │   │   ├── review.md       # pre-landing code review
 │   │   │   ├── compact.md      # compress thread for context recovery
 │   │   │   ├── qa.md           # run tests, verify changes
@@ -565,7 +566,7 @@ At session start (and each isolated `/until` or graph `act()`), the system promp
 2. Live tool name list
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/prompts/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
-5. Skill index — one `Use when:` line per public skill. Bodies stay behind the `read_skill` tool. A flat `name.md` wins over `name/SKILL.md`; a sibling file loads only when `read_skill` is called with that part. User skills override packaged ones.
+5. Skill index — one `Use when:` line per public skill that is not marked `Index: no`. Bodies stay behind the `read_skill` tool, which refuses an opted-out skill; `/name` still loads it. A flat `name.md` wins over `name/SKILL.md`; a sibling file loads only when `read_skill` is called with that part. User skills override packaged ones. `/grill` (user-started interview, `GLOSSARY.md`, sparse ADRs) and the red-command gate in `investigate` adapt ideas from [mattpocock/skills](https://github.com/mattpocock/skills) (MIT). The playbooks are rewritten in lmloop's voice.
 6. Bridge-network sandbox hint, only when that backend is active.
 7. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
 8. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading

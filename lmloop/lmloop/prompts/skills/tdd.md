@@ -9,6 +9,9 @@ Exceptions, and only when the user said so: a throwaway spike, generated code, o
 ## Steps
 
 1. Write one test for one behavior. Name the behavior. Assert on the real result, not on a mock, unless a mock is the only way to reach the behavior.
+   - Assert a known-good literal or the spec's example, not a value recomputed the way the code does.
+   - Test the public behavior. A test that fails when the behavior is unchanged is the wrong test.
+   - Do not stop to confirm the seam with the user.
 2. Run that test. Read the output. It must fail because the behavior is missing, not because of a typo or an error in the test. A test that passes immediately is testing something that already exists. Fix the test and run it again.
 3. Write the smallest production change that makes that test pass. Do not add behavior the test does not ask for.
 4. Run the test again and read the output. It must pass. Then run the project's suite, not only the new file. Name any failure, including one you did not cause.
@@ -28,3 +31,4 @@ Exceptions, and only when the user said so: a throwaway spike, generated code, o
 - "I'll test after." A test you never watched fail does not prove it catches the bug.
 - "Keep the code I already wrote and add tests." That is testing after. Delete the code.
 - "The suite can wait until the end." The end-of-task run does not tell you which step broke it.
+- "The assertion matches the formula in the code." That test cannot disagree with the code. Use a literal or the spec's example.
