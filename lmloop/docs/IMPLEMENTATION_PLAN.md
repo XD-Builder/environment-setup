@@ -19,6 +19,7 @@ and what to move to `archived/` when done.
 | [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md) | User guide | Update with Phase S / company | Always `docs/` |
 | [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) | Research input | Not a build track | `docs/` (reference) |
 | [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) | Meta APED research | Reference | `docs/` (reference) |
+| [FINDINGS_HERMES_AGENT.md](FINDINGS_HERMES_AGENT.md) | Hermes learning-loop research; event-driven learning proposal (L0–L5) | Research input — not a build track until a design doc adopts it | `docs/` (reference) |
 | [DESIGN_META_CONTROL_AND_BUDGET.md](archived/DESIGN_META_CONTROL_AND_BUDGET.md) | Budget + artifact control for `until`/graph/company | **Shipped** (M0–M5) | `archived/` |
 | [DESIGN_LLM_CALLING.md](archived/DESIGN_LLM_CALLING.md) | Spec | **Shipped** | `archived/` |
 | [DESIGN_FILE_READING.md](archived/DESIGN_FILE_READING.md) | Spec | **Shipped** | `archived/` |
@@ -162,6 +163,9 @@ Constants, not config keys: `COMPANY_MAX_PARALLEL = 2`, orchestrator model = `ev
 
 Use [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) when
 designing **V3/V5** and spirit reflection — research, not a gating dependency.
+Use [FINDINGS_HERMES_AGENT.md](FINDINGS_HERMES_AGENT.md) before changing when mining, spirit
+distill, or campaign reflection run. It proposes salience-triggered reviews at run and session
+boundaries in place of `until_mine`, `mine_on_exit`, and the daily campaign tick.
 
 ---
 
