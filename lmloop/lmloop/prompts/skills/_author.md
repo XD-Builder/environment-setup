@@ -9,6 +9,7 @@ follows for a recurring kind of task.
 - Do not wrap the whole file in a ``` fence (plain markdown starting with `#`).
 - First line must be: `# Skill: <name> — <short blurb>`
 - Second line must be `Use when:` followed by the triggering situation. That line says when, not how. Do not summarize the steps there.
+- Add a line `Index: no` only when the user must start the skill themselves (an interview). Those skills stay out of the index, and `read_skill` refuses them.
 - Use numbered steps or phases, English conditionals, and an explicit report
   format at the end (like other lmloop skills).
 - Match the form to the failure. A discipline the model knows and skips gets an iron law plus a short rationalization list. A wrong output shape gets a recipe that names the parts in order. Do not add "unless it matters" clauses.

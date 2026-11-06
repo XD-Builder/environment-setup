@@ -119,7 +119,9 @@ that worktree and branch. Any other discard word is refused.
 The playbooks the runner expects are `design`, `write-plan`, `tdd`, `verify`,
 `investigate`, and `review`. The system prompt lists when each applies. The
 model loads a body with the `read_skill` tool. Saying "just do it" skips the
-design gate only.
+design gate only. `/grill` is an interview the user starts. It can write
+`GLOSSARY.md` and a sparse ADR. It is not in the skill index, and `read_skill`
+will not load it.
 
 ### Eval gates
 
@@ -200,7 +202,8 @@ Inside the REPL:
 | `/skills` | list skills, or: new `<name>` [brief] to author one |
 | `/ceo [plan]` | strategy / plan review (auto from `skills/ceo.md`) |
 | `/review [scope]` | pre-landing code review |
-| `/investigate [symptom]` | root-cause debugging |
+| `/investigate [symptom]` | root-cause debugging; a command that already fails, then the fix |
+| `/grill [plan]` | interview the user starts; can write `GLOSSARY.md` and a sparse ADR |
 | `/learn [query]` | curate project learnings in a side session (same as `/memory audit`) |
 | `/qa [scope]` | run tests and verify changes end-to-end |
 | `/compact [focus]` | summarize thread in a side session; optional replace |
@@ -311,7 +314,9 @@ local, single-user research loop needs.
   a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/lmloop/prompts/skills/<name>.md` —
   numbered steps, English conditionals, explicit report format. The first line
   is `# Skill: name — blurb`. The second line is `Use when:` (the situation,
-  not the steps). That line is what the system prompt indexes. A directory
+  not the steps). That line is what the system prompt indexes. A line
+  `Index: no` keeps the skill out of that index, and `read_skill` refuses it,
+  so only `/name` can start it. A directory
   `name/SKILL.md` plus sibling files (for example `techniques.md`) is the same
   skill; `read_skill` loads the body, and `read_skill` with a part loads a
   sibling. A flat `name.md` wins over `name/SKILL.md` in the same directory.

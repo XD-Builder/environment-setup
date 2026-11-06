@@ -25,9 +25,14 @@ TOOLS_HEADING = "## Tools available"
 CONTEXT_HEADING = "## Context recovery (from project memory)"
 SKILL_INDEX_HEADING = "## Skill index"
 USE_WHEN_PREFIX = "Use when:"
+INDEX_OPT_OUT = "index: no"
 MSG_SKILL_NAME_SHAPE = (
     "skill name must be lowercase, start with a letter, and use only a-z 0-9 _ -"
 )
+
+
+def msg_skill_user_starts(name: str) -> str:
+    return f"The user starts this with /{name}. Do not load it from read_skill."
 _BODY_FILE = "SKILL.md"
 
 
@@ -172,10 +177,23 @@ class SkillLibrary:
                 return stripped.split(":", 1)[1].strip()
         return ""
 
+    def in_index(self, name: str) -> bool:
+        """Public skills are indexed unless an early line is ``Index: no``."""
+        try:
+            lines = self.load(name).splitlines()
+        except FileNotFoundError:
+            return False
+        for line in lines[1:8]:
+            if line.strip().lower() == INDEX_OPT_OUT:
+                return False
+        return True
+
     def index_block(self) -> str:
-        """One line per public skill. Bodies stay behind ``read_skill``."""
+        """One line per indexed skill. Bodies stay behind ``read_skill``."""
         rows = []
         for name in self.list_public():
+            if not self.in_index(name):
+                continue
             label = self.use_when(name) or self.blurb(name)
             if label:
                 rows.append(f"- `{name}`: {label}")
@@ -191,8 +209,19 @@ class SkillLibrary:
         )
 
     def read(self, name: str, part: str = "") -> str:
-        """Skill body, or one sibling part. Does not run the skill."""
+        """Skill body, or one sibling part. Does not run the skill.
+
+        A skill marked ``Index: no`` is refused here. Slash dispatch loads it
+        with ``load`` instead, so only the user can start it.
+        """
         part = (part or "").strip()
+        opted_out = (
+            self.path(name) is not None
+            and self.is_public(name)
+            and not self.in_index(name)
+        )
+        if opted_out:
+            return msg_skill_user_starts(name)
         if part:
             if not _valid_part(part):
                 raise FileNotFoundError(msg_skill_missing(name, ", ".join(self.list_public())))
