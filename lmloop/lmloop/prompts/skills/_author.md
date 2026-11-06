@@ -8,8 +8,10 @@ follows for a recurring kind of task.
 - Reply with the skill markdown **only** — no preamble, no tools, no commentary.
 - Do not wrap the whole file in a ``` fence (plain markdown starting with `#`).
 - First line must be: `# Skill: <name> — <short blurb>`
+- Second line must be `Use when:` followed by the triggering situation. That line says when, not how. Do not summarize the steps there.
 - Use numbered steps or phases, English conditionals, and an explicit report
   format at the end (like other lmloop skills).
+- Match the form to the failure. A discipline the model knows and skips gets an iron law plus a short rationalization list. A wrong output shape gets a recipe that names the parts in order. Do not add "unless it matters" clauses.
 - Keep it actionable and bounded for a local coding/research agent. Refer to
   tools by purpose (shell, files, search, web, memory) rather than assuming a
   fixed name list — the live registry may grow.
@@ -23,7 +25,7 @@ follows for a recurring kind of task.
 ## Quality bar
 
 A good skill:
-1. States the job and what not to do (iron laws / out of scope).
+1. States the job, when it applies, and what not to do (iron laws / out of scope).
 2. Walks through ordered phases with checkable steps.
 3. Says when to use memory tools vs when to ask the user.
 4. Ends with a fixed report format the user can scan quickly.

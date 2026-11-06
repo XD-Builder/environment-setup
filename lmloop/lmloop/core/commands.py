@@ -301,6 +301,80 @@ class GraphRequest:
     error: str = ""
 
 
+PLAN_USAGE = (
+    "usage: plan run <path> [--worktree|--no-worktree] [--allow-red-baseline]\n"
+    "       plan status [<path>]\n"
+    "       plan finish [--choice merge|pr|keep] [--discard discard] "
+    "[--worktree-path PATH]"
+)
+_PLAN_VERBS = ("run", "status", "finish")
+_PLAN_CHOICES = ("merge", "pr", "keep")
+
+
+@dataclass(frozen=True)
+class PlanRequest:
+    """Parsed ``plan`` / ``/plan`` invocation."""
+
+    action: str
+    path: str = ""
+    choice: str = ""
+    discard: str = ""
+    worktree: str = ""
+    allow_red_baseline: bool = False
+    worktree_path: str = ""
+    error: str = ""
+
+
+def parse_plan_words(words: list[str]) -> PlanRequest:
+    """``run``, ``status``, and ``finish`` share one flag scan."""
+    if not words or words[0] not in _PLAN_VERBS:
+        return PlanRequest(action="status", error=PLAN_USAGE)
+    action = words[0]
+    path = ""
+    choice = ""
+    discard = ""
+    worktree = ""
+    allow_red = False
+    worktree_path = ""
+    index = 1
+    rest = words
+    while index < len(rest):
+        word = rest[index]
+        if word == "--worktree":
+            worktree = "yes"
+        elif word == "--no-worktree":
+            worktree = "no"
+        elif word == "--allow-red-baseline":
+            allow_red = True
+        elif word in ("--choice", "--discard", "--worktree-path"):
+            if index + 1 >= len(rest):
+                return PlanRequest(action=action, error=PLAN_USAGE)
+            value = rest[index + 1]
+            index += 1
+            if word == "--choice":
+                choice = value
+            elif word == "--discard":
+                discard = value
+            else:
+                worktree_path = value
+        elif word.startswith("-"):
+            return PlanRequest(action=action, error=PLAN_USAGE)
+        elif not path:
+            path = word
+        else:
+            return PlanRequest(action=action, error=PLAN_USAGE)
+        index += 1
+    if action == "run" and not path:
+        return PlanRequest(action=action, error=PLAN_USAGE)
+    if choice and choice not in _PLAN_CHOICES:
+        return PlanRequest(action=action, error=PLAN_USAGE)
+    return PlanRequest(
+        action=action, path=path, choice=choice, discard=discard,
+        worktree=worktree, allow_red_baseline=allow_red,
+        worktree_path=worktree_path,
+    )
+
+
 def parse_graph_words(
     words: list[str],
     *,
@@ -358,6 +432,14 @@ COMMANDS: tuple = (
                 arg_choices=MEMORY_ARG_CHOICES, cli=True),
     CommandMeta("until", "work toward a goal until a check or evaluator passes",
                 accepts_arg=True, arg_hint="[--check cmd] [--keep cmd] <goal>", cli=True),
+    CommandMeta(
+        "plan",
+        "run an implementation plan with a red-green ledger",
+        accepts_arg=True,
+        arg_hint="run <path> | status [path] | finish [--choice merge|pr|keep]",
+        arg_choices=("run", "status", "finish"),
+        cli=True,
+    ),
     CommandMeta("graph", "run an authored workflow graph",
                 accepts_arg=True, arg_hint="<name> | propose <name>", cli=True),
     CommandMeta("flow", "workflow stats and rule-based suggestions from run logs",

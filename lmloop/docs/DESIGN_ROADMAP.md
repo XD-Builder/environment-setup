@@ -10,7 +10,8 @@
 [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (research) ·
 [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (shipped) ·
 [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) (shipped) ·
-[DESIGN_META_CONTROL_AND_BUDGET.md](archived/DESIGN_META_CONTROL_AND_BUDGET.md) (shipped)
+[DESIGN_META_CONTROL_AND_BUDGET.md](archived/DESIGN_META_CONTROL_AND_BUDGET.md) (shipped) ·
+[DESIGN_SUPERPOWERS.md](DESIGN_SUPERPOWERS.md) (shipped methodology; visual companion, parallel dispatch, and commit-by-default stay out)
 
 ## Verdict
 

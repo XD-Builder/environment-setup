@@ -3,6 +3,9 @@
     lmloop                          interactive REPL
     lmloop "prompt"                 task, then REPL prompt when stdin is a TTY
     lmloop until [--check cmd] [--keep cmd] [--control off|budget|meta] goal  until checks/eval pass; REPL on a TTY
+    lmloop plan run <path> [--worktree|--no-worktree]   implementation plan with a red-green ledger
+    lmloop plan status [<path>]                         plan ledger
+    lmloop plan finish [--choice merge|pr|keep]         land the branch, or keep it
     lmloop until analyze [run] [--json]   offline metrics for one until run
     lmloop until                    resume latest open until-run
     lmloop graph <name>             run an authored workflow graph; REPL on a TTY
@@ -566,6 +569,49 @@ def offer_proposed_graph(cfg: Config, model: str, name: str, console: Console) -
     return 0
 
 
+def _plan_host(cfg: Config, console: Console, model: str):
+    from ..company.worktree import WorktreeError, plan_workspace_git
+    from ..run.plan_runner import PlanError, PlanHost, default_run_check
+
+    repo = Path.cwd().resolve()
+    try:
+        git_facts = plan_workspace_git(repo)
+    except WorktreeError as exc:
+        raise PlanError(str(exc)) from exc
+    return PlanHost(
+        cfg=cfg,
+        model=model,
+        workspace=repo,
+        echo=console.info,
+        error=console.error,
+        ask=ask_yes_no,
+        isatty=sys.stdin.isatty(),
+        run_check=default_run_check,
+        **git_facts,
+    )
+
+
+def cmd_plan_cli(cfg: Config, words: list, console: Console) -> int:
+    from ..core.commands import parse_plan_words
+    from ..run.plan_runner import PlanError, serve_plan
+
+    request = parse_plan_words(words)
+    if request.error:
+        console.error(request.error)
+        return 2
+    model = ""
+    if request.action == "run":
+        model = _require_model(cfg, console)
+        if model is None:
+            return 1
+    try:
+        host = _plan_host(cfg, console, model or str(cfg.get("model") or ""))
+        return serve_plan(request, host)
+    except PlanError as exc:
+        console.error(str(exc))
+        return 2
+
+
 def cmd_graph_cli(cfg: Config, words: list, console: Console) -> int:
     request = parse_graph_words(
         words,
@@ -961,6 +1007,7 @@ def cli_handlers() -> dict:
         "config": cmd_config,
         "memory": cmd_memory,
         "until": cmd_until_cli,
+        "plan": cmd_plan_cli,
         "graph": cmd_graph_cli,
         "flow": cmd_flow_cli,
         "decisions": cmd_decisions,

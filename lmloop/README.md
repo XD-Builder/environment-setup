@@ -56,6 +56,9 @@ lmloop until --check 'pytest -q' make tests pass
 lmloop until --keep 'npm run lint' tidy the parser
 lmloop until --control budget --check 'pytest -q' fix the failing test
 lmloop until                            # resume latest open until-run
+lmloop plan run docs/plans/2026-11-06-widget.md
+lmloop plan status
+lmloop plan finish --choice merge       # or pr, keep; discard only on the word discard
 lmloop graph company
 lmloop graph                            # resume latest open graph-run
 lmloop retro                            # alias for memory mine
@@ -80,6 +83,43 @@ lmloop campaign start --goal "…"        # multi-day plan store (host); resume 
 lmloop spirit log                       # actions, thoughts, traits for this repo
 lmloop completion zsh                   # print zsh completion script
 ```
+
+### Implementation plans
+
+`lmloop plan` runs a markdown plan under `docs/plans/`. It is separate from
+`lmloop campaign` and from `lmloop skill plan` (that skill writes the campaign
+JSON). In the REPL the same runner is `/plan`.
+
+```bash
+lmloop plan run docs/plans/2026-11-06-widget.md --no-worktree
+lmloop plan finish --choice merge|pr|keep
+lmloop plan finish --discard discard
+```
+
+Before the first run in a repo, a TTY asks once whether to isolate the work in
+`.lmloop/worktrees/<plan-id>` on branch `lmloop/<plan-id>`. The answer is
+remembered in `~/.lmloop/plans/<slug>/worktree.json` (no new config key).
+`--worktree` and `--no-worktree` override it. The directory is created only
+when `.lmloop/` is gitignored. A red baseline is printed; continue with `y`
+on a TTY or `--allow-red-baseline` otherwise.
+
+Progress lives in `~/.lmloop/plans/<slug>/<plan-id>/progress.json`. A later
+`plan run` of the same file skips tasks the ledger marks complete. A task
+with a failing step stays open until that command is seen failing and, later,
+exiting 0. A completion claim with no fresh exit 0 stays open. After the last
+task, one fresh review runs. Blocking findings get one fix wave. Minors are
+listed and left for later.
+
+`plan finish` asks for one of three outcomes: merge into the fork base
+locally, push and open a pull request (`gh` when it is installed, otherwise
+the push command), or keep the branch. A worktree lmloop opened is removed
+after a local merge. `plan finish --discard discard` is the only way to drop
+that worktree and branch. Any other discard word is refused.
+
+The playbooks the runner expects are `design`, `write-plan`, `tdd`, `verify`,
+`investigate`, and `review`. The system prompt lists when each applies. The
+model loads a body with the `read_skill` tool. Saying "just do it" skips the
+design gate only.
 
 ### Eval gates
 
@@ -172,6 +212,7 @@ Inside the REPL:
 | `/context` | files held in this conversation (full path on its own line), then injected memory (`/memory dump` is that memory view alone) |
 | `/continue [message]` | resume after max_rounds, an interruption, or a paused `/graph` or `/until` this session started (`/new` does not resume a disk run; `lmloop graph` with no name / `lmloop until` with no goal still resume the latest open run) |
 | `/until [--check cmd] [--keep cmd] <goal>` | isolated maker/checker loop. With no flags, lmloop derives a check plan from the goal and the project, shows it (`Enter` run, `e` edit, `s` checker only; no prompt when stdin is not a TTY), and baselines it once. A check that goes fail → pass finishes the run; an already-passing check becomes an invariant and the evaluator decides. `--check` / `--keep` skip inference. Then type to continue from a handoff |
+| `/plan run <path>` | run an implementation plan (`status`, `finish --choice merge\|pr\|keep`, `finish --discard discard`). Same ledger as `lmloop plan`. Campaign JSON stays `/skill plan` |
 | `/flow` | until/graph stats and suggestion rules (same report as `lmloop flow`) |
 | `/graph <name>` | run a packaged or user workflow graph (`company` ships); `/graph propose <name>` drafts one (save on `y` only); `/continue` resumes a paused graph-run |
 | `/save [title]` | checkpoint session for later restore |
@@ -268,8 +309,15 @@ local, single-user research loop needs.
 
 - **New skill:** `lmloop skills new <name> [brief]` (AI draft + confirm), or drop
   a markdown file in `~/.lmloop/skills/<name>.md` or `lmloop/lmloop/prompts/skills/<name>.md` —
-  numbered steps, English conditionals, explicit report format. Immediately
-  available as `lmloop skill <name>`, `/skill <name>`, and `/name`.
+  numbered steps, English conditionals, explicit report format. The first line
+  is `# Skill: name — blurb`. The second line is `Use when:` (the situation,
+  not the steps). That line is what the system prompt indexes. A directory
+  `name/SKILL.md` plus sibling files (for example `techniques.md`) is the same
+  skill; `read_skill` loads the body, and `read_skill` with a part loads a
+  sibling. A flat `name.md` wins over `name/SKILL.md` in the same directory.
+  User files still override packaged ones. Immediately available as
+  `lmloop skill <name>`, `/skill <name>`, and `/name`. `plan` is reserved for
+  the implementation-plan command; the campaign playbook is `lmloop skill plan`.
 - **Steering:** always-on markdown (not a `/name` skill). The standing harness
   is curiosity, learning, and growth; add a line only when it is that stance
   or a safety floor, and a tool, skill, or learning does not already say it.
