@@ -382,6 +382,8 @@ def check_trajectory(case: dict) -> list[str]:
     order = list(case.get("order") or [])
     if order and not _is_subsequence(order, names):
         failures.append("tool order is not a subsequence of the trajectory")
+    if case.get("require_fresh_shell") and "run_shell" not in names:
+        failures.append("completion claim without a shell span")
     forbid = {str(name) for name in (case.get("forbid_tools") or [])}
     for name in names:
         if name in forbid:

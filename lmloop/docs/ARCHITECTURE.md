@@ -75,9 +75,10 @@ lmloop/
 │   │   ├── knowledge_graph.py  # opt-in JSONL knowledge graph (use_graph)
 │   │   ├── context.py          # live-thread file manifest for /context
 │   │   └── canvas_tui.py       # knowledge-canvas projection and full-screen keys
-│   ├── run/                    # until machine (facade is ../loop.py)
+│   ├── run/                    # until machine + plan runner (facade is ../loop.py)
 │   │   ├── until_parse.py      # --check/--keep parsing (leaf)
 │   │   ├── until_runner.py     # until state machine
+│   │   ├── plan_runner.py      # implementation-plan ledger, red-green gate, one review
 │   │   ├── run_log.py          # until/graph JSONL run logs (leaf)
 │   │   └── run_artifacts.py    # until sidecar state + artifact index (budget control)
 │   ├── flow/                   # authored graphs (facade is ../graph.py)
@@ -381,6 +382,26 @@ This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`
 
 ---
 
+## Implementation plans
+
+**Files:** `run/plan_runner.py`, `loop.py` (facade), `company/worktree.py` (git only)
+
+`lmloop plan run <path>` and `/plan run <path>` execute a markdown plan one task at a time. `loop.py` re-exports the runner. The runner does not import `company` or `graph`; the CLI and REPL pass worktree callbacks from `plan_workspace_git`.
+
+- The parser is a line scan. A task starts at `### Task`. A step is a checkbox, an optional `Run:` command, and an optional `Expected:` line. Fenced blocks are not commands. A task heading with no title is an error and the run stops.
+- Each open task is one fresh `isolated_act` whose prompt is that task plus the `tdd` and `verify` skills. Earlier tasks are not pasted in.
+- The ledger is `~/.lmloop/plans/<slug>/<plan-id>/progress.json`. Resume reads that file. A task marked complete is not dispatched again.
+- A RED step (expected text starting with `fail`, or a title that says the step fails) cannot complete until that command exits non-zero and, later, exits 0. Any other named command needs a fresh exit 0. A `Ruling: <command> - <reason>` line waives that command and still requires some successful check. When the plan names no command, the runner uses the first command from `verify/checks.py`.
+- `verify/snapshot.py` runs before the first edit of a task when snapshots are on.
+- After the last task, one fresh `isolated_act` reviews with the `review` skill, the diff stat, and the plan's Review Focus. The parent sees the verdict. `BLOCKER`, `MAJOR`, `CRITICAL`, and `IMPORTANT` findings get one fix wave, which must itself show a fail-then-pass. `MINOR` and `NIT` lines are stored on the ledger and printed. There is no second reviewer.
+- If the checkout is not already a linked worktree, a TTY asks once about `.lmloop/worktrees/<plan-id>` on `lmloop/<plan-id>`. The yes/no answer is `~/.lmloop/plans/<slug>/worktree.json`. Creation refuses when `.lmloop/worktrees` is not gitignored. The opened path and branch are remembered so `plan finish` merges that branch. A new in-place run clears that pointer.
+- Finish offers merge, push-and-PR, or keep. Merge from inside the linked worktree lands on the main checkout. Removal uses `git worktree remove` with no `--force`, and only for a path under `.lmloop/worktrees`. Discard runs only when the user passes the word `discard`.
+- The company graph in `flow/graphs/company.md` is unchanged. This is the interactive path.
+
+See [DESIGN_SUPERPOWERS.md](DESIGN_SUPERPOWERS.md).
+
+---
+
 ## Workflow graph
 
 **File:** `graph.py`
@@ -473,6 +494,8 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ├── skills/<name>.md                # user-authored skills (override packaged)
 ├── steer/<name>.md                 # user always-on steering (concatenated)
 ├── graphs/<name>.md                # user-authored graphs (override packaged)
+├── plans/<slug>/worktree.json      # remembered worktree yes/no and the open path
+├── plans/<slug>/<plan-id>/progress.json  # implementation-plan ledger
 └── projects/<slug>/
     ├── learnings.jsonl             # append-only; dedup at read time
     ├── decisions.jsonl             # event-sourced (decide / supersede)
@@ -542,8 +565,10 @@ At session start (and each isolated `/until` or graph `act()`), the system promp
 2. Live tool name list
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/prompts/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
-5. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
-6. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
+5. Skill index — one `Use when:` line per public skill. Bodies stay behind the `read_skill` tool. A flat `name.md` wins over `name/SKILL.md`; a sibling file loads only when `read_skill` is called with that part. User skills override packaged ones.
+6. Bridge-network sandbox hint, only when that backend is active.
+7. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
+8. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
 
 `/context` is the audit view of what the model is holding. It prints two sections, colored when stdout is a TTY (`Console.write_lines`):
 

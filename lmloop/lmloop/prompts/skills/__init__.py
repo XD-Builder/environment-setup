@@ -23,9 +23,12 @@ SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 HOW_TO_WORK_MARKER = "\n## Curiosity"
 TOOLS_HEADING = "## Tools available"
 CONTEXT_HEADING = "## Context recovery (from project memory)"
+SKILL_INDEX_HEADING = "## Skill index"
+USE_WHEN_PREFIX = "Use when:"
 MSG_SKILL_NAME_SHAPE = (
     "skill name must be lowercase, start with a letter, and use only a-z 0-9 _ -"
 )
+_BODY_FILE = "SKILL.md"
 
 
 def msg_skill_missing(name: str, available: str) -> str:
@@ -34,6 +37,22 @@ def msg_skill_missing(name: str, available: str) -> str:
 
 def msg_skill_reserved(name: str) -> str:
     return f"skill name '{name}' is reserved"
+
+
+def _valid_part(part: str) -> bool:
+    """Sibling file stems use the same charset as skill names."""
+    return bool(part) and bool(SKILL_NAME_RE.match(part)) and part != "skill"
+
+
+def _skill_file(directory: Path, name: str) -> "Path | None":
+    """Flat markdown, else ``name/SKILL.md``."""
+    flat = directory / f"{name}.md"
+    if flat.is_file():
+        return flat
+    nested = directory / name / _BODY_FILE
+    if nested.is_file():
+        return nested
+    return None
 
 
 @dataclass
@@ -66,18 +85,60 @@ class SkillLibrary:
         )
 
     def path(self, name: str) -> "Path | None":
-        for d in self.dirs():
-            path = d / f"{name}.md"
-            if path.is_file():
-                return path
+        """Flat ``name.md`` wins over ``name/SKILL.md`` in the same directory.
+
+        User directories are searched before packaged ones, so a user file of
+        either layout overrides the packaged skill.
+        """
+        if self.invalid_name(name):
+            return None
+        for directory in self.dirs():
+            found = _skill_file(directory, name)
+            if found is not None:
+                return found
         return None
+
+    def part_path(self, name: str, part: str) -> "Path | None":
+        """Sibling ``name/<part>.md`` next to a flat or directory skill."""
+        if self.invalid_name(name) or not _valid_part(part):
+            return None
+        if self.path(name) is None:
+            return None
+        for directory in self.dirs():
+            candidate = directory / name / f"{part}.md"
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def list_parts(self, name: str) -> "list[str]":
+        found = set()
+        if self.invalid_name(name):
+            return []
+        for directory in self.dirs():
+            folder = directory / name
+            if not folder.is_dir():
+                continue
+            for path in folder.glob("*.md"):
+                if path.name == _BODY_FILE or not self.is_public(path.stem):
+                    continue
+                found.add(path.stem)
+        return sorted(found)
 
     def list_public(self) -> "list[str]":
         names = set()
-        for d in self.dirs():
-            for p in d.glob("*.md"):
-                if self.is_public(p.stem):
-                    names.add(p.stem)
+        for directory in self.dirs():
+            if not directory.is_dir():
+                continue
+            for path in directory.glob("*.md"):
+                if self.is_public(path.stem):
+                    names.add(path.stem)
+            for child in directory.iterdir():
+                if (
+                    child.is_dir()
+                    and self.is_public(child.name)
+                    and (child / _BODY_FILE).is_file()
+                ):
+                    names.add(child.name)
         return sorted(names)
 
     def load(self, name: str, *, public_only: bool = False) -> str:
@@ -97,6 +158,52 @@ class SkillLibrary:
             return first.lstrip("#").strip()[:80]
         except (FileNotFoundError, IndexError):
             return ""
+
+    def use_when(self, name: str) -> str:
+        """The ``Use when:`` line, which says when to load the skill, not how."""
+        try:
+            lines = self.load(name).splitlines()
+        except FileNotFoundError:
+            return ""
+        prefix = USE_WHEN_PREFIX.lower()
+        for line in lines[1:8]:
+            stripped = line.strip()
+            if stripped.lower().startswith(prefix):
+                return stripped.split(":", 1)[1].strip()
+        return ""
+
+    def index_block(self) -> str:
+        """One line per public skill. Bodies stay behind ``read_skill``."""
+        rows = []
+        for name in self.list_public():
+            label = self.use_when(name) or self.blurb(name)
+            if label:
+                rows.append(f"- `{name}`: {label}")
+        if not rows:
+            return ""
+        return (
+            SKILL_INDEX_HEADING + "\n\n"
+            "Call `read_skill` with the name before acting on a matching task. "
+            "The line says when, not how. A user who says to just do it opts "
+            "out of `design` only.\n\n"
+            + "\n".join(rows)
+            + "\n"
+        )
+
+    def read(self, name: str, part: str = "") -> str:
+        """Skill body, or one sibling part. Does not run the skill."""
+        part = (part or "").strip()
+        if part:
+            if not _valid_part(part):
+                raise FileNotFoundError(msg_skill_missing(name, ", ".join(self.list_public())))
+            path = self.part_path(name, part)
+            if path is None:
+                available = ", ".join(self.list_parts(name)) or "(none)"
+                raise FileNotFoundError(
+                    f"No part '{part}' for skill '{name}'. Parts: {available}"
+                )
+            return path.read_text()
+        return self.load(name, public_only=True)
 
     def save_user(self, name: str, content: str) -> Path:
         """Write a confirmed skill into the user skills directory."""
@@ -126,6 +233,9 @@ class SkillLibrary:
         steering = steer.steering_block(workspace_root)
         if steering:
             base += "\n\n" + steering
+        index = self.index_block()
+        if index:
+            base += "\n\n" + index
         from ...capabilities.exec import DockerBackend, active_backend
         backend = active_backend()
         if isinstance(backend, DockerBackend) and backend.network == "bridge":
@@ -176,6 +286,15 @@ def skill_prompt(name: str, task: str = "", *, public_only: bool = False) -> str
 
 def skill_blurb(name: str) -> str:
     return _library().blurb(name)
+
+
+def skill_index_block() -> str:
+    return _library().index_block()
+
+
+def read_skill(name: str, part: str = "") -> str:
+    """Return a public skill body or sibling part. Raises FileNotFoundError."""
+    return _library().read(name, part)
 
 
 def validate_skill_name(name: str) -> "str | None":

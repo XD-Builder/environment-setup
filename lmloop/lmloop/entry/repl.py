@@ -887,6 +887,35 @@ def _advance_until(state: SessionState, run: loop_mod.UntilRun, confirm_gate) ->
     attach_until_result(state, run)
 
 
+def _cmd_plan(state: SessionState, arg: str) -> bool:
+    from ..company.worktree import WorktreeError, plan_workspace_git
+    from ..core.commands import parse_plan_words
+    from ..run.plan_runner import PlanError, PlanHost, default_run_check, serve_plan
+
+    request = parse_plan_words(arg.split() if arg else [])
+    if request.error:
+        state.console.error(request.error)
+        return True
+    repo = Path.cwd().resolve()
+    try:
+        git_facts = plan_workspace_git(repo)
+        host = PlanHost(
+            cfg=state.cfg,
+            model=state.model,
+            workspace=repo,
+            echo=state.console.info,
+            error=state.console.error,
+            ask=ask_yes_no,
+            isatty=sys.stdin.isatty(),
+            run_check=default_run_check,
+            **git_facts,
+        )
+        serve_plan(request, host)
+    except (PlanError, WorktreeError) as exc:
+        state.console.error(str(exc))
+    return True
+
+
 def _cmd_until(state: SessionState, arg: str, confirm_gate) -> bool:
     parsed = loop_mod.parse_until_arg_line(arg)
     if parsed.err:
@@ -1122,6 +1151,7 @@ def _build_slash_commands(confirm_gate) -> list:
         "model": _cmd_model,
         "memory": lambda s, a: _cmd_memory(s, a, confirm_gate),
         "until": lambda s, a: _cmd_until(s, a, confirm_gate),
+        "plan": lambda s, a: _cmd_plan(s, a),
         "graph": lambda s, a: _cmd_graph(s, a, confirm_gate),
         "flow": _cmd_flow,
         "sandbox": _cmd_sandbox,

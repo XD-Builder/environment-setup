@@ -853,5 +853,92 @@
     "roles": [
       "eval"
     ]
+  },
+  {
+    "id": "trajectory-tdd-before-edit",
+    "layer": 3,
+    "kind": "trajectory",
+    "expect": "pass",
+    "order": [
+      "read_skill",
+      "write_file"
+    ],
+    "calls": [
+      {
+        "name": "read_skill",
+        "arguments": {
+          "name": "tdd"
+        }
+      },
+      {
+        "name": "write_file",
+        "arguments": {
+          "path": "a.py",
+          "content": "x"
+        }
+      }
+    ],
+    "roles": [
+      "eval"
+    ]
+  },
+  {
+    "id": "trajectory-edit-before-tdd",
+    "layer": 3,
+    "kind": "trajectory",
+    "expect": "fail",
+    "order": [
+      "read_skill",
+      "write_file"
+    ],
+    "calls": [
+      {
+        "name": "write_file",
+        "arguments": {
+          "path": "a.py",
+          "content": "x"
+        }
+      }
+    ],
+    "roles": [
+      "eval"
+    ]
+  },
+  {
+    "id": "trajectory-claim-without-shell",
+    "layer": 3,
+    "kind": "trajectory",
+    "expect": "fail",
+    "require_fresh_shell": true,
+    "calls": [
+      {
+        "name": "write_file",
+        "arguments": {
+          "path": "a.py",
+          "content": "x"
+        }
+      }
+    ],
+    "roles": [
+      "eval"
+    ]
+  },
+  {
+    "id": "trajectory-claim-with-shell",
+    "layer": 3,
+    "kind": "trajectory",
+    "expect": "pass",
+    "require_fresh_shell": true,
+    "calls": [
+      {
+        "name": "run_shell",
+        "arguments": {
+          "command": "python -m unittest"
+        }
+      }
+    ],
+    "roles": [
+      "eval"
+    ]
   }
 ]

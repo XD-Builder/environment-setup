@@ -33,6 +33,15 @@ from .run.until_runner import (
     superseded_until_hint,
 )
 from .flow.workflow_finish import until_outcome_label
+from .run.plan_runner import (
+    PlanError,
+    PlanHost,
+    PlanResult,
+    default_run_check,
+    plan_status_text,
+    run_plan,
+    serve_plan,
+)
 
 _until_outcome_label = until_outcome_label
 
@@ -60,7 +69,14 @@ __all__ = [
     "isolated_act",
     "last_assistant",
     "latest_open_until_run",
+    "PlanError",
+    "PlanHost",
+    "PlanResult",
+    "default_run_check",
     "parse_eval_status",
+    "plan_status_text",
+    "run_plan",
+    "serve_plan",
     "parse_until_arg_line",
     "parse_until_args",
     "project_dir",

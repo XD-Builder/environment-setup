@@ -120,8 +120,11 @@ find yourself updating two lists, you have already added debt.
 The package root stays five Python files: `__init__.py`, `__main__.py`,
 `agent.py`, `loop.py`, and `graph.py`. Other modules live in a category
 package. A category holds at most five modules (`memory/__init__.py` is the
-memory module). Do not add a sixth module to a category or a sixth file at
-the package root.
+memory module; elsewhere `__init__.py` is only the package marker). Do not add
+a sixth module to a category or a sixth file at the package root. `run/` is
+at that cap: `plan_runner.py` is the fifth counted module. The plan state
+machine stays in that file so `until_runner.py` does not absorb a second
+contract.
 
 | Change | Module |
 |---|---|
@@ -138,7 +141,8 @@ the package root.
 | Until run JSONL (shared roles, append-only rows) | `run/run_log.py` (leaf: `memory`, `config`) |
 | Until flag parsing (`--check` / `--keep`) | `run/until_parse.py` (leaf) |
 | Until state machine (`run_until`, `isolated_act`) | `run/until_runner.py` |
-| Until public facade (tests patch `lmloop.loop.*`) | `loop.py` |
+| Implementation-plan ledger, red-green gate, one review (`lmloop plan`) | `run/plan_runner.py` |
+| Until and plan public facade (tests patch `lmloop.loop.*`) | `loop.py` |
 | Graph DSL parse/load | `flow/graph_dsl.py` (leaf; uses `until_parse`) |
 | Graph frontier + `run_graph` | `flow/graph_runner.py` |
 | Graph public facade | `graph.py` |
@@ -200,7 +204,9 @@ Import and patch **where names are defined** (`lmloop.core.config.CONFIG_PATH`,
 - `run/until_runner.py` may import `run_log`, `checks`, `agent`, `snapshot`, `tools`, and `workflow_finish`. It must not import `graph_runner` or `graph_dsl`.
 - `flow/graph_runner.py` may import `run_log`, `graph_dsl`, `until_runner`, `skills`, `workflow`, and `workflow_finish`. It must not import `repl` or `cli`.
 - `flow/workflow.py` may import `graph_dsl` (authored node names for the dead-node rule). It must not import `agent`, `loop`, `graph`, or `graph_runner`.
-- `loop.py` is a facade over `until_runner` (re-exports for harnesses and tests). It must not import `graph`.
+- `run/plan_runner.py` may import `skills`, `checks`, `snapshot`, and `config`. It may import `until_runner.isolated_act` and `tools.run_shell` inside functions. It must not import `company`, `graph`, `graph_runner`, `repl`, or `cli`. Git worktrees arrive as callbacks on `PlanHost`.
+- `loop.py` is a facade over `until_runner` and `plan_runner` (re-exports for harnesses and tests). It must not import `graph` or `company`.
+- `entry/cli.py` and `entry/repl.py` may call `company.worktree.plan_workspace_git` to fill those callbacks.
 - `graph.py` is a facade over `graph_dsl` + `graph_runner` + `until_runner` entry points. It must not be imported by `until_runner` at module load (runtime import for patched paths is OK).
 - `verify/snapshot.py` is a leaf: git via subprocess. It must not import `agent`, `loop`, or `graph`.
 - `memory/knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory/__init__.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.

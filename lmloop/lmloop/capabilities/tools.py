@@ -564,6 +564,16 @@ def format_tool_preview(name: str, args: str,
     return _file_tool_preview(parsed, path_args, resolved)
 
 
+def read_skill_tool(name: str, part: str = "") -> str:
+    """Load a skill body or sibling part. The tool does not run the skill."""
+    from ..prompts.skills import read_skill
+
+    try:
+        return read_skill(name, part)
+    except FileNotFoundError as exc:
+        return f"ERROR: {exc}"
+
+
 def format_exec_result(result) -> str:
     """Render an ``ExecResult`` the way ``run_shell`` always has."""
     if result.timed_out:
@@ -1208,6 +1218,18 @@ def build_tools(cfg: Config, confirm_gate=None,
                 extra_readable=extra,
             ),
             int_fields=("start_line", "max_lines"),
+            concurrent=True,
+            category=CATEGORY_LOCAL_READ,
+        ),
+        ToolDef(
+            "read_skill",
+            "Load a skill playbook before following it. name is the skill. "
+            "part loads a sibling file such as techniques. Returns the "
+            "markdown only and does not execute anything.",
+            {"name": s, "part": s},
+            ["name"],
+            lambda name, part="": read_skill_tool(name, part),
+            allow_empty=("part",),
             concurrent=True,
             category=CATEGORY_LOCAL_READ,
         ),
