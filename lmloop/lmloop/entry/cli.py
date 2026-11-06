@@ -58,7 +58,6 @@ Project memory commands:
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -69,14 +68,10 @@ from ..model import server
 from ..prompts import skills
 from .. import graph as graph_mod
 from ..core.commands import (
-    EVAL_FLAGS,
-    GRAPH_PROPOSE_VERB,
     HISTORY_DEFAULT_CLI,
-    MEMORY_ARG_CHOICES,
     MSG_DEPRECATE_DECISIONS,
     MSG_DEPRECATE_RETRO,
     MSG_RECONCILE_INCOMPLETE,
-    cli_subcommand_metas,
     cli_subcommand_names,
     count_usage,
     parse_count_words,
@@ -96,7 +91,9 @@ from ..core.config import (
     load_config,
     save_config,
 )
+from .completion import cmd_completion_cli
 from .repl import make_session_miner, mine_sessions, run_repl
+from .sandbox_cli import activate_sandbox, cmd_sandbox, sandbox_ready
 from ..ui import Console, ask_until_gate, ask_yes_no, make_confirm_gate
 from ..core import usage
 
@@ -249,95 +246,6 @@ def cmd_skills_new(cfg: Config, name: str, brief: str, console: Console) -> int:
         return 1
     console.info(f"saved {path}")
     console.hint(f"  try: lmloop skill {name}   or in REPL: /{name}")
-    return 0
-
-
-def cmd_completion(shell: str, console: Console) -> int:
-    if shell != "zsh":
-        console.error(f"unsupported shell '{shell}' (only zsh)")
-        return 1
-    keys = " ".join(DEFAULTS)
-    subs = "\n".join(
-        f"    '{c.name}:{c.desc.replace(chr(39), '')}'"
-        for c in cli_subcommand_metas()
-    )
-    # Self-contained zsh completion; skill names refreshed via `lmloop skills --names`.
-    script = r"""#compdef lmloop
-
-_lmloop() {
-  local -a subs
-  subs=(
-__SUBS__
-  )
-
-  local curcontext="$curcontext" state
-  _arguments -C \
-    '--model[override model for this run]:model:' \
-    '--docker[run shell commands in an ephemeral container]' \
-    '--docker-persist[reattach a long-lived sandbox container]' \
-    '--docker-image[digest-pinned image override]:image:' \
-    '--help[show help]' \
-    '1: :->cmd' \
-    '*:: :->args' && return
-
-  case $state in
-    cmd)
-      _describe -t commands 'lmloop command' subs
-      ;;
-    args)
-      case $words[1] in
-        skill)
-          if (( CURRENT == 2 )); then
-            local -a skills
-            skills=(${(f)"$(lmloop skills names 2>/dev/null)"})
-            _describe -t skills 'skill' skills
-          fi
-          ;;
-        skills)
-          if (( CURRENT == 2 )); then
-            compadd - names new
-          fi
-          ;;
-        config)
-          if (( CURRENT == 2 )); then
-            compadd - show get set
-          elif (( CURRENT == 3 )) && [[ $words[2] == get || $words[2] == set ]]; then
-            compadd - __CONFIG_KEYS__
-          fi
-          ;;
-        completion)
-          # Only offer the supported shell name — avoid _values, which can
-          # surface unrelated zsh completion keywords in the menu.
-          (( CURRENT == 2 )) && compadd - zsh
-          ;;
-        memory)
-          if (( CURRENT == 2 )); then
-            compadd - __MEMORY_VERBS__
-          fi
-          ;;
-        retro|until|decisions|history|models)
-          ;;
-        graph)
-          (( CURRENT == 2 )) && compadd - __GRAPH_PROPOSE__
-          ;;
-        eval)
-          compadd - __EVAL_FLAGS__
-          ;;
-        flow)
-          compadd - --json
-          ;;
-      esac
-      ;;
-  esac
-}
-
-compdef _lmloop lmloop
-""".replace("__CONFIG_KEYS__", keys).replace("__SUBS__", subs).replace(
-        "__MEMORY_VERBS__", " ".join(MEMORY_ARG_CHOICES)
-    ).replace("__GRAPH_PROPOSE__", GRAPH_PROPOSE_VERB).replace(
-        "__EVAL_FLAGS__", " ".join(EVAL_FLAGS)
-    )
-    sys.stdout.write(script)
     return 0
 
 
@@ -795,96 +703,6 @@ def cmd_eval_cli(cfg: Config, words: list, console: Console) -> int:
     return 0
 
 
-def cmd_sandbox(cfg: Config, words: list, console: Console) -> int:
-    """``lmloop sandbox`` — status by default. Build persists a digest, never a tag."""
-    from ..capabilities import exec as exec_mod
-
-    verb = words[0] if words else "status"
-    if verb not in ("", "status", "build", "shell", "reset", "rm"):
-        console.error("usage: lmloop sandbox [status | build | shell | reset [--deps] | rm]")
-        return 1
-    if verb in ("", "status"):
-        backend = exec_mod.active_backend()
-        if isinstance(backend, exec_mod.DockerBackend):
-            console.info(backend.status_text())
-        else:
-            console.info(exec_mod.local_status_text())
-        return 0
-    if verb == "build":
-        return _sandbox_build(cfg, console)
-    root = Path.cwd().resolve()
-    backend = exec_mod.active_backend()
-    if not isinstance(backend, exec_mod.DockerBackend):
-        backend = exec_mod.DockerBackend(cfg, root, persist=True)
-    if verb == "reset":
-        deps = "--deps" in words[1:]
-        backend.reset(deps=deps)
-        console.info("sandbox reset" + (" --deps" if deps else ""))
-        return 0
-    if verb == "rm":
-        backend.runner(  # type: ignore[operator]
-            [backend.bin, "rm", "-f", backend.persist_name], timeout=30,
-        )
-        console.info(f"removed {backend.persist_name}")
-        return 0
-    if verb == "shell":
-        if not isinstance(exec_mod.active_backend(), exec_mod.DockerBackend):
-            console.error("sandbox shell needs --docker or --docker-persist on this process")
-            return 1
-        argv = backend.shell_argv()
-        if not sys.stdin.isatty():
-            console.error("sandbox shell needs a TTY")
-            console.info(" ".join(argv))
-            return 1
-        proc = subprocess.run(argv)
-        return int(proc.returncode or 0)
-    return 1
-
-
-def _sandbox_build(cfg: Config, console: Console) -> int:
-    from ..capabilities import exec as exec_mod
-
-    dockerfile = Path(__file__).resolve().parent.parent / "sandbox" / "Dockerfile"
-    if not dockerfile.is_file():
-        console.error(f"missing {dockerfile}")
-        return 1
-    tag = "lmloop-sandbox:local"
-    bin_name = exec_mod.docker_binary()
-    runner = exec_mod.subprocess_runner
-    built = runner(
-        [bin_name, "build", "-f", str(dockerfile), "-t", tag, str(dockerfile.parent)],
-        timeout=600,
-    )
-    if built.returncode != 0:
-        console.error((built.stderr or built.stdout or "docker build failed").strip())
-        return 1
-    inspected = runner(
-        [bin_name, "image", "inspect", tag, "--format", "{{json .RepoDigests}}"],
-        timeout=30,
-    )
-    digest = exec_mod.sandbox_build_digest(inspected.stdout)
-    if not digest or not exec_mod.image_has_digest(digest):
-        console.error("refusing to persist a tag; image inspect did not yield @sha256:")
-        return 1
-    cfg["sandbox_image"] = digest
-    save_config(cfg)
-    console.info(f"sandbox_image = {digest}")
-    return 0
-
-
-def cmd_completion_cli(cfg: Config, words: list, console: Console) -> int:
-    shell = words[0] if words else ""
-    if not shell:
-        console.error("usage: lmloop completion zsh")
-        return 1
-    return cmd_completion(shell, console)
-
-
-def _sandbox_ready() -> bool:
-    from ..capabilities.exec import DockerBackend, active_backend
-    return isinstance(active_backend(), DockerBackend)
-
-
 def cmd_company(cfg: Config, words: list, console: Console) -> int:
     from ..company.manifest import MANIFEST_REL, ManifestError, allowlist_errors, load_manifest
     from ..company.allowlist import effective_allowlist
@@ -915,7 +733,7 @@ def cmd_company(cfg: Config, words: list, console: Console) -> int:
         return 1
     try:
         result = run_company(
-            cfg, repo=Path.cwd(), goal=goal, sandbox_ready=_sandbox_ready(),
+            cfg, repo=Path.cwd(), goal=goal, sandbox_ready=sandbox_ready(),
             launcher=spawn_worker, campaign_id=campaign,
         )
     except CompanyError as exc:
@@ -1002,8 +820,8 @@ def cmd_spirit(cfg: Config, words: list, console: Console) -> int:
 
 
 def cli_handlers() -> dict:
-    """Stem -> handler(cfg, remaining_words, console). Generated from CommandMeta."""
-    return {
+    """Stem -> handler(cfg, remaining_words, console). Keys match CommandMeta."""
+    handlers = {
         "config": cmd_config,
         "memory": cmd_memory,
         "until": cmd_until_cli,
@@ -1024,39 +842,12 @@ def cli_handlers() -> dict:
         "campaign": cmd_campaign,
         "spirit": cmd_spirit,
     }
-
-
-def activate_sandbox(cfg: Config, args, console: Console) -> int:
-    """Start a sandbox when the flag asked for one. No flag: do not probe Docker.
-
-    Returns 0 to continue, or an exit code that stops the process before any
-    model call. A config key cannot turn this on.
-    """
-    from ..capabilities import exec as exec_mod
-
-    image = (getattr(args, "docker_image", "") or "").strip()
-    if image and not exec_mod.image_has_digest(image):
-        console.error("image reference must contain @sha256:")
-        return 2
-    enabled = bool(getattr(args, "docker", False) or getattr(args, "docker_persist", False))
-    if not enabled:
-        return 0
-    backend = exec_mod.build_backend(
-        cfg,
-        Path.cwd(),
-        docker=True,
-        persist=bool(args.docker_persist),
-        image=image,
-    )
-    report = backend.start()
-    if not report.ok:
-        for line in report.errors:
-            console.error(line)
-        return 1
-    for line in report.warnings:
-        console.hint(line)
-    exec_mod.install_backend(backend)
-    return 0
+    names = cli_subcommand_names()
+    if set(handlers) != set(names):
+        missing = sorted(set(names) - set(handlers))
+        extra = sorted(set(handlers) - set(names))
+        raise RuntimeError(f"cli handlers drifted: missing {missing} extra {extra}")
+    return handlers
 
 
 def main(argv=None) -> int:

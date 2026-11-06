@@ -5,7 +5,9 @@ confirmation from the human before running. Untrusted web content is wrapped
 in a fence with an ignore-instructions notice (prompt-injection defense).
 """
 
+import contextvars
 import difflib
+import functools
 import inspect
 import json
 import shlex
@@ -31,6 +33,9 @@ from .web import DEFAULT_WEB_TIMEOUT_S
 
 # --- Limits (module defaults; some overridable via config in build_tools) ---
 MAX_OUTPUT = config.DEFAULTS["max_tool_output"]  # chars returned to the model per tool call
+_OUTPUT_LIMIT: contextvars.ContextVar["int | None"] = contextvars.ContextVar(
+    "lmloop_tool_output_limit", default=None,
+)
 MAX_READ_LINES = 400
 TOOL_READ_FILE = "read_file"
 MAX_SEARCH_MATCHES = 50
@@ -222,7 +227,11 @@ def autonomous_gate(cfg: Config, confirm_gate, echo_status=None) -> "GatePolicy 
         return confirm_gate
     return GatePolicy.from_config(cfg, fallback=confirm_gate, echo_status=echo_status)
 
-def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
+def _truncate(text: str, limit: "int | None" = None) -> str:
+    if limit is None:
+        limit = _OUTPUT_LIMIT.get()
+    if limit is None:
+        limit = MAX_OUTPUT
     if len(text) <= limit:
         return text
     return text[:limit] + _TRUNCATE_HINT.format(total=len(text))
@@ -1078,10 +1087,9 @@ def search_files(pattern: str, path: str = ".",
 
 # ------------------------------------------------------------------ registry
 
-# Module-level registry filled by the latest build_tools() call (for validation).
-# Always the full known set, including optional tools. Returned specs/impls omit
-# graph_add_edge when use_graph is off, and omit write tools when readonly.
-# Prompt names use tool_names(cfg=...) so they match what the model can call.
+# Module-level registry filled by the latest build_tools() call.
+# A wave uses the defs captured on ToolImpls so a later build cannot
+# change validation or truncation for calls already in flight.
 _TOOL_DEFS: "dict[str, ToolDef]" = {}
 READONLY_OMIT = frozenset({
     "write_file", "update_file", "move_file", "delete_file",
@@ -1090,6 +1098,27 @@ READONLY_OMIT = frozenset({
 MINE_TOOLS = frozenset({
     "recall_memory", "remember", "log_decision", "graph_add_edge",
 })
+
+
+def _bind_output_limit(fn, limit: int):
+    """Run ``fn`` with the truncation limit from the build that created it."""
+    @functools.wraps(fn)
+    def bound(*args, **kwargs):
+        token = _OUTPUT_LIMIT.set(limit)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _OUTPUT_LIMIT.reset(token)
+    return bound
+
+
+class ToolImpls(dict):
+    """Impls from one ``build_tools`` call, with that build's defs and limit."""
+
+    def __init__(self, impls: dict, defs: dict, output_limit: int):
+        super().__init__(impls)
+        self.defs = defs
+        self.output_limit = output_limit
 
 
 def shell_confirm_flags(cfg: Config) -> "tuple[bool, bool]":
@@ -1116,10 +1145,10 @@ def build_tools(cfg: Config, confirm_gate=None,
     poisoned by the last readonly or use_graph=false build. Prompt injection
     uses ``tool_names(cfg=...)``.
     """
-    global _TOOL_DEFS, MAX_OUTPUT
+    global _TOOL_DEFS
 
     max_out = config.cfg_int(cfg, "max_tool_output")
-    MAX_OUTPUT = max(1000, max_out)
+    limit = max(1000, max_out)
     shell_timeout = config.cfg_int(cfg, "shell_timeout_s")
     web_timeout = config.cfg_int(cfg, "web_timeout_s")
     confirm_destructive, confirm_shell_syntax = shell_confirm_flags(cfg)
@@ -1470,7 +1499,11 @@ def build_tools(cfg: Config, confirm_gate=None,
     if readonly:
         defs = [d for d in defs if d.name not in READONLY_OMIT]
     specs = [d.openai_spec() for d in defs]
-    impls = {d.name: d.impl for d in defs}
+    impls = ToolImpls(
+        {d.name: _bind_output_limit(d.impl, limit) for d in defs},
+        _TOOL_DEFS,
+        limit,
+    )
     return specs, impls
 
 
@@ -1479,14 +1512,15 @@ def tool_is_concurrent(name: str) -> bool:
     return tool_wave(name) is not None
 
 
-def tool_wave(name: str) -> "str | None":
+def tool_wave(name: str, defs: "dict | None" = None) -> "str | None":
     """Wave id for ``name``, or None when the tool is a barrier.
 
     Concurrent tools with an empty ``wave`` share ``WAVE_SHARED`` (reads and
     web). File edits use ``WAVE_FILE_EDIT`` so they batch with each other and
     still separate a later read from an earlier one.
     """
-    tool = _TOOL_DEFS.get(name)
+    registry = _TOOL_DEFS if defs is None else defs
+    tool = registry.get(name)
     if tool is None or not tool.concurrent:
         return None
     return tool.wave or WAVE_SHARED
@@ -1546,7 +1580,7 @@ def _pool_limit(category: str, cfg: Config) -> int:
     return config.cfg_positive_int(cfg, key)
 
 
-def concurrent_groups(names: list) -> "list[list[int]]":
+def concurrent_groups(names: list, defs: "dict | None" = None) -> "list[list[int]]":
     """Index groups: one wave of consecutive concurrent tools; others alone.
 
     A non-concurrent tool is a barrier. Consecutive tools share a group only
@@ -1566,24 +1600,34 @@ def concurrent_groups(names: list) -> "list[list[int]]":
     groups: "list[list[int]]" = []
     i = 0
     while i < len(names):
-        wave = tool_wave(names[i])
+        wave = tool_wave(names[i], defs)
         if wave is None:
             groups.append([i])
             i += 1
             continue
         j = i + 1
-        while j < len(names) and tool_wave(names[j]) == wave:
+        while j < len(names) and tool_wave(names[j], defs) == wave:
             j += 1
         groups.append(list(range(i, j)))
         i = j
     return groups
 
 
-def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: Config, out: list) -> None:
+def _registry_of(impls: dict) -> dict:
+    defs = getattr(impls, "defs", None)
+    if defs:
+        return defs
+    if not _TOOL_DEFS:
+        build_tools({})
+    return _TOOL_DEFS
+
+
+def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: Config,
+              out: list, defs: dict) -> None:
     """Run one concurrent wave: one pool per category, joined before return."""
     buckets: "dict[str, list[int]]" = {}
     for i in group:
-        tool = _TOOL_DEFS.get(names[i])
+        tool = defs.get(names[i])
         cat = tool.category if tool is not None and tool.category else ""
         buckets.setdefault(cat, []).append(i)
     pools = []
@@ -1594,7 +1638,7 @@ def _run_wave(impls: dict, calls: list, names: list, group: list, cfg: Config, o
             pool = ThreadPoolExecutor(max_workers=max(1, workers))
             pools.append(pool)
             for i in idxs:
-                futs[pool.submit(dispatch, impls, calls[i][0], calls[i][1])] = i
+                futs[pool.submit(dispatch, impls, calls[i][0], calls[i][1], defs)] = i
         for fut in as_completed(futs):
             out[futs[fut]] = fut.result()
     finally:
@@ -1613,23 +1657,22 @@ def run_tool_calls(impls: dict, calls: list, cfg: Config | None = None) -> list:
     n = len(calls)
     if n == 0:
         return []
-    if not _TOOL_DEFS:
-        build_tools({})
+    registry = _registry_of(impls)
     if cfg is None:
         cfg = {}
     out: list = [None] * n
     names = [c[0] for c in calls]
-    for group in concurrent_groups(names):
+    for group in concurrent_groups(names, registry):
         subgroups = [group]
-        if len(group) > 1 and tool_wave(names[group[0]]) == WAVE_FILE_EDIT:
+        if len(group) > 1 and tool_wave(names[group[0]], registry) == WAVE_FILE_EDIT:
             subgroups = _split_file_edit_group(calls, group)
         for sub in subgroups:
             if len(sub) == 1:
                 i = sub[0]
                 name, args = calls[i]
-                out[i] = dispatch(impls, name, args)
+                out[i] = dispatch(impls, name, args, registry)
                 continue
-            _run_wave(impls, calls, names, sub, cfg, out)
+            _run_wave(impls, calls, names, sub, cfg, out, registry)
     return out
 
 
@@ -1652,9 +1695,10 @@ def coerce_bool(value) -> "bool | None":
     return None
 
 
-def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
+def _validate_tool_kwargs(name: str, kwargs: dict, defs: "dict | None" = None) -> "str | None":
     """Return an ERROR string if kwargs are invalid, else None."""
-    tool = _TOOL_DEFS.get(name)
+    registry = _TOOL_DEFS if defs is None else defs
+    tool = registry.get(name)
     if tool is None:
         return None  # unknown tools handled by dispatch caller
     allow_empty = {(name, k) for k in tool.allow_empty}
@@ -1687,7 +1731,8 @@ def _validate_tool_kwargs(name: str, kwargs: dict) -> "str | None":
     return None
 
 
-def validate_tool_arguments(name: str, arguments: "str | dict") -> "tuple[dict | None, str | None]":
+def validate_tool_arguments(name: str, arguments: "str | dict",
+                            defs: "dict | None" = None) -> "tuple[dict | None, str | None]":
     """Parse and type-check one tool call. ``(kwargs, None)`` or ``(None, ERROR)``.
 
     This is the layer-1 boundary for model tool calls: JSON object, required
@@ -1707,11 +1752,14 @@ def validate_tool_arguments(name: str, arguments: "str | dict") -> "tuple[dict |
         kwargs = dict(arguments)
     else:
         return None, "ERROR: tool arguments must be a JSON object"
-    if name not in _TOOL_DEFS:
-        build_tools({})
-    if name not in _TOOL_DEFS:
+    registry = _TOOL_DEFS if defs is None else defs
+    if name not in registry:
+        if defs is None:
+            build_tools({})
+            registry = _TOOL_DEFS
+    if name not in registry:
         return kwargs, None
-    err = _validate_tool_kwargs(name, kwargs)
+    err = _validate_tool_kwargs(name, kwargs, registry)
     if err:
         return None, err
     return kwargs, None
@@ -1723,7 +1771,7 @@ def _arg_error_phase(error: str) -> str:
     return "validate"
 
 
-def dispatch(impls: dict, name: str, arguments: str) -> str:
+def dispatch(impls: dict, name: str, arguments: str, defs: "dict | None" = None) -> str:
     from ..core import usage
 
     if not (name or "").strip():
@@ -1734,7 +1782,7 @@ def dispatch(impls: dict, name: str, arguments: str) -> str:
     if not fn:
         usage.record("tool.error", name=name, phase="unknown")
         return f"ERROR: unknown tool {name}"
-    kwargs, err = validate_tool_arguments(name, arguments)
+    kwargs, err = validate_tool_arguments(name, arguments, defs)
     if err:
         usage.record("tool.error", name=name, phase=_arg_error_phase(err))
         return err

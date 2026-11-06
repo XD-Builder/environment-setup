@@ -9,6 +9,7 @@ import sys
 import threading
 
 from .stream import _think_line_similar
+from ..core.continue_policy import _is_noise
 from ..ui import terminal_size
 
 # Live markdown on a real TTY uses the alternate screen. A resize reflows
@@ -616,3 +617,147 @@ def _open_live_display(echo_delta, color: bool = True):
     if _rich_live_available():
         return _MarkdownLivePrinter(color=color), "markdown"
     return _StreamPrinter(_default_echo_delta), "plain"
+
+
+def _named_tool_calls(tool_calls: list) -> list:
+    """Drop tool_calls with an empty function name (incomplete stream)."""
+    out = []
+    for call in tool_calls or []:
+        if not isinstance(call, dict):
+            continue
+        name = (call.get("function") or {}).get("name") or ""
+        if str(name).strip():
+            out.append(call)
+    return out
+
+
+class RoundDisplay:
+    """Printer / thinking / spinner wiring for one model round."""
+
+    def __init__(self, echo_delta, *, color: bool, use_stream: bool,
+                 on_thinking=None):
+        self.use_stream = use_stream
+        self.on_thinking = on_thinking
+        self.printer, self.live_mode = _open_live_display(echo_delta, color=color)
+        self.thinking = _ThinkingLive(color=color) if use_stream else None
+        self.indicator = None
+        if use_stream and self.live_mode in ("silent", "markdown"):
+            self.indicator = _GeneratingIndicator()
+        self.thinking_cleared = False
+        self.printer_finished = False
+
+    def retire_thinking(self, *, keep: bool = False) -> str:
+        if self.thinking_cleared or self.thinking is None:
+            return ""
+        text = self.thinking.finish_keep() if keep else self.thinking.erase()
+        self.thinking_cleared = True
+        if text.strip() and self.on_thinking:
+            self.on_thinking(text)
+        return text
+
+    def on_delta(self, piece: str) -> None:
+        self.retire_thinking()
+        if self.indicator is not None:
+            self.indicator.clear()
+        was = self.printer.visible
+        self.printer.feed(piece)
+        if (
+            self.indicator is not None
+            and self.live_mode == "markdown"
+            and self.printer.visible
+            and not was
+        ):
+            self.indicator.clear()
+
+    def on_reasoning(self, piece: str) -> None:
+        if self.thinking is None:
+            return
+        # Content Live owns the TTY. Painting thinking alongside it
+        # desyncs Live and stacks the preamble in scrollback.
+        if self.printer.visible:
+            return
+        if self.indicator is not None:
+            self.indicator.clear()
+        self.thinking.feed(piece)
+
+    def on_tools(self) -> None:
+        self.retire_thinking()
+        # Close Live before tool arguments stream (write_file can take
+        # minutes). Leaving Live up redraws the same preamble and
+        # leaks copies into scrollback.
+        if (
+            self.live_mode in ("plain", "markdown")
+            and self.printer is not None
+            and not self.printer_finished
+        ):
+            self.printer.finish()
+            self.printer_finished = True
+        if self.indicator is not None:
+            self.indicator.resume()
+
+    def chat_kwargs(self) -> dict:
+        return {
+            "on_delta": self.on_delta if self.use_stream else None,
+            "on_activity": self.indicator.tick if self.indicator else None,
+            "on_reasoning": self.on_reasoning if self.use_stream else None,
+            "on_tools": self.on_tools if self.use_stream else None,
+        }
+
+    def settle(self, msg: dict, is_answer: bool) -> "tuple[list, str]":
+        """Clear the spinner; return (tool_calls, content) for this round."""
+        if self.indicator is not None:
+            self.indicator.clear()
+        halted = bool(msg.get("_halted"))
+        tool_calls = (
+            [] if is_answer
+            else _named_tool_calls(msg.get("tool_calls") or [])
+        )
+        content = (msg.get("content") or "").strip()
+        reasoning_text = (msg.get("_reasoning") or "").strip()
+        # A halt is an unfinished round, not an answer. Do not promote
+        # looping reasoning into content (that made gather stop).
+        if halted and not tool_calls:
+            if _is_noise(content):
+                content = ""  # punctuation loop: nothing to keep, log, or show
+            if self.thinking is not None and self.thinking.active:
+                retired = self.thinking.erase()
+                if retired.strip() and self.on_thinking:
+                    self.on_thinking(retired)
+        else:
+            if not content and not tool_calls and reasoning_text:
+                content = reasoning_text
+            if self.thinking is not None:
+                content, retired = self.thinking.retire_for_round(
+                    tool_calls, content, reasoning_text,
+                )
+                if retired.strip() and self.on_thinking:
+                    self.on_thinking(retired)
+        return tool_calls, content
+
+    def emit(self, echo, content: str, session_log) -> None:
+        # Finish Live/stream display before any other stdout writes
+        # (round breadcrumb, tool lines). Printing while rich.Live is
+        # active bypasses its cursor control and corrupts the frame.
+        if content:
+            if not self.printer_finished:
+                _emit_assistant_content(
+                    echo, content,
+                    self.printer if self.use_stream else None,
+                    self.live_mode,
+                )
+                self.printer_finished = True
+            if session_log:
+                from .. import memory
+                memory.log_event(session_log, "assistant", content)
+        elif self.use_stream and not self.printer_finished:
+            self.printer.finish()
+            self.printer_finished = True
+
+    def close(self) -> None:
+        if self.indicator is not None:
+            self.indicator.clear()
+        if self.thinking is not None and self.thinking.active:
+            self.thinking.erase()
+        if not self.printer_finished and self.printer is not None:
+            self.printer.finish()
+

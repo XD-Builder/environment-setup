@@ -128,12 +128,13 @@ contract.
 
 | Change | Module |
 |---|---|
-| Multi-round tool loop, skill drafting | `agent.py` |
+| Multi-round tool loop, skill drafting, `ActTurn` | `agent.py` |
+| Continue-intent prefixes, grounding, nudge/halt | `core/continue_policy.py` |
 | Chat HTTP (`POST /v1/chat/completions`) | `model/chat.py` |
 | Skill filesystem, name validation, system-prompt assembly | `prompts/skills/` |
 | LMS bring-up, model listing, context length, VLM detection | `model/server.py` |
 | SSE ingest, cumulative snapshots, overlap, repeat-halt | `model/stream.py` |
-| Spinner, live printers, thinking lines, TTY writes | `model/display.py` |
+| Spinner, live printers, thinking lines, `RoundDisplay`, TTY writes | `model/display.py` |
 | Tool schema + impl + validation | `capabilities/tools.py` (`ToolDef` rows) |
 | Web search / fetch / HTML parsers | `capabilities/web.py` |
 | JSONL memory (learnings, decisions, sessions, checkpoints) | `memory/__init__.py` |
@@ -156,6 +157,8 @@ contract.
 | Flow stats (`lmloop flow`) | `flow/workflow.py` |
 | Always-on steering markdown + live clock | `prompts/steer/` |
 | argparse routing, non-REPL subcommands | `entry/cli.py` |
+| Zsh completion script | `entry/completion.py` |
+| Sandbox subcommand and `--docker` process startup | `entry/sandbox_cli.py` |
 | `Config`, `ConfigSchema`, paths, `DEFAULTS`, `cfg_get`/`cfg_int`/… accessors, `config_schema()`, project slug, `utc_now()` | `core/config.py` |
 | Slash/CLI names, reserved skill stems | `core/commands.py` |
 | Status / resume / nudge copy | `core/status.py` |
@@ -166,7 +169,7 @@ contract.
 | Harness bundle fingerprint (H1) | `harness/harness_bundle.py` |
 | Harness execution report (H2) | `harness/harness_report.py` |
 | Live-thread file manifest (`/context`) | `memory/context.py` |
-| Company manifest, allowlist, worktrees, orchestrator | `company/` (`model/chat.py` may import `company.allowlist` only) |
+| Company manifest (including the worker packet and result envelope), allowlist, worktrees, orchestrator | `company/` (`model/chat.py` may import `company.allowlist` only) |
 | Campaign plan, board, ticks | `host/campaign.py` (host writer; workers do not import it to append) |
 | Spirit seed, actions, thoughts, self | `spirit/` |
 | `@path` completion + ref expansion | `capabilities/files_index.py` |
@@ -176,12 +179,13 @@ contract.
 | ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui/console.py` (`from lmloop.ui import …` via package `__getattr__`) |
 | rich Console / markdown / pager | `ui/markdown_view.py` |
 
-`agent.py` imports display helpers that `act()` calls, and `model.chat._chat`
+`agent.py` calls `RoundDisplay` in `model/display.py`, and `model.chat._chat`
 for completions. Tests patch `lmloop.model.display` / `lmloop.model.stream` /
 `lmloop.model.chat` where those names are looked up — do not re-export privates
 through `agent` for tests. `_chat` / `_chat_stream` stay imported into `agent`
 so existing `patch.object(agent, "_chat")` tests keep working. New HTTP logic
-belongs in `model/chat.py`, not as more private helpers in `agent.py`.
+belongs in `model/chat.py`, not as more private helpers in `agent.py`. Continue
+nudges live in `core/continue_policy.py`.
 
 Import and patch **where names are defined** (`lmloop.core.config.CONFIG_PATH`,
 `lmloop.harness.traces.TRACE_PATH`, `lmloop.ui.console`, `lmloop.ui.markdown_view`,

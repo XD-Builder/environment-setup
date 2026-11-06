@@ -16,8 +16,9 @@ from .. import memory
 from ..core.config import Config, cfg_int, utc_now
 from ..model.server import resolve_model_concurrency
 from .allowlist import endpoint_error, effective_allowlist
-from .manifest import MANIFEST_REL, Manifest, ManifestError, allowlist_errors, load_manifest
-from .protocol import envelope
+from .manifest import (
+    MANIFEST_REL, Manifest, ManifestError, allowlist_errors, envelope, load_manifest,
+)
 from .worktree import WorktreeError, ensure_isolation, head_sha, merge_into
 
 COMPANY_MAX_PARALLEL = 2

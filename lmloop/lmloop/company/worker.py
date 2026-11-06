@@ -12,8 +12,9 @@ from pathlib import Path
 
 from ..core.config import Config
 from .allowlist import activate, effective_allowlist
-from .manifest import ManifestError, canonical_sha, load_manifest
-from .protocol import PacketError, envelope, parse_packet
+from .manifest import (
+    ManifestError, PacketError, canonical_sha, envelope, load_manifest, parse_packet,
+)
 from .worktree import WorktreeError, head_sha
 
 
@@ -108,7 +109,7 @@ def _run_node(packet: dict, cfg: Config) -> dict:
 
 def spawn_worker(packet: dict) -> dict:
     """Run one worker process. Stdout must be an envelope; stderr is diagnostics."""
-    from .protocol import PacketError, parse_envelope
+    from .manifest import PacketError, parse_envelope
 
     cmd = [sys.executable, "-m", "lmloop", "--docker", "worker", "run"]
     cwd = str(packet.get("worktree") or "") or None

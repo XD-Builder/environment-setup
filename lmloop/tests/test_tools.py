@@ -1105,6 +1105,28 @@ class ConcurrentToolTests(unittest.TestCase):
         self.assertEqual(out, ["a", "b"])
         self.assertEqual(state["peak"], 1)
 
+    def test_build_limit_survives_later_build(self):
+        import json
+        from lmloop.capabilities.tools import build_tools, run_tool_calls
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "big.txt").write_text("x" * 3000)
+            cfg = {"max_tool_output": 1000, "confirm_shell": False, "use_graph": False}
+            _specs, impls = build_tools(cfg, workspace_root=root)
+            build_tools(
+                {"max_tool_output": 20000, "confirm_shell": False, "use_graph": False},
+                workspace_root=root,
+            )
+            out = run_tool_calls(
+                impls,
+                [("read_file", json.dumps({"path": "big.txt", "max_lines": 400}))],
+                cfg,
+            )
+        self.assertEqual(len(out), 1)
+        self.assertIn("truncated", out[0])
+        self.assertLess(len(out[0]), 2000)
+
 
 class _Gate:
     """Recording confirm_gate with a fixed answer."""

@@ -18,6 +18,7 @@ CATEGORIES = (
     "core",
     "harness",
     "ui",
+    "company",
 )
 
 
