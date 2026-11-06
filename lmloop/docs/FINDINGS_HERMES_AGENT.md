@@ -1,7 +1,7 @@
 # Findings: Hermes Agent's learning loop, and event-driven learning for lmloop
 
 **Date:** 2026-11-06  
-**Primary source:** [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) — source, docs, tests, and the issue tracker. Shallow clone of `main` at `40ef2a84` (2026-11-03). Hermes paths are relative to that repo; lmloop paths are relative to this `lmloop/` directory, on `master` after PR #81.  
+**Primary source:** [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) — source, docs, tests, and the issue tracker. Shallow clone of `main` at `ca436069` (2026-11-06); issue and PR figures were checked against GitHub on the same date. Hermes paths are relative to that repo; lmloop paths are relative to this `lmloop/` directory, on `master` after PR #81.  
 **Status:** research input — not a build track. Section 9 proposes phases L0–L5 for a future design doc.  
 **Scope:** How lmloop should learn after every run and every long run **without a fixed reflection schedule**, and where that process hooks into the REPL, `until`, `plan`, graph, and campaign paths. Out of scope: weight training (Hermes trajectories and Atropos), external memory providers (Honcho and others), and the skills hub.  
 **Audience:** Memory and spirit owners, until/graph/plan runner owners, harness editors (`retro`, `improve`)  
@@ -49,7 +49,21 @@ answer the question "how to learn without a fixed schedule":
 - Archival based on incomplete usage telemetry archived skills that were still in use
   ([#136030](https://github.com/NousResearch/hermes-agent/issues/136030)).
 
-No Hermes test or eval measures whether a saved memory or skill helps a later session.
+Measurements that Hermes users posted point the same way:
+
+- **Verified sessions are the lever.** On PAST-Bench, exam pass rates were 8% with no learning
+  and 33% after the default review of the agent's own sessions. Reviewing a single
+  verified-correct session reached 56%
+  ([#134531](https://github.com/NousResearch/hermes-agent/issues/134531)).
+- **Eager writing does not help.** A skill the review edited 77 times scored 18.88 vs 18.84 out of
+  20 against its earlier version in a blind replay of 40 runs
+  ([#136931](https://github.com/NousResearch/hermes-agent/issues/136931)).
+- **Most unprompted writes are junk.** In windows where the user taught nothing, 27 of 30 reviews
+  wrote something, and 20 of 22 memory writes were junk or duplicates
+  ([#128884](https://github.com/NousResearch/hermes-agent/issues/128884)).
+
+Nothing in the Hermes tree measures whether a saved memory or skill helps a later session; an
+RFC for that is still open ([#96704](https://github.com/NousResearch/hermes-agent/issues/96704)).
 
 **Recommendation.** lmloop should not copy the counters. It should copy the review fork's
 discipline (whitelist, budgets, quality rules, provenance) and **trigger learning on evidence**:
@@ -73,11 +87,15 @@ mistake recurs.
 
 ### 1.1 The background review fork
 
+The fork replaced inline memory and skill nudges, which had "polluted 43% of user messages with
+backward-looking system instructions" ([PR #2235](https://github.com/NousResearch/hermes-agent/pull/2235)).
+lmloop's equivalent rule: learning prompts never enter the live conversation.
+
 | Aspect | Behavior | Source |
 |---|---|---|
 | When it spawns | After the turn is delivered, only if there is a final response, the turn was not interrupted, and a memory or skill trigger fired | `agent/turn_finalizer.py:591-616`, `:863-873` |
-| What it is | A forked `AIAgent` that shares the system prompt, `tools[]`, and session id, so request #1 is a warm prefix-cache read of the whole conversation | `agent/background_review.py:170-182`, `build_cache_parity_fork` `:979` |
-| Routed to another model | The cache is cold anyway, so it replays a digest: the last 24 messages verbatim and older turns summarized | `background_review.py:332-362`, `:1225-1232` |
+| What it is | A forked `AIAgent` that shares the system prompt, `tools[]`, and session id, so request #1 is a warm prefix-cache read of the whole conversation. Making the cache key byte-identical cut per-review cost by about 89% and end-to-end cost by about 26% on Sonnet 4.5 ([PR #25434](https://github.com/NousResearch/hermes-agent/pull/25434)) | `agent/background_review.py:170-182`, `build_cache_parity_fork` `:979` |
+| Routed to another model | The cache is cold anyway, so it replays a digest: the last 24 messages verbatim and older turns summarized. The PR's benchmark: Haiku was about 39× cheaper than Opus but caught 4/6 skill and 3/4 memory signals versus 5/6 and 4/4, so routing stays opt-in ([PR #49252](https://github.com/NousResearch/hermes-agent/pull/49252)) | `background_review.py:332-362`, `:1225-1232` |
 | Tools | Dispatch-side whitelist: the skills toolset plus `read_file`/`search_files`; the memory tool only on memory-triggered reviews, so a skill review cannot act on "consolidate now" and delete entries nobody reviewed (#105921). Read tools were added after denying them caused a "denial storm" (about 142 denials and 204 read-before-write refusals over 2 days on one deployment) that starved the loop. Tool schemas stay identical for cache parity | `_review_tool_whitelist` `:1114-1135` |
 | Budgets | At most 16 iterations; aggregate input of 75% of the review model's context, capped at 600k tokens (120k fallback) | `:173-182` |
 | Safety | Dangerous commands resolve to "deny" instead of `input()`, which deadlocked against the parent's prompt (#15216); secret prompts are skipped; the prompts forbid deleting a skill (the curator consolidates) | `background_review.py:1062-1088`; prompts `:456-578` |
@@ -119,11 +137,13 @@ Two details matter for lmloop:
 - A preempted review is requeued at most 3 times (`run_agent.py:825-838`), but only when
   `_review_should_defer` is true (`run_agent.py:172`), which means only on a managed local server.
 
-The queue addresses the problem reported in [#54115](https://github.com/NousResearch/hermes-agent/issues/54115): two
-concurrent slots (the main conversation plus an uncompressed review replay) exceeded `n_ctx`, and
-even without running out of memory, "GPU compute resources are split between two slots running
-concurrently, halving the main conversation's response speed." That is lmloop's default
-deployment: LM Studio, one model, one slot.
+The module docstring states the problem: "On the managed llama-server the post-turn review fork
+monopolizes the GPU the next prompt needs and the next live turn cancels it (decode cost paid,
+learning lost)." [#54115](https://github.com/NousResearch/hermes-agent/issues/54115) reports the
+same thing from the field. Two concurrent slots (the main conversation plus an uncompressed
+review replay) exceeded `n_ctx`, and even without running out of memory, "GPU compute resources
+are split between two slots running concurrently, halving the main conversation's response
+speed." That is lmloop's default deployment: LM Studio, one model, one slot.
 
 ### 1.4 Review prompt quality rules
 
@@ -156,10 +176,15 @@ failure it prevents.
   skill, then add a support file, then create a class-level umbrella. Read before write is enforced
   by the tool guards.
 - **Bias toward writing.** "Be ACTIVE — most sessions produce at least one update … 'Nothing to
-  save.' is a real option but should NOT be the default" (`:457`, `:524`). Hermes writes eagerly
-  and relies on the curator to prune. lmloop's `retro` takes the opposite stance ("a noisy memory
-  is worse than none"). Event-driven triggers let lmloop keep that bar: it reviews less often, but
-  every review it runs has evidence behind it.
+  save.' is a real option but should NOT be the default" (`:457`, `:524`). The wording came from
+  [PR #17213](https://github.com/NousResearch/hermes-agent/pull/17213); the curator
+  ([PR #17277](https://github.com/NousResearch/hermes-agent/pull/17277)) landed the same day to
+  prune what it writes. [#128884](https://github.com/NousResearch/hermes-agent/issues/128884)
+  measured the cost of that bias: on windows where the user taught nothing, 27 of 30 reviews wrote
+  something. The same issue proposes letting the reviewer skip "a review the clock fired, because
+  nothing of that kind was learned since the last one". lmloop's `retro` takes the opposite stance
+  ("a noisy memory is worse than none"). Event-driven triggers let lmloop keep that bar: it reviews
+  less often, but every review it runs has evidence behind it.
 
 ### 1.5 Stores and routing
 
@@ -217,7 +242,9 @@ belongs in the task's skill … memory is injected into every turn and must stay
   `evals/` covers wire and provider probes only. The curator's only outcome metric is a run counter
   bucketed by action.
 - **No outcome attribution.** Nothing links "this memory or skill was in context" to "the turn
-  succeeded or was corrected".
+  succeeded or was corrected". Both gaps are open requests: an eval harness RFC
+  ([#96704](https://github.com/NousResearch/hermes-agent/issues/96704)) and "Curator selects
+  skills by usage, not outcome" ([#138653](https://github.com/NousResearch/hermes-agent/issues/138653)).
 - **No structured run outcomes.** Hermes reviews conversations. lmloop's `until`, `plan`, and graph
   runs record check exit codes, red/green transitions, abstains, and gates, which are far richer
   learning signals than a chat transcript.
@@ -238,6 +265,19 @@ belongs in the task's skill … memory is injected into every turn and must stay
 | [#66350](https://github.com/NousResearch/hermes-agent/issues/66350), [#70128](https://github.com/NousResearch/hermes-agent/issues/70128), [#64926](https://github.com/NousResearch/hermes-agent/issues/64926) | Reviews write unrelated content into skills; edits ship un-gated and cannot be undone | Relevance gate (only skills loaded in the window), staging, append-only history |
 | [#110689](https://github.com/NousResearch/hermes-agent/issues/110689), [#126685](https://github.com/NousResearch/hermes-agent/issues/126685) | All-or-nothing review batches strand independent additions | Apply review writes independently; one bad write must not drop the rest |
 | [#136030](https://github.com/NousResearch/hermes-agent/issues/136030), [#126613](https://github.com/NousResearch/hermes-agent/issues/126613) | Usage-based archival with incomplete telemetry archives live skills | Telemetry may demote from injection; it must never delete or hide from recall |
+| [#117294](https://github.com/NousResearch/hermes-agent/issues/117294) | Default-on review on one host: 471 review runs; 96.8% of skill mutations unattended; 241 skills in a 73 MB library, 51 never used | Skip happy paths; report the review tax |
+| [#88429](https://github.com/NousResearch/hermes-agent/issues/88429) | "User corrections ossify into permanent global prohibitions" | Scope a correction to the task or command it was about; let attribution reopen it |
+| [#66180](https://github.com/NousResearch/hermes-agent/issues/66180) | Auto-created skills are never loaded during task execution | Attach lessons to something that already loads (learnings, notes on loaded skills), not to new skills that must be discovered |
+
+### 2.1 Measured results
+
+| Source | Setup | Result | Implication for lmloop |
+|---|---|---|---|
+| [#134531](https://github.com/NousResearch/hermes-agent/issues/134531) (PAST-Bench) | 6 procedural helpdesk families, `gpt-5.4-mini`, judge-free grading from an audit log | No learning: 8%. Default review of the agent's own sessions: 33%. Review of one **verified-correct** session: 56% (20/36). The SOP verbatim as a skill: 89%. Only about 38% of learning episodes were actually solved | Learn from verified segments. lmloop's fail→pass and red→green transitions are verification it already has |
+| [#136931](https://github.com/NousResearch/hermes-agent/issues/136931) | One skill: 7.4 KB → 40.2 KB over 77 edits; blind replay of before/after bytes, 40 runs, 64 judgments | 18.88 vs 18.84 out of 20: no measurable difference | More edits are not better. Measure before trusting a write path |
+| [#128884](https://github.com/NousResearch/hermes-agent/issues/128884) | 10 windows where the user taught nothing, 3 samples each | 27 of 30 runs wrote something; 20 of 22 memory writes junk or duplicate. Yet "most skill writes in those same windows are real lessons from the work" | Trigger on evidence, including tool-recovery accrual, not on user turns alone |
+| [PR #49252](https://github.com/NousResearch/hermes-agent/pull/49252) | Same real session, Opus vs Haiku digest | Haiku about 39× cheaper; caught 4/6 skill and 3/4 memory signals vs 5/6 and 4/4 | Keep the review on the main model by default (`eval_model` empty) |
+| [PR #25434](https://github.com/NousResearch/hermes-agent/pull/25434) | Byte-identical cache key for the fork | About −89% per review call, −26% end-to-end (Sonnet 4.5) | Cache parity is worth measuring for REPL reviews on llama.cpp |
 
 ---
 
@@ -336,7 +376,9 @@ latest-wins by key, matching the learnings store:
 
 ### 4.4 The review itself
 
-**Input: salient windows, not whole transcripts.** A deterministic episode digest comes first:
+**Input: salient windows, not whole transcripts.** PAST-Bench is the reason (Section 2.1):
+reviewing one verified-correct session beat reviewing the agent's own sessions, 56% to 33%.
+A deterministic episode digest comes first:
 outcome, cycles, check commands, and signal list. Then come windows anchored on each signal, with
 a total cap of `REVIEW_INPUT_CHARS` (for example 12,000).
 
@@ -368,6 +410,7 @@ finding by evidence tier:
   "`recall_memory` first" check (`entry/repl.py:422-429`).
 - Pass `model_override=eval_model_name(cfg, model)` (`model/server.py:282`). When `eval_model` is
   empty that is the main model, which is already loaded in LM Studio, so there is no model swap.
+  Keep that default: Hermes measured a cheaper reviewer missing signals (Section 2.1).
 - For REPL boundary reviews there is an optional cache-parity variant: replay the live thread
   unchanged and append the review instruction as the last user message. llama.cpp can then reuse
   the slot's KV prefix, as Hermes does with provider caches. This only works if the tool schemas
@@ -468,7 +511,9 @@ human-gated (`/spirit distill --patch`).
 ### 4.9 Procedural memory: per-project skill notes (L4)
 
 Hermes' strongest structural idea is that task lessons load only with the task. lmloop injects 8
-learnings into every prompt of a small local context, and that is the scarce resource.
+learnings into every prompt of a small local context, and that is the scarce resource. Notes
+attach to skills that already load, which avoids Hermes' discovery problem: new auto-created
+skills that are never loaded when needed (#66180).
 
 - **Store:** `~/.lmloop/projects/<slug>/skill_notes/<skill>.jsonl`, append-only and latest-wins by
   key, rendered as a `## Learned in this project` section after the packaged body whenever
@@ -558,7 +603,10 @@ harness-adopt`):
 4. **Lessons, not logs.** An imperative rule plus one clause of why; no PR numbers, dates, or
    quoted narration.
 5. **Do not restate** what `system.md`, `AGENTS.md`, or a tool schema already teaches.
-6. **Route by evidence tier** (4.4). An empty review is a valid result. Unlike Hermes, lmloop
+6. **Scope corrections.** Save a correction for the task, command, or file it was about, not as a
+   global prohibition (#88429). A `preference` never decays in lmloop, so an over-broad one is
+   permanent until attribution (4.6) reopens it.
+7. **Route by evidence tier** (4.4). An empty review is a valid result. Unlike Hermes, lmloop
    should not push toward writing; the trigger already guarantees there is evidence to look at.
 
 ---
