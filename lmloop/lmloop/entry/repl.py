@@ -59,6 +59,15 @@ from ..core.status import (
     status as status_line,
 )
 from ..ui import Console, ask_until_gate, ask_yes_no, fresh_stats, make_confirm_gate, write_clipboard
+from ..ui.session_views import (
+    PLAN_MODE_NOTE,
+    DenialLog,
+    RewindStack,
+    ShellRuns,
+    diff_lines,
+    permissions_lines,
+    run_user_shell,
+)
 from ..core import usage
 
 _THINKING_HISTORY_MAX = 30
@@ -96,6 +105,11 @@ class SessionState:
     until_run: "Path | None" = None
     graph_run: "Path | None" = None
     clock_now: object = None
+    plan_mode: bool = False
+    extra_dirs: list = field(default_factory=list)
+    rewind: RewindStack = field(default_factory=RewindStack)
+    shell: ShellRuns = field(default_factory=ShellRuns)
+    denials: DenialLog = field(default_factory=DenialLog)
 
     @property
     def user_turns(self) -> int:
@@ -156,7 +170,9 @@ def _refresh_context_limit(state: SessionState) -> None:
     state.context_limit = server.get_context_limit(state.model, state.cfg)
 
 
-def _reset_session(state: SessionState, keep_stats: bool = False) -> None:
+def _reset_session(state: SessionState, keep_stats: bool = False,
+                   label: str = "/new") -> None:
+    state.rewind.push(label, state.messages, state.session_log)
     state.clock_now = datetime.now(timezone.utc)
     state.messages = _fresh_messages(
         state.cfg, state.workspace_root, clock_now=state.clock_now,
@@ -195,9 +211,17 @@ def _with_ref_excerpts(text: str, refs: tuple) -> str:
 
 
 def _turn_user_content(state: SessionState, expansion: AtRefExpansion):
-    """Referenced-files text, plus image_url parts when the model is a VLM."""
-    extra_readable = [ref.resolved for ref in expansion.refs]
+    """Referenced-files text, plus image_url parts when the model is a VLM.
+
+    Pending ``!cmd`` output goes first; the plan-mode note goes last.
+    """
+    extra_readable = [ref.resolved for ref in expansion.refs] + list(state.extra_dirs)
     content = _with_ref_excerpts(expansion.text, expansion.refs)
+    shell_context = state.shell.take_context()
+    if shell_context:
+        content = shell_context + "\n\n" + content
+    if state.plan_mode:
+        content = content.rstrip() + "\n\n" + PLAN_MODE_NOTE
     if server.model_has_vision(state.model, state.cfg):
         files = [ref.resolved for ref in expansion.refs if not ref.is_dir]
         content = extract.image_user_content(
@@ -234,6 +258,7 @@ def _run_turn(state: SessionState, user_text: str, confirm_gate) -> bool:
             **state.act_display().for_act(),
             on_thinking=state.push_thinking,
             extra_readable=extra_readable,
+            readonly=state.plan_mode,
         )
         footer = state.console.stats_footer(
             state.stats, state.context_limit, state.messages, state.context_reserve,
@@ -613,6 +638,7 @@ def _cmd_compact(state: SessionState, arg: str, confirm_gate) -> bool:
             log=memory.new_session_log(),
             replay=True,
             reset_stats=False,
+            label="/compact",
         )
         state.console.info("[thread replaced with compact summary]")
     return True
@@ -769,8 +795,13 @@ def parse_restore_arg(arg: str):
 
 
 def _adopt_thread(state: SessionState, messages: list, *, log: "Path | None",
-                  replay: bool, reset_stats: bool = True) -> None:
-    """Replace the in-memory thread. ``replay`` copies turns into a new log."""
+                  replay: bool, reset_stats: bool = True,
+                  label: str = "/restore") -> None:
+    """Replace the in-memory thread. ``replay`` copies turns into a new log.
+
+    The replaced thread goes on the rewind stack under ``label``.
+    """
+    state.rewind.push(label, state.messages, state.session_log)
     state.messages = messages
     state.thinking_history = []
     if reset_stats:
@@ -1135,6 +1166,128 @@ def _cmd_copy(state: SessionState, arg: str) -> bool:
     return True
 
 
+# --- session controls ---
+
+def _cmd_rewind(state: SessionState, arg: str) -> bool:
+    if not arg.strip():
+        state.console.info("\n".join(state.rewind.lines()))
+        return True
+    count = parse_positive_count(arg.strip())
+    entry = state.rewind.pop(count) if count else None
+    if entry is None:
+        state.console.error(f"no rewind point {arg.strip()!r} — /rewind lists them")
+        return True
+    _adopt_thread(state, entry.messages, log=entry.session_log, replay=False,
+                  reset_stats=False, label="/rewind")
+    turns = state.user_turns
+    state.console.info(f"[rewound to before {entry.label} — {turns} turn(s); /rewind undoes this]")
+    return True
+
+
+def _cmd_readonly(state: SessionState, arg: str) -> bool:
+    choice = arg.strip().lower()
+    if choice not in ("", "on", "off"):
+        state.console.info("usage: /readonly [on|off]")
+        return True
+    state.plan_mode = (not state.plan_mode) if not choice else choice == "on"
+    if state.plan_mode:
+        state.console.info("[plan mode on — the model reads and proposes; no edits or shell]")
+    else:
+        state.console.info("[plan mode off — edits and shell allowed (gates still ask)]")
+    return True
+
+
+def _cmd_diff(state: SessionState, _arg: str) -> bool:
+    state.console.info("\n".join(diff_lines(state.workspace_root)))
+    return True
+
+
+def _cmd_permissions(state: SessionState, _arg: str) -> bool:
+    state.console.info("\n".join(permissions_lines(
+        state.cfg, state.workspace_root, plan_mode=state.plan_mode,
+        extra_dirs=state.extra_dirs, denials=state.denials,
+    )))
+    return True
+
+
+def _cmd_add_dir(state: SessionState, arg: str) -> bool:
+    if not arg.strip():
+        state.console.info("usage: /add-dir <path>")
+        return True
+    path = resolve_user_path(arg.strip(), cwd=state.workspace_root)
+    if not path.is_dir():
+        state.console.error(f"not a directory: {arg.strip()}")
+        return True
+    if path not in state.extra_dirs:
+        state.extra_dirs.append(path)
+    from ..mcp.session import session_manager
+    session_manager().extra_roots = list(state.extra_dirs)
+    state.console.info(f"[tools can read {path} this session]")
+    return True
+
+
+def _refresh_fresh_system_prompt(state: SessionState) -> None:
+    """Rebuild the system message while the thread has no turns (MCP catalog changed)."""
+    if len(state.messages) == 1 and state.messages[0].get("role") == "system":
+        state.messages = _fresh_messages(state.cfg, state.workspace_root, clock_now=state.clock_now)
+
+
+def _cmd_mcp(state: SessionState, arg: str) -> bool:
+    from ..mcp.admin import run_mcp_words
+
+    try:
+        words = shlex.split(arg or "")
+    except ValueError as exc:
+        state.console.error(f"/mcp: {exc}")
+        return True
+    report = run_mcp_words(words, state.workspace_root)
+    if report.out:
+        state.console.info("\n".join(report.out))
+    for line in report.err:
+        state.console.error(line)
+    _refresh_fresh_system_prompt(state)
+    return True
+
+
+def offer_mcp_approval(state: SessionState, interactive: bool, ask=ask_yes_no) -> None:
+    """At startup, ask once about project MCP servers from .mcp.json."""
+    from ..mcp.admin import pending_approval_lines, run_mcp_words
+    from ..mcp.session import session_manager
+
+    if not cfg_bool(state.cfg, "mcp_enabled"):
+        return
+    manager = session_manager()
+    manager.configure(state.workspace_root)
+    pending = pending_approval_lines(manager)
+    if not pending:
+        return
+    state.console.hint("This project's .mcp.json lists MCP servers you have not approved:")
+    state.console.hint("\n".join(pending))
+    if not interactive:
+        state.console.hint("  approve with: lmloop mcp approve --all")
+        return
+    if ask("Start these servers when needed? [y/N] "):
+        report = run_mcp_words(["approve", "--all"], state.workspace_root, manager)
+        state.console.info("\n".join(report.out + report.err))
+        _refresh_fresh_system_prompt(state)
+    else:
+        state.console.hint("  skipped — /mcp approve <name> later")
+
+
+def _run_bang(state: SessionState, line: str) -> None:
+    """``!cmd``: run it now and hand the output to the next model turn."""
+    command = line[1:].strip()
+    if not command:
+        state.console.info("usage: !<shell command> — output joins your next message")
+        return
+    usage.record("repl.command", command="!")
+    output = run_user_shell(command, state.workspace_root, state.cfg)
+    print(output.rstrip())
+    state.shell.add(command, output)
+    memory.log_event(state.session_log, "system", f"$ {command}\n{output}")
+    state.console.hint("[output will be included with your next message]")
+
+
 def _build_slash_commands(confirm_gate) -> list:
     """Bind handlers to CommandMeta rows from commands.py (single name source)."""
     handlers = {
@@ -1164,6 +1317,12 @@ def _build_slash_commands(confirm_gate) -> list:
         "spirit": _cmd_spirit,
         "save": lambda s, a: _cmd_save(s, a, confirm_gate),
         "skill": lambda s, a: _cmd_skill(s, a, confirm_gate),
+        "rewind": _cmd_rewind,
+        "readonly": _cmd_readonly,
+        "diff": _cmd_diff,
+        "permissions": _cmd_permissions,
+        "add-dir": _cmd_add_dir,
+        "mcp": _cmd_mcp,
         "quit": lambda s, a: False,
         "exit": lambda s, a: False,
         "q": lambda s, a: False,
@@ -1280,7 +1439,7 @@ def run_repl(cfg: Config, console: "Console | None" = None,
         workspace_root=workspace_root,
         clock_now=clock_now,
     )
-    confirm_gate = make_confirm_gate(console)
+    confirm_gate = state.denials.wrap(make_confirm_gate(console))
 
     global SLASH_COMMANDS
     SLASH_COMMANDS = _build_slash_commands(confirm_gate)
@@ -1305,6 +1464,7 @@ def run_repl(cfg: Config, console: "Console | None" = None,
 
     console.banner(slug)
     usage.record("repl.session", interactive=interactive, skill=skill or "")
+    offer_mcp_approval(state, interactive)
 
     if graph_run is not None:
         attach_graph_result(state, graph_run)
@@ -1350,6 +1510,9 @@ def run_repl(cfg: Config, console: "Console | None" = None,
             if count is not None:
                 _cmd_memory_mine(state, count, confirm_gate)
                 continue
+        if line.startswith("!"):
+            _run_bang(state, line)
+            continue
         if line.startswith("/"):
             if not _is_known_slash(line):
                 suggestion = _suggest_slash_command(line)

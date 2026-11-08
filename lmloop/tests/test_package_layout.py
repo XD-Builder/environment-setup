@@ -19,6 +19,7 @@ CATEGORIES = (
     "harness",
     "ui",
     "company",
+    "mcp",
 )
 
 

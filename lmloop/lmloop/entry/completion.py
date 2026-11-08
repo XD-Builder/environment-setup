@@ -11,6 +11,7 @@ import sys
 from ..core.commands import (
     EVAL_FLAGS,
     GRAPH_PROPOSE_VERB,
+    MCP_VERBS,
     MEMORY_ARG_CHOICES,
     cli_subcommand_metas,
 )
@@ -26,6 +27,7 @@ def zsh_completion_script() -> str:
     )
     keys = " ".join(DEFAULTS)
     memory_verbs = " ".join(MEMORY_ARG_CHOICES)
+    mcp_verbs = " ".join(MCP_VERBS)
     return (
         "#compdef lmloop\n"
         "\n"
@@ -78,6 +80,11 @@ def zsh_completion_script() -> str:
         "        memory)\n"
         "          if (( CURRENT == 2 )); then\n"
         f"            compadd - {memory_verbs}\n"
+        "          fi\n"
+        "          ;;\n"
+        "        mcp)\n"
+        "          if (( CURRENT == 2 )); then\n"
+        f"            compadd - {mcp_verbs}\n"
         "          fi\n"
         "          ;;\n"
         "        retro|until|decisions|history|models)\n"

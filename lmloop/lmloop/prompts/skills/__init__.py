@@ -262,6 +262,13 @@ class SkillLibrary:
         steering = steer.steering_block(workspace_root)
         if steering:
             base += "\n\n" + steering
+        rules = steer.project_rules_block(workspace_root)
+        if rules:
+            base += "\n\n" + rules
+        from ...mcp.tooldefs import mcp_catalog_block
+        catalog = mcp_catalog_block(cfg, workspace_root)
+        if catalog:
+            base += "\n\n" + catalog
         index = self.index_block()
         if index:
             base += "\n\n" + index

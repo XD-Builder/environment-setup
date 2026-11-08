@@ -54,6 +54,14 @@ def msg_gather_budget() -> str:
     return status("gather budget — writing final answer")
 
 
+def msg_task_start(label: str, read_only: bool) -> str:
+    return status(f"task · {label} · {'read-only' if read_only else 'can edit'}")
+
+
+def msg_task_done(label: str, tool_calls: int) -> str:
+    return status(f"task done · {label} · {tool_calls} tool calls")
+
+
 def msg_until_step(role: str, step: int, max_steps: int) -> str:
     return status(f"until {role} · cycle {step}/{max_steps}")
 

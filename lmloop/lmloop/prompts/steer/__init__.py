@@ -80,6 +80,43 @@ def steering_block(workspace_root: "Path | None" = None) -> str:
     return "## Steering (always apply)\n\n" + body
 
 
+# Repo instructions other agents already read. The first one present wins.
+PROJECT_RULE_FILES = ("AGENTS.md", "CLAUDE.md")
+PROJECT_RULES_LOCAL = Path(".lmloop") / "rules.md"
+PROJECT_RULES_MAX_CHARS = 6000
+
+
+def project_rule_paths(workspace_root: "Path | None") -> "list[Path]":
+    """``AGENTS.md`` (else ``CLAUDE.md``) and ``.lmloop/rules.md`` that exist."""
+    if workspace_root is None:
+        return []
+    root = Path(workspace_root)
+    found = [root / name for name in PROJECT_RULE_FILES if (root / name).is_file()][:1]
+    if (root / PROJECT_RULES_LOCAL).is_file():
+        found.append(root / PROJECT_RULES_LOCAL)
+    return found
+
+
+def project_rules_block(workspace_root: "Path | None") -> str:
+    """System-prompt section with the workspace's own agent rules, clipped."""
+    parts, names = [], []
+    for path in project_rule_paths(workspace_root):
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if text:
+            parts.append(text)
+            names.append(path.relative_to(workspace_root).as_posix())
+    if not parts:
+        return ""
+    body = "\n\n".join(parts)
+    if len(body) > PROJECT_RULES_MAX_CHARS:
+        body = (body[:PROJECT_RULES_MAX_CHARS].rstrip()
+                + f"\n\n[clipped at {PROJECT_RULES_MAX_CHARS} chars — read_file the source for the rest]")
+    return f"## Project rules (from {', '.join(names)})\n\n{body}"
+
+
 def clock_snapshot(now: "datetime | None" = None) -> dict:
     """UTC clock plus lookback calendar dates. ``now`` is for tests."""
     if now is None:

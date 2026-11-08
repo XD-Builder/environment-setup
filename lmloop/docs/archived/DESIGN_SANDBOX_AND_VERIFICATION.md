@@ -1,11 +1,11 @@
 # Design: Execution sandbox and verification hardening
 
-**Status:** Phase R, Phase V, and Phase S (S1–S14) shipped. Default execution is still the host. The per-cycle probe (§2.9) stays deferred — it contradicts the single-slot latency budget; the once-per-run proposal already covers the useful half.
+**Status:** shipped — Phase R, Phase V, and Phase S (S1–S14). Default execution is still the host. The per-cycle probe (§2.9) stays deferred — it contradicts the single-slot latency budget; the once-per-run proposal already covers the useful half.
 **Date:** 2026-09-19 · **Revised:** 2026-10-09 (governance + co-evolution alignment)
 **Depends on:** `tools.run_shell`, `tools.GatePolicy`, `loop.run_until`, `graph.run_graph`
 **Companions:** [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
-[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
+[DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
 
 Two questions drive this file:
 
@@ -82,7 +82,7 @@ default mode has no container at all.
 
 The combined target architecture for both proposals is in the companion doc
 ([Architecture overview](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md#architecture-overview));
-the current system is in [ARCHITECTURE.md](ARCHITECTURE.md#system-overview). This
+the current system is in [ARCHITECTURE.md](../ARCHITECTURE.md#system-overview). This
 section shows only what this proposal adds. Dashed boxes are new.
 
 ### Target components
@@ -812,7 +812,7 @@ the style of `test_tools.py`'s existing `Popen` patching. No test needs a daemon
 
 This section records how Phase S fits enterprise **AI governance** expectations and how the
 sandbox **co-evolves** with the harness. Full loop design:
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md).
 Primary external reference:
 [Docker AI Governance](https://www.docker.com/blog/docker-ai-governance-unlock-agent-autonomy-safely/).
 

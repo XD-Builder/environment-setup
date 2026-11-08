@@ -13,7 +13,14 @@ State layout (gstack-inspired, file-only):
     ├── skills/<name>.md               # user-authored skills (override packaged)
     ├── graphs/<name>.md               # user-authored graphs (override packaged)
     ├── steer/<name>.md                # user always-on steering (concatenated)
+    ├── mcp.json                       # user-scope MCP servers
+    ├── hooks.json                     # PreToolUse / PostToolUse hooks (every project)
     └── projects/<slug>/
+        ├── mcp.local.json             # local-scope MCP servers (`lmloop mcp add`)
+        ├── mcp.approved.json          # approved project .mcp.json entries (fingerprints)
+        ├── hooks.json                 # hooks for this project only
+        ├── cache/mcp/                 # tools/list cache + server stderr logs
+        ├── mcp_results/               # long MCP results spilled for read_file
         ├── learnings.jsonl            # append-only, dedup at read time
         ├── decisions.jsonl            # event-sourced (decide / supersede)
         ├── sessions/<ts>.jsonl        # per-session transcript history
@@ -24,6 +31,7 @@ State layout (gstack-inspired, file-only):
         └── graph_edges.jsonl          # knowledge-graph edges (use_graph)
 """
 
+import functools
 import json
 import os
 import re
@@ -120,6 +128,8 @@ class ConfigSchema:
     local_read_concurrency: int = 8
     file_edit_concurrency: int = 6  # in-flight write_file/update_file calls on distinct paths
     max_tokens: int = 8192  # completion cap; 0 omits the field. Several file edits fit.
+    mcp_enabled: bool = True  # offer configured MCP servers to the model
+    mcp_tool_mode: Literal["lazy", "eager"] = "lazy"  # eager adds mcp__server__tool rows
 
 
 DEFAULTS: dict[str, object] = asdict(ConfigSchema())
@@ -139,6 +149,10 @@ def coerce_config_value(key: str, value):
         return None
     if key in ("check_inference", "until_baseline"):
         if isinstance(value, str) and value.strip().lower() in ("auto", "off"):
+            return value.strip().lower()
+        return None
+    if key == "mcp_tool_mode":
+        if isinstance(value, str) and value.strip().lower() in ("lazy", "eager"):
             return value.strip().lower()
         return None
     if key == "until_control":
@@ -433,6 +447,12 @@ def project_slug(cwd: "Path | None" = None) -> str:
         except (OSError, subprocess.TimeoutExpired):
             raw = cwd.name
     return re.sub(r"[^a-zA-Z0-9._-]", "-", raw) or "default"
+
+
+@functools.lru_cache(maxsize=32)
+def cached_project_slug(root: Path) -> str:
+    """``project_slug`` memoized per resolved root (it shells out to git)."""
+    return project_slug(root)
 
 
 def project_dir(slug: "str | None" = None) -> Path:

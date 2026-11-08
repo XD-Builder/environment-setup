@@ -86,12 +86,14 @@ GATE_UPDATE_OUTSIDE = "update_file "
 GATE_OVERWRITE = "overwrite "
 GATE_MOVE = "move_file "
 GATE_DELETE = "delete_file "
+GATE_MCP = "mcp_call "
 _GATE_KINDS: "dict[str, tuple[str, str]]" = {
     GATE_WRITE_OUTSIDE: ("write outside the workspace", GATE_IRREVERSIBLE),
     GATE_UPDATE_OUTSIDE: ("edit outside the workspace", GATE_IRREVERSIBLE),
     GATE_OVERWRITE: ("overwrite an existing file", GATE_RECOVERABLE),
     GATE_MOVE: ("move/rename a file", GATE_RECOVERABLE),
     GATE_DELETE: ("delete a file", GATE_RECOVERABLE),
+    GATE_MCP: ("an MCP tool that may change external state", GATE_IRREVERSIBLE),
 }
 AUTONOMOUS_GATE_MODES = ("files", "none", "all")
 DEFAULT_AUTONOMOUS_GATES = config.DEFAULTS["autonomous_gates"]
@@ -140,6 +142,11 @@ def _gate_kind(command: str) -> "tuple[str, str] | None":
         if (command or "").startswith(prefix):
             return entry
     return None
+
+
+def gate_kind_rows() -> "list[tuple[str, str, str]]":
+    """(command prefix, label, tier) for each typed gate, for ``/permissions``."""
+    return [(prefix.strip(), label, tier) for prefix, (label, tier) in _GATE_KINDS.items()]
 
 
 def confirm_label(command: str) -> str:
@@ -1091,6 +1098,10 @@ def search_files(pattern: str, path: str = ".",
 # A wave uses the defs captured on ToolImpls so a later build cannot
 # change validation or truncation for calls already in flight.
 _TOOL_DEFS: "dict[str, ToolDef]" = {}
+TOOL_TASK = "task"
+TASK_TOOL_SETS = ("read", "all")
+# (prompt, description, read_only) -> the helper's final answer.
+SubagentRunner = Callable[[str, str, bool], str]
 READONLY_OMIT = frozenset({
     "write_file", "update_file", "move_file", "delete_file",
     "remember", "log_decision", "graph_add_edge", "reflect_thought",
@@ -1135,7 +1146,8 @@ def build_tools(cfg: Config, confirm_gate=None,
                 workspace_root: "Path | None" = None,
                 readonly: bool = False,
                 extra_readable: "list[Path] | None" = None,
-                only: "frozenset[str] | None" = None) -> "tuple[list[dict], dict]":
+                only: "frozenset[str] | None" = None,
+                subagent: "SubagentRunner | None" = None) -> "tuple[list[dict], dict]":
     """Returns (openai tool specs, name -> callable) derived from ToolDef list.
 
     ``readonly=True`` omits the READONLY_OMIT tools (file writes, memory
@@ -1144,6 +1156,10 @@ def build_tools(cfg: Config, confirm_gate=None,
     registry always keeps the full set so ``dispatch()`` validation is not
     poisoned by the last readonly or use_graph=false build. Prompt injection
     uses ``tool_names(cfg=...)``.
+
+    ``subagent(prompt, description, read_only)`` adds the ``task`` tool; the
+    agent loop passes it for top-level turns only. Configured MCP servers add
+    ``mcp_find_tools`` / ``mcp_call`` rows, and hooks wrap matching impls.
     """
     global _TOOL_DEFS
 
@@ -1491,6 +1507,38 @@ def build_tools(cfg: Config, confirm_gate=None,
             },
         ),
     ]
+    if subagent is not None:
+        defs.append(ToolDef(
+            TOOL_TASK,
+            "Delegate a self-contained sub-task to a fresh helper agent that "
+            "shares this workspace but not this conversation. Use it for broad "
+            "exploration or research whose intermediate tool output would crowd "
+            "this context; only the helper's final answer comes back. prompt "
+            "must carry every detail the helper needs. tools=read (default) "
+            "limits it to read-only tools; all also allows edits.",
+            {
+                "description": {"type": "string", "description": "3-6 word label"},
+                "prompt": s,
+                "tools": {"type": "string", "enum": list(TASK_TOOL_SETS)},
+            },
+            ["prompt"],
+            lambda prompt, description="", tools="read": subagent(
+                prompt, description, readonly or tools != "all",
+            ),
+            allow_empty=("description",),
+            enum_fields={"tools": TASK_TOOL_SETS},
+        ))
+    from ..mcp.tooldefs import mcp_tool_defs, spill_dir
+    mcp_defs = [] if only is not None else mcp_tool_defs(
+        cfg, confirm_gate=gate, workspace_root=root, readonly=readonly,
+    )
+    if mcp_defs:
+        defs.extend(mcp_defs)
+        extra.append(spill_dir())
+    from ..verify.hooks import HookRunner
+    hooks = HookRunner.load(root)
+    if hooks.hooks:
+        defs = [hooks.wrap(d) for d in defs]
     _TOOL_DEFS = {d.name: d for d in defs}
     if not config.cfg_bool(cfg, "use_graph"):
         defs = [d for d in defs if d.name != "graph_add_edge"]
@@ -1788,7 +1836,10 @@ def dispatch(impls: dict, name: str, arguments: str, defs: "dict | None" = None)
         return err
     try:
         params = inspect.signature(fn).parameters
-        filtered = {k: v for k, v in kwargs.items() if k in params}
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            filtered = kwargs
+        else:
+            filtered = {k: v for k, v in kwargs.items() if k in params}
         result = fn(**filtered)
         if isinstance(result, ToolResult):
             return result

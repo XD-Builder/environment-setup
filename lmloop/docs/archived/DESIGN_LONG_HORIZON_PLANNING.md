@@ -2,7 +2,7 @@
 
 **Status:** shipped — campaign store, plan block, board, daily tick, end-of-day, max days. Plan injection cap is the constant 4000. Open questions in §10 remain.  
 **Date:** 2026-10-08  
-**Depends on:** [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md), [DESIGN_SANDBOX_AND_VERIFICATION.md](../DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md), [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md), [ARCHITECTURE.md](../ARCHITECTURE.md)  
+**Depends on:** [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md), [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md), [DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md), [DESIGN_EVOLVING_SPIRIT.md](DESIGN_EVOLVING_SPIRIT.md), [ARCHITECTURE.md](../ARCHITECTURE.md)  
 **Extends:** company orchestrator, `--docker-persist`, milestone retro — with **campaigns** that survive calendar days and **planning memory** distinct from pitfall learnings.
 
 ---
@@ -207,7 +207,7 @@ lmloop campaign resume ship-feature-x --docker-persist --autonomous-gates all
 
 Each invocation:
 
-1. Reattach persist container if digest + config hash match ([sandbox §1.2](../DESIGN_SANDBOX_AND_VERIFICATION.md)).  
+1. Reattach persist container if digest + config hash match ([sandbox §1.2](DESIGN_SANDBOX_AND_VERIFICATION.md)).  
 2. Load campaign plan + graph/until frontier.  
 3. Run until **pause** (budget, end-of-day tick, or graph wait).  
 4. Exit 0; supervisor fires again next window.
@@ -326,11 +326,11 @@ Evaluate **whole workflows** (fetch → remember → plan patch → spawn) in th
 | Doc | Update when this ships |
 |-----|--------------------------|
 | [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) | §9 milestones consume campaign plan phases; `--campaign` flag |
-| [DESIGN_SANDBOX_AND_VERIFICATION.md](../DESIGN_SANDBOX_AND_VERIFICATION.md) | Supervisor examples reference `campaign resume` |
-| [DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md) | New track “Long-horizon campaigns” after sandbox |
+| [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Supervisor examples reference `campaign resume` |
+| [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) | New track “Long-horizon campaigns” after sandbox |
 | [ARCHITECTURE.md](../ARCHITECTURE.md) | Campaign store diagram |
-| [README.md](../README.md) | User-facing table row |
-| [GUIDE_DOCKER_AND_OPENROUTER.md](GUIDE_DOCKER_AND_OPENROUTER.md) | Multi-day supervisor recipe |
+| [README.md](../../README.md) | User-facing table row |
+| [GUIDE_DOCKER_AND_OPENROUTER.md](../GUIDE_DOCKER_AND_OPENROUTER.md) | Multi-day supervisor recipe |
 
 ---
 

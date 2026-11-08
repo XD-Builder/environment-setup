@@ -50,6 +50,7 @@ README_CONFIG_KEYS = frozenset({
     "company_remote", "company_models_allowlist",
     "use_spirit", "spirit_actions", "spirit_distill_after_mine", "spirit_remote",
     "campaign_daily_reflect", "campaign_end_of_day_utc", "campaign_max_days",
+    "mcp_enabled", "mcp_tool_mode",
     TOOL_PREVIEW_LIMIT, DIFF_LIMIT, CHECK_OUTPUT_LIMIT, HISTORY_PREVIEW_CHARS,
     MAX_TRANSCRIPT_TOOL_CHARS,
     WEB_SEARCH_CONCURRENCY, WEB_FETCH_CONCURRENCY, LOCAL_READ_CONCURRENCY,

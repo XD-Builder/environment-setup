@@ -16,14 +16,14 @@ lmloop/
 ├── DEVELOPMENT.md              # contribution practices
 ├── docs/
 │   ├── ARCHITECTURE.md         # this file
-│   ├── IMPLEMENTATION_PLAN.md  # build order across all design docs (living)
-│   ├── archived/               # shipped specs (command vocabulary, continual harness, usage evals, … — see archived/README.md)
-│   ├── DESIGN_SANDBOX_AND_VERIFICATION.md  # snapshots + derived checks + opt-in --docker; probe deferred
-│   ├── DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md  # lock, fan-out, flow, canvas TUI shipped; parallel agents deferred
+│   ├── ROADMAP.md              # active docs, next candidate, deferred work + revisit triggers
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking + perf harness shipped; Layer E deferred
-│   ├── DESIGN_ROADMAP.md       # build order, cuts, config budget (living)
-│   ├── DESIGN_CLAUDE_CODE_PARITY.md  # proposed: MCP + Claude Code–class harness parity
-│   └── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter today, Docker sandbox status
+│   ├── FINDINGS_HERMES_AGENT.md    # research: event-driven learning (next design candidate)
+│   ├── FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md  # research: harness patterns
+│   ├── FINDINGS_CODE_INDEXING.md   # research: workspace code indexing (not built)
+│   ├── GUIDE_MCP.md            # user guide: MCP servers, sharing, policy
+│   ├── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter, opt-in Docker sandbox
+│   └── archived/               # shipped specs and consumed research (see archived/README.md)
 ├── sandbox/
 │   └── Dockerfile              # reference image; lmloop sandbox build records @sha256:
 ├── company/
@@ -91,9 +91,16 @@ lmloop/
 │   │   ├── workflow_finish.py  # terminal usage + KG hooks
 │   │   └── graphs/             # packaged workflow graphs
 │   │       └── company.md      # ceo → build → qa → mine
-│   ├── verify/                 # checks + git snapshots (leaves)
+│   ├── verify/                 # checks, git snapshots, tool hooks
 │   │   ├── checks.py           # derived check plans (no model calls)
-│   │   └── snapshot.py         # git temp-index refs before autonomous maker steps
+│   │   ├── snapshot.py         # git temp-index refs before autonomous maker steps
+│   │   └── hooks.py            # PreToolUse / PostToolUse hooks from ~/.lmloop
+│   ├── mcp/                    # MCP client (stdio + streamable HTTP)
+│   │   ├── config.py           # scopes, ${VAR} expansion, approvals, call policy
+│   │   ├── client.py           # JSON-RPC transports + initialize / tools / roots
+│   │   ├── session.py          # per-process sessions, 24h tools/list cache, catalog
+│   │   ├── tooldefs.py         # mcp_find_tools / mcp_call (+ eager rows), gate, spill
+│   │   └── admin.py            # `lmloop mcp` and `/mcp` verbs
 │   ├── host/                   # campaign board (workers do not append here)
 │   │   └── campaign.py         # multi-day plan, board, reflect ticks
 │   ├── core/                   # config, commands, status, usage, continue policy
@@ -112,7 +119,8 @@ lmloop/
 │   ├── spirit/                 # seed charter, actions, thoughts, traits, self.md
 │   └── ui/                     # Console + markdown (no top-level ui.py — package only)
 │       ├── console.py          # ANSI theming, status bars, clipboard
-│       └── markdown_view.py    # render assistant markdown (no quote gutter)
+│       ├── markdown_view.py    # render assistant markdown (no quote gutter)
+│       └── session_views.py    # rewind stack, !cmd context, /diff, /permissions
 ├── evals/golden/               # versioned assertion cases + baseline rates
 │   ├── cases.json
 │   └── baseline.json
@@ -402,7 +410,7 @@ This is control-flow, not a knowledge graph. Knowledge-graph memory is opt-in (`
 - Finish offers merge, push-and-PR, or keep. Merge from inside the linked worktree lands on the main checkout. Removal uses `git worktree remove` with no `--force`, and only for a path under `.lmloop/worktrees`. Discard runs only when the user passes the word `discard`.
 - The company graph in `flow/graphs/company.md` is unchanged. This is the interactive path.
 
-See [DESIGN_SUPERPOWERS.md](DESIGN_SUPERPOWERS.md).
+See [DESIGN_SUPERPOWERS.md](archived/DESIGN_SUPERPOWERS.md).
 
 ---
 
@@ -459,6 +467,9 @@ Each tool has a JSON Schema spec (for the model) and a Python callable (for exec
 | `recall_memory` | Keyword-search learnings + decisions | Read-only view. When `use_graph` is on, includes 1-hop graph neighbors. |
 | `current_time` | UTC/local now plus 7/28/90-day lookback dates | No network. OS clock. For relative windows when Clock is stale. |
 | `graph_add_edge` | Record a relationship between existing memory-graph nodes | Only registered when `use_graph` is true. Requires a `note`. |
+| `task` | Run a helper `act()` on a fresh thread; only its last answer returns | Registered when `act()` passes a runner (`allow_task`, not in `tool_only` runs or inside a helper). Read-only unless `tools: "all"` and the parent turn may edit. 16 rounds. Tokens roll into the parent's stats. |
+| `mcp_find_tools` | Keyword search over configured MCP servers' tools | Registered when `mcp_enabled` and a server is configured. Lists from the 24h cache, connecting only when the cache is cold. |
+| `mcp_call` | Call one MCP tool (`server`, `tool`, `arguments`) | Read-only tools (annotations, else name verb) run; others go through `.lmloop/mcp.policy.json`, then the `mcp_call ` gate (irreversible tier). Refused in read-only turns. Result fenced as untrusted; past `max_tool_output` it spills to `mcp_results/`. |
 
 Tools are registered once as `ToolDef` rows in `tools.build_tools()` (schema, validation, and impl; `int_fields` / `bool_fields` coerce the strings local models send). Slash/CLI command names and reserved skill stems come from `commands.py`. Status/resume copy lives in `status.py`.
 
@@ -466,7 +477,7 @@ Tool output is truncated to 12,000 chars to protect the context window.
 
 ### Confirm gates and autonomy
 
-Every gate is one call, `confirm_gate(command: str) -> bool`. The string is either a shell command or `<prefix><detail>` (`overwrite <p>`, `update_file <p>`, `move_file a -> b`, `delete_file <p>`, `write_file <p>` for outside-workspace writes). `tools.confirm_label()` owns the human label and `tools.gate_tier()` owns the recoverability tier for those prefixes; `ui.make_confirm_gate` only prints and asks.
+Every gate is one call, `confirm_gate(command: str) -> bool`. The string is either a shell command or `<prefix><detail>` (`overwrite <p>`, `update_file <p>`, `move_file a -> b`, `delete_file <p>`, `write_file <p>` for outside-workspace writes, `mcp_call <server>/<tool> <args>`). `tools.confirm_label()` owns the human label and `tools.gate_tier()` owns the recoverability tier for those prefixes; `ui.make_confirm_gate` only prints and asks.
 
 - **Pre-image backups.** Before an existing in-workspace file is overwritten, edited, moved, or deleted, `tools.backup_file` copies it to `~/.lmloop/projects/<slug>/trash/<process-stamp>/<relative path>` (pruned after 14 days). The tool result cites the backup path; the REPL echoes it via `tools.user_notice`.
 - **Interactive turns** use the y/N gate immediately; the user is present.
@@ -498,6 +509,8 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
 ├── skills/<name>.md                # user-authored skills (override packaged)
 ├── steer/<name>.md                 # user always-on steering (concatenated)
 ├── graphs/<name>.md                # user-authored graphs (override packaged)
+├── mcp.json                        # user-scope MCP servers
+├── hooks.json                      # PreToolUse / PostToolUse hooks (every project)
 ├── plans/<slug>/worktree.json      # remembered worktree yes/no and the open path
 ├── plans/<slug>/<plan-id>/progress.json  # implementation-plan ledger
 └── projects/<slug>/
@@ -508,7 +521,12 @@ All state is human-readable files under `~/.lmloop/projects/<slug>/`. No databas
     ├── until/<ts>.jsonl            # goal-loop run log (maker / check / eval)
     ├── graphs/<name>/<ts>.jsonl    # workflow-graph run log
     ├── graph_nodes.jsonl           # knowledge-graph nodes (when use_graph)
-    └── graph_edges.jsonl           # knowledge-graph edges (when use_graph)
+    ├── graph_edges.jsonl           # knowledge-graph edges (when use_graph)
+    ├── mcp.local.json              # local-scope MCP servers (+ disabledMcpServers)
+    ├── mcp.approved.json           # approved project servers: name → entry fingerprint
+    ├── hooks.json                  # hooks for this project only
+    ├── cache/mcp/                  # tools/list cache per server + logs/<name>.log (stderr)
+    └── mcp_results/                # MCP results longer than max_tool_output
 ```
 
 **Project slug** is resolved from git remote (`owner-repo`) or directory name.
@@ -569,10 +587,12 @@ At session start (and each isolated `/until` or graph `act()`), the system promp
 2. Live tool name list
 3. `steer.clock_block(now=clock_now)` — UTC timestamp and calendar date, **frozen** for the REPL session or until/graph run (OS clock at start; not rebuilt every `_chat`)
 4. `steer.steering_block()` — concatenated `*.md` from packaged `lmloop/prompts/steer/`, `~/.lmloop/steer/`, then `<workspace>/.lmloop/steer/` (later dirs can contradict earlier; same-name files are additive, unlike skills)
-5. Skill index — one `Use when:` line per public skill that is not marked `Index: no`. Bodies stay behind the `read_skill` tool, which refuses an opted-out skill; `/name` still loads it. A flat `name.md` wins over `name/SKILL.md`; a sibling file loads only when `read_skill` is called with that part. User skills override packaged ones. `/grill` (user-started interview, `GLOSSARY.md`, sparse ADRs) and the red-command gate in `investigate` adapt ideas from [mattpocock/skills](https://github.com/mattpocock/skills) (MIT). The playbooks are rewritten in lmloop's voice.
-6. Bridge-network sandbox hint, only when that backend is active.
-7. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
-8. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
+5. `steer.project_rules_block()` — `AGENTS.md` (else `CLAUDE.md`) plus `.lmloop/rules.md`, clipped at 6000 characters
+6. `mcp_catalog_block()` — configured MCP servers and up to six cached tool names each. Built from the cache only; it never starts a server
+7. Skill index — one `Use when:` line per public skill that is not marked `Index: no`. Bodies stay behind the `read_skill` tool, which refuses an opted-out skill; `/name` still loads it. A flat `name.md` wins over `name/SKILL.md`; a sibling file loads only when `read_skill` is called with that part. User skills override packaged ones. `/grill` (user-started interview, `GLOSSARY.md`, sparse ADRs) and the red-command gate in `investigate` adapt ideas from [mattpocock/skills](https://github.com/mattpocock/skills) (MIT). The playbooks are rewritten in lmloop's voice.
+8. Bridge-network sandbox hint, only when that backend is active.
+9. `spirit.spirit_block()` — seed charter, then compressed self, traits, and open thoughts when `use_spirit` is on. Remote endpoints omit self unless `spirit_remote`.
+10. `memory.context_block()` — bounded snapshot of active decisions, top learnings, and recent checkpoint (if < 14 days old), under the context-recovery heading
 
 `/context` is the audit view of what the model is holding. It prints two sections, colored when stdout is a TTY (`Console.write_lines`):
 
@@ -598,6 +618,15 @@ The interactive mode uses `prompt_toolkit` for:
 - **`@path` refs** on submit (`~/`, absolute, `./`, `../`, quoted or unquoted spaces, or project-relative) append a “Referenced files” block with the **resolved** path. Duplicate slashes in the typed token are collapsed. Missing tokens warn; existing ones are readable this turn **in place** even outside the workspace. PDF/Office/zip/audio attachments inline extracted text in the user message. Copy/extract of those files into the workspace, and writes to them, require confirmation.
 
 Slash commands (`/help`, `/stats`, `/copy`, `/memory`, `/until`, `/save`, `/restore`, …) are built at runtime so newly created skills appear immediately. `/memory list`, `/memory decisions`, `/memory graph`, and `/memory dump` inspect hidden state without a model turn. `/context` adds the live thread's file list in front of the readable memory view. `/copy` writes the last assistant reply (or `/copy transcript` the session markdown) to the OS clipboard. Markdown block quotes render without Rich's `▌` gutter so `/transcript` and live replies are select-copyable. After each agent turn the REPL prints a memory HUD (`memory.MemoryHud.line()`), for example `[Mem: 3 learnings | 1 decision | graph: on | checkpoint: yes]`: active learning/decision counts, whether `use_graph` is on and populated, and whether a checkpoint newer than 336 hours exists.
+
+Session controls (`ui/session_views.py`, bound in `repl.py`):
+
+- **`/rewind [n]`** — `_reset_session` and `_adopt_thread` push the replaced thread (and its session log) onto a `RewindStack` (10 deep, threads with no user turn are skipped). Rewinding adopts the entry and pushes the current thread, so a second rewind swaps back.
+- **`/readonly`** — plan mode. `_run_turn` passes `readonly=True` to `act()` and appends `PLAN_MODE_NOTE` to the user message.
+- **`!cmd`** — runs through `tools.run_shell` without a gate (the user typed it), prints the output, and queues it in `ShellRuns`; the next turn's user message starts with it (8000 characters max).
+- **`/add-dir`** — adds to `SessionState.extra_dirs`, which every turn passes as `extra_readable` and which become MCP `roots/list` entries.
+- **`/permissions`** — confirm keys, `tools.gate_kind_rows()`, MCP policy, hooks, readable roots, and the last 10 declines (the REPL's gate is wrapped by `DenialLog`).
+- **`/mcp`** — `mcp.admin.run_mcp_words`, then the system prompt is rebuilt while the thread has no turns. At startup `offer_mcp_approval` asks once about unapproved project servers.
 
 Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input()` without completions.
 
@@ -634,9 +663,25 @@ Non-interactive mode (piped input or `lmloop "task"`) falls back to plain `input
 | `lmloop models` | List models on server |
 | `lmloop config get\|set\|show` | Manage settings |
 | `lmloop completion zsh` | Print zsh completion script |
+| `lmloop mcp [verb …]` | MCP servers: `list`, `get`, `add`, `add-json`, `remove`, `approve`, `enable`, `disable`, `tools`, `reconnect`, `policy` |
 | `lmloop eval [--json \| --design \| --abstention]` | Usage gaps, or Act/Abstain/Pair on fixture pairs |
 | `lmloop eval --gate commit\|pr\|nightly` | Assertion pyramid against `evals/golden/` |
 | `lmloop eval --drain` / `--inbox` | Score the local trace queue / show flagged spans |
+
+---
+
+## MCP client
+
+**Files:** `mcp/` (see the component map), wired in `capabilities/tools.build_tools()` and `prompts/skills.system_prompt()`.
+
+- **Config.** `McpPaths.for_workspace` names every input file; `load_mcp_config` merges user, project, then local (later wins by name), expands `${VAR}` / `${VAR:-default}`, and sorts entries into usable, skipped (with a reason), unapproved (project entries whose fingerprint is not in `mcp.approved.json`), and disabled. The manager reloads when any input's mtime or size changes, and closes a live session whose entry changed.
+- **Transports.** Stdio starts the command in its own process group with `LMLOOP_PROJECT_DIR` set, reads newline-delimited JSON on a reader thread (non-JSON lines are skipped as log noise), and logs stderr per server. Streamable HTTP POSTs each message, accepts a JSON or SSE reply, and carries `Mcp-Session-Id` and `MCP-Protocol-Version`; close sends `DELETE`. Server-initiated `ping` and `roots/list` are answered; anything else gets method-not-found.
+- **Tools.** `tools/list` (paginated) is cached per server and entry fingerprint for 24 hours. Lazy mode exposes `mcp_find_tools` and `mcp_call`; eager mode also adds cached tools as `mcp__server__tool` rows (cap 40). Usage events: `mcp.call` (ok, ms, result digest) and `mcp.denied` (policy, no gate, user).
+- **Non-goals.** OAuth sign-in (header tokens via `${VAR}` cover token servers; revisit when a server needed by users offers OAuth only), legacy SSE transport (the 2024 transport; revisit if a needed server lacks streamable HTTP), resources/prompts/sampling (no user ask yet), and background task polling.
+
+## Hooks
+
+**File:** `verify/hooks.py`. `HookRunner.load` reads `~/.lmloop/hooks.json` and `~/.lmloop/projects/<slug>/hooks.json` (never the repository). `build_tools` wraps only the rows a hook matches (plus `mcp_call`, which also matches as `mcp__<server>__<tool>`). A PreToolUse hook that exits non-zero, times out (10 s), or prints `{"continue": false}` turns the call into `DENIED: …` and records `hook.blocked`; PostToolUse messages append `[hook] …` to the result.
 
 ---
 

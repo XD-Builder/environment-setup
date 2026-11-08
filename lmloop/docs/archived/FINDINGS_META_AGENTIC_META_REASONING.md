@@ -1,11 +1,12 @@
 # Findings: Meta Agentic Meta-Reasoning and Compute-Aware Control
 
+**Status:** implemented — see [DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md)  
 **Date:** 2026-10-11  
 **Trigger:** [VentureBeat — Why giving AI agents more compute isn't enough](https://venturebeat.com/orchestration/why-giving-ai-agents-more-compute-isnt-enough-and-what-meta-proposes-instead) (Ben Dickson, 2026-10-08)  
 **Primary source:** Dahal et al., *Thinking Before Thinking: Scaling Agentic Inference Through Meta-Reasoning* (Meta Superintelligence Labs, arXiv [2609.38147](https://arxiv.org/abs/2609.38147), 2026-09-29)  
 **Scope:** Synthesize industry commentary, Meta’s proposal, adjacent 2025–26 research on budget-aware agents, and a concrete incorporation path for **lmloop**  
 **Audience:** Harness architects, eval owners, and anyone extending long-horizon `until` / company / campaign flows  
-**Companions:** [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) · [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) · [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
+**Companions:** [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) · [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) · [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
 
 ---
 
@@ -172,7 +173,7 @@ No official open-source harness ship date in the paper; specifications for promp
 
 ## 4. Mapping to lmloop’s harness taxonomy
 
-Cross-reference [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md §2](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) layers:
+Cross-reference [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md §2](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) layers:
 
 | Layer | Today in lmloop | Meta-reasoning analogue |
 |-------|-----------------|-------------------------|
@@ -188,7 +189,7 @@ Cross-reference [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md §2](FINDINGS_OPEN_SOUR
 
 ## 5. Incorporation proposal for lmloop
 
-**Design doc status:** Shipped spec in [DESIGN_META_CONTROL_AND_BUDGET.md](archived/DESIGN_META_CONTROL_AND_BUDGET.md) (modes `off` | `budget` | `meta`, tasks M0–M5).
+**Design doc status:** Shipped spec in [DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md) (modes `off` | `budget` | `meta`, tasks M0–M5).
 
 ### 5.1 Principles
 
@@ -207,7 +208,7 @@ Cross-reference [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md §2](FINDINGS_OPEN_SOUR
 | **M2 — Compact assess state** | Replace monotonic handoff growth with rewritten **status block** each cycle (keep full artifacts on disk) | Medium | `compact` skill patterns |
 | **M3 — APED controller** | Four-stage controller skill chain; dispatch spawns one maker cycle per worker batch | High | M1–M2, eval model for cheap controller |
 | **M4 — Graph diagnostics** | Offline metrics: utilization, depth, coverage/selection when labels exist (tests, golden cases) | Medium | `traces.py`, `evals.py`, `workflow.py` |
-| **M5 — Company / campaign** | Campaign tick runs Assess+Propose on board; dispatch to Docker workers with artifact context | High | [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md), company orchestrator |
+| **M5 — Company / campaign** | Campaign tick runs Assess+Propose on board; dispatch to Docker workers with artifact context | High | [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md), company orchestrator |
 
 **Defer:** Parallel meta-workers on one repo without worktrees (Meta ProgramBench serializes writes; lmloop already uses worktrees for company parallel cap 2).
 
@@ -237,7 +238,7 @@ Use **`eval_model`** for controller when configured to preserve maker model for 
 
 ### 5.5 Evaluation hooks (extend assertion pyramid)
 
-Add optional **trajectory rubrics** ([DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md)):
+Add optional **trajectory rubrics** ([DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md)):
 
 | Rubric | When |
 |--------|------|
@@ -246,7 +247,7 @@ Add optional **trajectory rubrics** ([DESIGN_ASSERTION_DRIVEN_EVALS.md](archived
 | `check_pass` | Still mandatory for success |
 | Golden **coverage** cases | Store intermediate good patches in fixture metadata for selection metrics |
 
-Pair with abstention evals where meta-controller should **stop and ask** rather than burn budget ([DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md)).
+Pair with abstention evals where meta-controller should **stop and ask** rather than burn budget ([DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md)).
 
 ### 5.6 When **not** to enable meta-reasoning
 

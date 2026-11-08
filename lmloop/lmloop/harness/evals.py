@@ -26,6 +26,9 @@ KNOWN_FEATURES = frozenset({
     "cli.repl",
     "gate.denied",
     "graph.run",
+    "hook.blocked",
+    "mcp.call",
+    "mcp.denied",
     "repl.command",
     "repl.session",
     "sandbox.policy",
@@ -194,7 +197,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             title="Tool calls fail often — tighten validation or UX",
             evidence="tool.error / tool = "
             f"{tool_errs}/{tool_calls}; top: {top}",
-            design_hook="DESIGN_SANDBOX_AND_VERIFICATION.md § gates; tools.py ToolDef",
+            design_hook="archived/DESIGN_SANDBOX_AND_VERIFICATION.md § gates; tools.py ToolDef",
         ))
 
     until_total = sum(stats.until_outcomes.values())
@@ -205,7 +208,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             severity="action",
             title="Until runs pause more than they finish",
             evidence=f"until.finish paused={paused} of {until_total}",
-            design_hook="DESIGN_SANDBOX_AND_VERIFICATION.md § derived checks; DESIGN_ROADMAP.md",
+            design_hook="archived/DESIGN_SANDBOX_AND_VERIFICATION.md § derived checks; ROADMAP.md",
         ))
 
     if (
@@ -234,7 +237,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
                 f"sandbox.preflight untrusted bridge={stats.bridge_untrusted}; "
                 f"fetch_url+web_search={web_calls}"
             ),
-            design_hook="DESIGN_SANDBOX_AND_VERIFICATION.md §1.4; S11 egress allowlist",
+            design_hook="archived/DESIGN_SANDBOX_AND_VERIFICATION.md §1.4; S11 egress allowlist",
         ))
 
     train_pairs = load_abstention_pairs(split="train")
@@ -260,7 +263,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
                 severity="watch",
                 title="Many turns hit high gather round counts",
                 evidence=f"{high}/{len(stats.act_rounds)} act.finish rounds >= {_HIGH_ROUNDS}",
-                design_hook="DESIGN_LLM_CALLING.md § gather budget; stream halt",
+                design_hook="archived/DESIGN_LLM_CALLING.md § gather budget; stream halt",
             ))
         if stats.act_interrupted / stats.act_finished >= 0.2:
             gaps.append(EvalGap(
@@ -268,7 +271,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
                 severity="watch",
                 title="Frequent interrupted agent turns",
                 evidence=f"interrupted={stats.act_interrupted} of {stats.act_finished} act.finish",
-                design_hook="DESIGN_LLM_CALLING.md § rollback; display/stream",
+                design_hook="archived/DESIGN_LLM_CALLING.md § rollback; display/stream",
             ))
 
     cli = stats.features.get("cli.command", 0)
@@ -299,7 +302,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             severity="action",
             title="Check commands on this project never pass",
             evidence=f"commands with no pass: {shown}",
-            design_hook="DESIGN_SANDBOX_AND_VERIFICATION.md § derived checks",
+            design_hook="archived/DESIGN_SANDBOX_AND_VERIFICATION.md § derived checks",
         ))
     if stats.always_pause_nodes:
         shown = ", ".join(stats.always_pause_nodes[:5])
@@ -308,7 +311,7 @@ def find_gaps(stats: EvalStats, *, min_samples: int = _DEFAULT_MIN_SAMPLES) -> l
             severity="action",
             title="Graph nodes always pause",
             evidence=f"nodes: {shown}",
-            design_hook="DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md § fan-out",
+            design_hook="archived/DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md § fan-out",
         ))
     shell_errs = stats.tool_errors.get("run_shell", 0)
     paused = stats.until_outcomes.get("paused", 0)

@@ -1,18 +1,18 @@
 # Design roadmap: final review of the proposals
 
-**Status:** living build order — steps 0–9 shipped on the host path, including opt-in Phase S (`--docker`). Memory Layer E (embeddings rerank), parallel agents, and the per-cycle probe remain deferred. This file still adds no feature of its own.
+**Status:** archived (2026-11-08) — steps 0–9 shipped. The cuts and config-budget reasoning below stay as the record; the live list of deferred work and active docs is [ROADMAP.md](../ROADMAP.md).
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: cuts applied to the design docs)
 **Covers:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
-[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
-[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) (shipped) ·
-[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (shipped; optimizer is a non-goal) ·
-[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (research) ·
-[FINDINGS_HERMES_AGENT.md](FINDINGS_HERMES_AGENT.md) (research) ·
-[FINDINGS_CODE_INDEXING.md](FINDINGS_CODE_INDEXING.md) (research; code index not built) ·
-[DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (shipped) ·
-[DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) (shipped) ·
-[DESIGN_META_CONTROL_AND_BUDGET.md](archived/DESIGN_META_CONTROL_AND_BUDGET.md) (shipped) ·
+[DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md) ·
+[DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) (shipped) ·
+[DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (shipped; optimizer is a non-goal) ·
+[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (research) ·
+[FINDINGS_HERMES_AGENT.md](../FINDINGS_HERMES_AGENT.md) (research) ·
+[FINDINGS_CODE_INDEXING.md](../FINDINGS_CODE_INDEXING.md) (research; code index not built) ·
+[DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) (shipped) ·
+[DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) (shipped) ·
+[DESIGN_META_CONTROL_AND_BUDGET.md](DESIGN_META_CONTROL_AND_BUDGET.md) (shipped) ·
 [DESIGN_SUPERPOWERS.md](DESIGN_SUPERPOWERS.md) (shipped methodology; visual companion, parallel dispatch, and commit-by-default stay out)
 
 ## Verdict
@@ -39,15 +39,15 @@ What remains is a small, high-value core:
 Steps 0–4 and the host-path pieces of 5–7 have landed; `lmloop flow` data should decide
 whether to invest in Docker (Phase S), semantic rerank, or parallel agents.
 
-**Continual evolution (2026-10-09):** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
+**Continual evolution (2026-10-09):** [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md)
 merges enterprise runtime governance ([Docker AI Governance](https://www.docker.com/blog/docker-ai-governance-unlock-agent-autonomy-safely/))
 with harness–environment co-evolution for abstention ([HERA](https://arxiv.org/html/2610.06563v1)).
 Sandbox Part 7 maps Docker’s four control surfaces; usage evals V5 adds Act/Abstain/Pair on
 local fixture pairs. Host-path work can start at tasks E1–E2 without waiting for Phase S.
 Industry harness patterns and prompt-evolution ROI are cataloged in
-[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md).
+[FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md).
 
-**Event-driven learning (2026-11-06):** [FINDINGS_HERMES_AGENT.md](FINDINGS_HERMES_AGENT.md)
+**Event-driven learning (2026-11-06):** [FINDINGS_HERMES_AGENT.md](../FINDINGS_HERMES_AGENT.md)
 compares lmloop's mining, spirit, and campaign reflection with the Hermes Agent learning loop and
 its issue history. It proposes replacing turn counters and calendar ticks with salience-triggered
 reviews at run and session boundaries, from a durable queue, measured by a repeat-mistake rate.
@@ -214,8 +214,8 @@ Dotted edges point at deferred work and name what it would build on.
 | Deferred | Revisit when |
 |---|---|
 | Parallel agents (default local path) | `lmloop flow` shows, on a remote endpoint, frequent moments with ≥ 2 runnable frontier nodes and sequential waiting dominating wall-clock |
-| Multi-agent company (`--docker --company`, manifest, worktrees) | **Shipped** for Docker + remote allowlist only. Sequential local LM Studio is unchanged. See [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) |
-| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | **Shipped.** See [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) |
+| Multi-agent company (`--docker --company`, manifest, worktrees) | **Shipped** for Docker + remote allowlist only. Sequential local LM Studio is unchanged. See [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) |
+| Long-horizon campaigns (plan memory, daily reflect, board, `--docker-persist` supervisors) | **Shipped.** See [DESIGN_LONG_HORIZON_PLANNING.md](DESIGN_LONG_HORIZON_PLANNING.md) |
 | Per-cycle probe | Runs finish on checker-only `pass` and later regress |
 | Embeddings rerank | FTS5 recall demonstrably misses paraphrases users search for |
 
@@ -236,6 +236,6 @@ Dotted edges point at deferred work and name what it would build on.
 When a step ships, its section moves into `ARCHITECTURE.md` (behavior) and `README.md`
 (user-facing), and the design doc's status flips to `shipped`, per DEVELOPMENT.md. Fully
 shipped standalone specs move to `docs/archived/`; partial docs stay in `docs/` until their
-last task ships. Build order across all docs: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+last task ships. The live list of deferred work is [ROADMAP.md](../ROADMAP.md).
 Deferred items stay in the design docs as non-goals with their reason and revisit trigger, so the
 next reviewer does not re-propose them without the evidence that changed.

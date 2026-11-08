@@ -5,7 +5,7 @@
 workspace, and what lmloop should take from them.
 **Companions:** [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) (memory index;
 "embedding the codebase" rejected in Part 7) ·
-[DESIGN_CLAUDE_CODE_PARITY.md](DESIGN_CLAUDE_CODE_PARITY.md) (MCP client, not built)
+[DESIGN_CLAUDE_CODE_PARITY.md](archived/DESIGN_CLAUDE_CODE_PARITY.md) (MCP client, shipped)
 
 ---
 
@@ -99,9 +99,9 @@ heading per file would save more on top of that.
   defined, and what references it?"
 - **Augment Context Engine** offers semantic retrieval over a live local index and
   selected remote repos. It answers "which code is relevant to this behavior?"
-- Both need an MCP client, which lmloop does not have yet. Serena also registers a few
-  dozen tool schemas, which hurts on small local context windows unless discovery is lazy
-  (goal 3 of DESIGN_CLAUDE_CODE_PARITY).
+- Both are reachable through lmloop's MCP client ([GUIDE_MCP.md](GUIDE_MCP.md)). Serena
+  registers a few dozen tool schemas; the default lazy `mcp_tool_mode` keeps them out of
+  the prompt until `mcp_find_tools` asks for them.
 
 ## 3. What transfers to lmloop
 
@@ -165,8 +165,7 @@ reorders the lessons:
 - Once R3 has shipped and the evals show where name-based lookup fails (overloads,
   methods with common names, re-exports), add an optional LSP backend behind the same
   `find_symbol` and `find_references` tool names. JSON-RPC over stdio needs only the
-  stdlib. Alternatively, reach Serena through the MCP client from DESIGN_CLAUDE_CODE_PARITY
-  once that exists. Keep it opt-in per language: language servers are heavy, and pyright on
+  stdlib. Alternatively, reach Serena through the MCP client (`lmloop mcp add`). Keep it opt-in per language: language servers are heavy, and pyright on
   a laptop competes with the model for RAM.
 
 ### R5. Semantic search (deferred)

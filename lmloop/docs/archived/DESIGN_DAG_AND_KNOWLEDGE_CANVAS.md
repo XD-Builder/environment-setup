@@ -1,10 +1,10 @@
 # Design: DAG workflows, flow mining, and the terminal knowledge canvas
 
-**Status:** Phases K, D, W, and C shipped (text canvas and full-screen TUI). Parallel agents (Part 5) stay deferred.
+**Status:** shipped — Phases K, D, W, and C (text canvas and full-screen TUI). Parallel agents (Part 5) are a non-goal until the trigger in [ROADMAP.md](../ROADMAP.md) fires.
 **Date:** 2026-09-19 · **Revised:** 2026-09-26 (round 5: parallel agents deferred)
 **Depends on:** `graph.py`, `server.py`, `chat.py`, `memory.py`, `knowledge_graph.py`
 **Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
-[DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) ·
+[DESIGN_MEMORY_RETRIEVAL.md](../DESIGN_MEMORY_RETRIEVAL.md) ·
 [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md)
 
 Four features, all running **one agent at a time**:
@@ -57,7 +57,7 @@ commands with `shutil.which`; command concepts in the knowledge graph use hashed
 ## Architecture overview
 
 Target state with every design doc implemented. The shipped system is in
-[ARCHITECTURE.md](ARCHITECTURE.md#system-overview). Blue dashed boxes are new modules or
+[ARCHITECTURE.md](../ARCHITECTURE.md#system-overview). Blue dashed boxes are new modules or
 types; orange dashed boxes are existing modules that change. Everything runs in **one
 lmloop process**; a second terminal is simply a second process sharing the lock and the
 files.
@@ -234,7 +234,7 @@ removes a failure mode rather than handling it.
 |---|---|
 | `run_token_budget` (default `0` = off) | The run sums `total_tokens`; crossing the budget pauses it exactly like `until_max_steps`, and `/continue` resumes. Step budgets bound iterations; this bounds money |
 | `eval_model` (empty = main model) | The checker, check proposals, and memory mining use it, on the same `base_url`. A different checker model also decorrelates the errors that make same-model checking weak |
-| Cache-stable prefixes | The Clock and the memory block are frozen per run ([memory doc](DESIGN_MEMORY_RETRIEVAL.md) Layer C), so the system prompt is a stable prefix from the second cycle. Explicit provider cache breakpoints are deferred until measured |
+| Cache-stable prefixes | The Clock and the memory block are frozen per run ([memory doc](../DESIGN_MEMORY_RETRIEVAL.md) Layer C), so the system prompt is a stable prefix from the second cycle. Explicit provider cache breakpoints are deferred until measured |
 
 Ceilings that already exist stay: `eval_max_rounds` (8) vs `max_rounds` (60), the
 repeated-tool-set short-circuit, `max_tool_output`, bounded memory injection, and the

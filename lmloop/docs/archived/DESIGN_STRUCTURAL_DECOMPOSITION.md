@@ -2,7 +2,7 @@
 
 **Status:** shipped  
 **Date:** 2026-11-05  
-**Spec:** [../plans/2026-11-05-structural-decomposition.md](../plans/2026-11-05-structural-decomposition.md)
+**Plan:** executed and removed; the resulting layout is the ARCHITECTURE component map and the DEVELOPMENT “Where code goes” table.
 
 lmloop’s loop, CLI, and company package have grown past the ownership rules in [DEVELOPMENT.md](../../DEVELOPMENT.md). This change moves code onto modules that already own the concern, and fixes a few correctness bugs found while checking that move. It does not add a framework, a dependency, or a sixth module in a full category.
 

@@ -5,7 +5,7 @@
 **Status:** implemented — see [DESIGN_HARNESS_LEARNING.md](DESIGN_HARNESS_LEARNING.md)  
 **Scope:** Only changes that **do not alter default `act()` / `until` / graph behavior** and cannot regress live runs unless the user explicitly opts in. Omitted: test-time harness auto-edit, best-of-N selection inside the loop, multistep RL, or any change that injects revision context into standing prompts.  
 **Audience:** Eval owners, harness editors (`improve`, `graph propose`), CI gate maintainers  
-**Companions:** [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) · [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) · [archived/DESIGN_ASSERTION_DRIVEN_EVALS.md](archived/DESIGN_ASSERTION_DRIVEN_EVALS.md) · [archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md)
+**Companions:** [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) · [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) · [archived/DESIGN_ASSERTION_DRIVEN_EVALS.md](DESIGN_ASSERTION_DRIVEN_EVALS.md) · [archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md)
 
 ---
 
@@ -52,7 +52,7 @@ A **harness bundle** is the executable policy around the model, not the project 
 
 - Two consecutive runs with identical packaged harness produce identical `harness_bundle_id` on the same lmloop version.  
 - Changing only `skills/system.md` or a packaged graph changes the id; changing workspace source under agent edit does not.  
-- Documented field list lives in [ARCHITECTURE.md](ARCHITECTURE.md) (one subsection).
+- Documented field list lives in [ARCHITECTURE.md](../ARCHITECTURE.md) (one subsection).
 
 ### Expected impact
 

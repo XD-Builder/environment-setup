@@ -82,7 +82,73 @@ lmloop --docker company run --goal "…"  # opt-in company: remote allowlist, wo
 lmloop campaign start --goal "…"        # multi-day plan store (host); resume runs the daily tick
 lmloop spirit log                       # actions, thoughts, traits for this repo
 lmloop completion zsh                   # print zsh completion script
+lmloop mcp add docs https://mcp.example.com/mcp    # add an MCP server (local scope)
+lmloop mcp add files -- npx -y @modelcontextprotocol/server-filesystem .
+lmloop mcp                              # servers, scope, and state
 ```
+
+### MCP servers, hooks, subagents, and project rules
+
+**MCP.** lmloop is an MCP client (stdio and streamable HTTP). Servers come from
+three scopes; a name in a higher scope wins:
+
+| Scope | File | Notes |
+|---|---|---|
+| `local` (default for `mcp add`) | `~/.lmloop/projects/<slug>/mcp.local.json` | yours, this project only |
+| `project` | `<repo>/.mcp.json` | shared in the repo; each server needs your approval once (the REPL asks at startup; `lmloop mcp approve`) and again whenever its entry changes |
+| `user` | `~/.lmloop/mcp.json` | yours, every project |
+
+Files use the common `{"mcpServers": {"name": {...}}}` shape. A stdio entry has
+`command`, `args`, `env`; an HTTP entry has `"type": "http"`, `url`, `headers`.
+`${VAR}` and `${VAR:-default}` expand from the environment, so keep tokens out
+of the file (`-H 'Authorization: Bearer ${GITHUB_TOKEN}'`); a server with a
+missing variable is skipped and `lmloop mcp` says why.
+
+The model sees two tools: `mcp_find_tools` (keyword search across servers) and
+`mcp_call` (server, tool, arguments). The tool list is cached for 24 hours, so
+the system prompt names servers and sample tools without starting them; a
+server starts on first use. `lmloop config set mcp_tool_mode eager` also adds
+each cached tool as its own `mcp__server__tool` row (up to 40).
+
+Tools marked read-only (MCP annotations, else a `get_`/`list_`/`search_`-style
+name) run without asking. Anything else asks y/N, unless
+`<repo>/.lmloop/mcp.policy.json` allows or denies it:
+
+```json
+{"default": "ask",
+ "rules": [{"server": "github", "tools": ["create_issue"], "action": "allow"},
+           {"server": "*", "tools": ["delete_*"], "action": "deny"}]}
+```
+
+`lmloop mcp` verbs (also `/mcp` in the REPL): `list`, `get <name>` (secrets
+redacted), `add [-s scope] [-e K=V] [-H 'K: V'] <name> <url | -- command args…>`,
+`add-json <name> '<json>'`, `remove`, `approve [names… | --all]`,
+`enable` / `disable`, `tools [name] [--refresh]`, `reconnect`, `policy`.
+Walkthrough: [docs/GUIDE_MCP.md](docs/GUIDE_MCP.md).
+
+**Hooks.** `~/.lmloop/hooks.json` (every project) and
+`~/.lmloop/projects/<slug>/hooks.json` run a command before or after matching
+tools. The repo cannot add hooks: a clone must not be able to make lmloop run
+its commands.
+
+```json
+{"PreToolUse":  [{"matcher": "run_shell", "command": "~/bin/check-shell.py"}],
+ "PostToolUse": [{"matcher": "mcp__github__*", "command": "notify-send 'github call done'"}]}
+```
+
+The hook gets `{"event", "tool", "args", "cwd", "project_dir"}` (plus `result`
+after) as JSON on stdin. A PreToolUse hook blocks the call by exiting non-zero
+or printing `{"continue": false, "message": "why"}`; a PostToolUse message is
+appended to the result. Hooks time out after 10 seconds. `/permissions` lists them.
+
+**Subagents.** The `task` tool runs a helper on a fresh thread for broad
+searches or side investigations; only its final answer comes back, so the main
+context stays small. Helpers are read-only unless the model asks for
+`"tools": "all"` and the turn itself may edit. Helper tool lines print with `↳`.
+
+**Project rules.** `AGENTS.md` (or, when absent, `CLAUDE.md`) at the workspace
+root, plus your untracked `.lmloop/rules.md`, are added to the system prompt
+(first 6000 characters) under "Project rules".
 
 ### Implementation plans
 
@@ -223,6 +289,13 @@ Inside the REPL:
 | `/model <name>` | switch model, or list models with no argument |
 | `/stats` | show token usage, session activity, and the memory HUD (learnings, decisions, graph, checkpoint) |
 | `/new` | reset conversation (memory context re-injected) |
+| `/rewind [n]` | list or bring back a thread replaced by `/new`, a restore, `/compact`, or an earlier rewind (last 10) |
+| `/readonly [on\|off]` | plan mode: edit and shell tools are off; the model investigates and proposes |
+| `/diff` | `git status` and `git diff --stat HEAD` for the workspace |
+| `/permissions` | confirm settings, typed gates, MCP policy, hooks, readable roots, and recent declines |
+| `/add-dir <path>` | let file tools (and MCP roots) read another directory this session |
+| `/mcp [verb …]` | same verbs as `lmloop mcp` |
+| `!<command>` | run a shell command yourself; its output joins your next message |
 | `/transcript` | view rendered session in less (`q` to quit) |
 | `/copy [transcript]` | copy last assistant answer to the clipboard (plain text, no live bar); `transcript` copies the full session as markdown |
 | `/help [all]` | show core slash commands (`all` includes restore, compact, `/learn`, …) |
@@ -257,6 +330,7 @@ REPL UX (prompt_toolkit + rich):
       ▼
  shell · read/write/update/move/delete file · list_dir · find_files · search (rg)
  web_search · fetch_url · current_time · remember · log_decision · recall_memory
+ task (subagent) · mcp_find_tools · mcp_call (MCP servers, stdio or HTTP)
  (ToolDef registry + commands.py + status.py as single sources of truth)
       │
       ▼
@@ -349,7 +423,7 @@ local, single-user research loop needs.
 | Topic | Status | Doc |
 |-------|--------|-----|
 | **OpenRouter** / any remote OpenAI-compatible API | **Supported** via `base_url` + `api_key` / env | [GUIDE_DOCKER_AND_OPENROUTER.md](docs/GUIDE_DOCKER_AND_OPENROUTER.md) |
-| **`--docker` execution sandbox** | **Opt-in** (host shell remains the default; no config key enables it) | Same guide + [DESIGN_SANDBOX_AND_VERIFICATION.md](docs/DESIGN_SANDBOX_AND_VERIFICATION.md) |
+| **`--docker` execution sandbox** | **Opt-in** (host shell remains the default; no config key enables it) | Same guide + [DESIGN_SANDBOX_AND_VERIFICATION.md](docs/archived/DESIGN_SANDBOX_AND_VERIFICATION.md) |
 | **Multi-agent company** on Docker + allowlisted OpenRouter models | **Shipped** (`lmloop --docker company run`) | [DESIGN_MULTI_AGENT_COMPANY.md](docs/archived/DESIGN_MULTI_AGENT_COMPANY.md) |
 | **Long-horizon campaigns** (multi-day plan, reflection, coordination) | **Shipped** (`lmloop campaign`) | [DESIGN_LONG_HORIZON_PLANNING.md](docs/archived/DESIGN_LONG_HORIZON_PLANNING.md) |
 
@@ -422,6 +496,8 @@ zsh completion for `config set` is generated from these keys.
 | `campaign_daily_reflect` | `true` | On `campaign resume`, append a daily tick when the UTC date changed |
 | `campaign_end_of_day_utc` | *(empty)* | Hour 0–23 UTC. When set, resume pauses after that hour until the next UTC date |
 | `campaign_max_days` | `30` | Resume refuses after this many days until `lmloop campaign extend` |
+| `mcp_enabled` | `true` | Offer configured MCP servers to the model (`mcp_find_tools`, `mcp_call`) and list them in the system prompt |
+| `mcp_tool_mode` | `lazy` | `lazy`: two MCP tools for every server. `eager`: also one `mcp__server__tool` row per cached tool (up to 40) |
 
 ## Troubleshooting
 
@@ -441,7 +517,9 @@ zsh completion for `config set` is generated from these keys.
 | Checks pass on the host and fail under `--docker` | Host `.venv` / `node_modules` are shadowed by named volumes. Install dependencies inside the container, or `lmloop sandbox reset --deps` to drop those volumes. A registry mirror belongs in the Docker daemon config; lmloop does not wrap `docker pull` |
 | `/until` keeps asking y/N | Recoverable file ops auto-approve by default; the ask is for destructive shell or outside-workspace writes, once per maker step. `lmloop config set autonomous_gates all` silences it for unattended runs; `none` asks for everything. |
 | `until` runs the wrong check | The plan is printed before the first cycle. Press `e` to edit it, or pass `--check` / `--keep`. `lmloop config set check_inference off` leaves plain-language goals to the evaluator. `until_baseline off` makes a passing check finish the run immediately. |
-| Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn |
+| Tools can't read `/etc/...` | File tools are scoped to the session workspace unless you `@`-attached the path this turn or ran `/add-dir` |
+| MCP server missing from `lmloop mcp` | A project server waits for `lmloop mcp approve`; a `${VAR}` it needs is unset (the list says which); or it is disabled (`lmloop mcp enable <name>`). Server stderr is in `~/.lmloop/projects/<slug>/cache/mcp/logs/<name>.log` |
+| `HTTP 401 … (set an Authorization header)` from an MCP server | `lmloop mcp add -H 'Authorization: Bearer ${TOKEN}' …` and export `TOKEN`. OAuth sign-in is not supported |
 | Same `run_shell` / tool args every round | Gather hit a repeated tool set. lmloop writes one tools-off answer (`repeated tools — writing final answer`). `/continue` starts a new turn. |
 | "Let me write the file" then the prompt returns | Thinking loop was halted and used to be treated as the answer. Now you should see `thinking loop — continuing…` and gather resumes, unless a long draft is already on screen (`model stopped without finishing`). |
 | Same report prints twice with `thinking loop — continuing…` | Similar table rows used to look like a thinking loop, then gather asked the model to start over. Content now halts on exact repeats only; a halted draft is kept unless the last line still says "let me…". |
@@ -453,6 +531,11 @@ File tools (`read_file`, `write_file`, `update_file`, `move_file`, `delete_file`
 `list_dir`, `find_files`, `search_files`) are constrained
 to the workspace directory captured at session start. Relative paths are resolved
 against that directory (not `$HOME`); the ⚙ tool line prints each resolved path in full on the next line (a long name is not cut off with `...`).
+MCP results are fenced as untrusted like web pages; MCP tools that may change
+external state ask first unless `.lmloop/mcp.policy.json` allows them, and are
+refused outright in `/readonly` and in read-only helpers. Project `.mcp.json`
+servers never start before you approve them, and hooks load only from
+`~/.lmloop`.
 Paths the user `@`-attached this turn are readable even outside the workspace;
 read them in place (zips list members). Writes to those outside paths, and
 copy/extract of outside files into the workspace, require confirmation.

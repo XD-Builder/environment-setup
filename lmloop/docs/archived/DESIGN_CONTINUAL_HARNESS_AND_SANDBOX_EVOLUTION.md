@@ -2,7 +2,7 @@
 
 **Status:** shipped — S11–S13, the `abstain` outcome, paired fixtures, and `lmloop eval --abstention`. An unattended harness optimizer contradicts the human-gated rule and stays a non-goal.
 **Date:** 2026-10-09
-**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](../DESIGN_SANDBOX_AND_VERIFICATION.md) ·
+**Depends on:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
 [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) ·
 [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (survey) ·
 `exec.py`, `tools.GatePolicy`, `loop.py`, `checks.py`, `evals.py`
