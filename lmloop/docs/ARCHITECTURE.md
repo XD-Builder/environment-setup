@@ -20,6 +20,7 @@ lmloop/
 │   ├── DESIGN_MEMORY_RETRIEVAL.md  # hot paths + ranking + perf harness shipped; Layer E deferred
 │   ├── FINDINGS_HERMES_AGENT.md    # research: event-driven learning (next design candidate)
 │   ├── FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md  # research: harness patterns
+│   ├── FINDINGS_CODE_INDEXING.md   # research: workspace code indexing (not built)
 │   ├── GUIDE_MCP.md            # user guide: MCP servers, sharing, policy
 │   ├── GUIDE_DOCKER_AND_OPENROUTER.md  # user guide: OpenRouter, opt-in Docker sandbox
 │   └── archived/               # shipped specs and consumed research (see archived/README.md)

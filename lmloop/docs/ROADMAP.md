@@ -18,6 +18,7 @@ lands with README / ARCHITECTURE updates, and then moves to `archived/`
 | [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) | Partial: Layers A–D shipped; Layer E (embeddings rerank) deferred |
 | [FINDINGS_HERMES_AGENT.md](FINDINGS_HERMES_AGENT.md) | Research input: event-driven learning (phases L0–L5). The next design candidate |
 | [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) | Research input: harness patterns across open-source agents |
+| [FINDINGS_CODE_INDEXING.md](FINDINGS_CODE_INDEXING.md) | Research input: workspace code indexing (symbol tools, optional LSP); code index not built |
 
 ## Next candidate
 
