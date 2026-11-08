@@ -6,12 +6,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from lmloop.core.config import DEFAULTS
 from lmloop.prompts import skills, steer as steer_mod
 from lmloop.prompts.steer import (
     _invalid_steer_name,
     clock_block,
     clock_snapshot,
+    PROJECT_RULES_MAX_CHARS,
     load_steering,
+    project_rules_block,
     steer_dirs,
     steering_block,
 )
@@ -173,6 +176,37 @@ class SystemPromptSteerTests(unittest.TestCase):
         body = (steer_mod.STEER_DIR / "memory.md").read_text()
         self.assertIn("Prior learning applied: <key>", body)
         self.assertIn("Decision referenced: [id]", body)
+
+
+class ProjectRulesTests(unittest.TestCase):
+    def test_agents_md_wins_over_claude_md_and_local_rules_append(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(project_rules_block(root), "")
+            (root / "CLAUDE.md").write_text("claude rules", encoding="utf-8")
+            self.assertIn("claude rules", project_rules_block(root))
+            (root / "AGENTS.md").write_text("agents rules", encoding="utf-8")
+            (root / ".lmloop").mkdir()
+            (root / ".lmloop" / "rules.md").write_text("local rules", encoding="utf-8")
+            block = project_rules_block(root)
+            self.assertTrue(block.startswith("## Project rules (from AGENTS.md, .lmloop/rules.md)"))
+            self.assertIn("agents rules", block)
+            self.assertIn("local rules", block)
+            self.assertNotIn("claude rules", block)
+
+    def test_long_rules_are_clipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text("x" * (PROJECT_RULES_MAX_CHARS + 50), encoding="utf-8")
+            self.assertIn("[clipped at", project_rules_block(root))
+            self.assertEqual(project_rules_block(None), "")
+
+    def test_system_prompt_includes_project_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text("always run make test", encoding="utf-8")
+            prompt = skills.system_prompt({**DEFAULTS, "mcp_enabled": False}, root)
+            self.assertIn("always run make test", prompt)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,8 @@ from .model.display import RoundDisplay
 from .ui import estimate_context_tokens
 
 CONTEXT_PRESSURE_RATIO = 0.80
+SUBAGENT_MAX_ROUNDS = 16
+_USAGE_TOTALS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
 
 def generate_skill_draft(cfg: Config, model: str, name: str, brief: str) -> str:
@@ -57,7 +59,8 @@ def generate_skill_draft(cfg: Config, model: str, name: str, brief: str) -> str:
 # this module.
 
 def _accumulate_usage(stats: "dict | None", usage: dict) -> None:
-    if not stats:
+    # ``{}`` is a real accumulator: until/graph steps start from an empty dict.
+    if stats is None:
         return
     if not usage:
         # A halted stream closes before the server's usage chunk. Zero the
@@ -288,6 +291,46 @@ class ActTurn:
     tool_only: "frozenset[str] | None" = None
 
 
+def _make_subagent(cfg: Config, model: str, messages: list, *, confirm_gate,
+                   echo_tool, echo_status, stats: "dict | None",
+                   workspace_root: "Path | None",
+                   extra_readable: "list | None") -> tools.SubagentRunner:
+    """``task`` runner: a child ``act()`` on a fresh thread; only its answer returns.
+
+    The child reuses the parent's system message, cannot spawn its own task,
+    and adds its token usage to the parent's stats.
+    """
+    system = messages[0] if messages and messages[0].get("role") == "system" else None
+
+    def child_echo_tool(name, preview, child_stats=None):
+        echo_tool(f"↳ {name}", preview, child_stats)
+
+    def run(prompt: str, description: str, read_only: bool) -> str:
+        label = (description or prompt).strip().splitlines()[0][:60] or "task"
+        echo_status(status_mod.msg_task_start(label, read_only))
+        child = ([system] if system else []) + [{"role": "user", "content": prompt}]
+        child_stats: dict = {}
+        act(
+            cfg, model, child, confirm_gate=confirm_gate,
+            echo=lambda *_args: None, echo_tool=child_echo_tool, echo_delta=False,
+            echo_status=echo_status, stats=child_stats, workspace_root=workspace_root,
+            readonly=read_only, max_rounds=SUBAGENT_MAX_ROUNDS,
+            extra_readable=extra_readable, allow_task=False,
+        )
+        if stats is not None:
+            for key in _USAGE_TOTALS:
+                stats[key] = stats.get(key, 0) + child_stats.get(key, 0)
+        echo_status(status_mod.msg_task_done(label, child_stats.get("tool_calls", 0)))
+        answer = next(
+            (m.get("content") for m in reversed(child)
+             if m.get("role") == "assistant" and m.get("content")),
+            "",
+        )
+        return answer or "(the helper finished without an answer)"
+
+    return run
+
+
 def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = None,
         confirm_gate=None, echo=print, echo_tool=None, echo_delta=None,
         echo_status=None, stats: "dict | None" = None, echo_round=None,
@@ -298,7 +341,8 @@ def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = No
         no_tools: bool = False,
         max_rounds: "int | None" = None,
         extra_readable: "list | None" = None,
-        tool_only: "frozenset[str] | None" = None) -> list:
+        tool_only: "frozenset[str] | None" = None,
+        allow_task: bool = True) -> list:
     """Run the multi-round tool loop. Mutates and returns `messages`.
 
     ``extra_readable`` is a turn-scoped list of paths the user attached with
@@ -309,6 +353,7 @@ def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = No
     ``no_tools=True`` omits the tools array (and ``tool_choice``) on every
     round — used by ``/save``. ``readonly`` still applies when tools are on.
     ``max_rounds`` overrides ``cfg['max_rounds']`` when set (eval budget).
+    ``allow_task=False`` omits the ``task`` subagent tool (helpers, tool_only runs).
 
     When streaming is enabled (config ``stream``, default True), the HTTP body
     is SSE and tokens are shown live:
@@ -367,10 +412,17 @@ def act(cfg: Config, model: str, messages: list, session_log: "Path | None" = No
     if opts.no_tools:
         tool_specs, impls = None, {}
     else:
+        subagent = None
+        if allow_task and opts.tool_only is None:
+            subagent = _make_subagent(
+                cfg, model, messages, confirm_gate=opts.confirm_gate,
+                echo_tool=echo_tool, echo_status=echo_status, stats=opts.stats,
+                workspace_root=workspace_root, extra_readable=opts.extra_readable,
+            )
         tool_specs, impls = tools.build_tools(
             cfg, confirm_gate=opts.confirm_gate, workspace_root=workspace_root,
             readonly=opts.readonly, extra_readable=opts.extra_readable,
-            only=opts.tool_only,
+            only=opts.tool_only, subagent=subagent,
         )
     use_stream = cfg_bool(cfg, "stream")
     gather_budget = (
