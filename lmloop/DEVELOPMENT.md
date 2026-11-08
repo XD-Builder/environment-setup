@@ -122,7 +122,9 @@ The package root stays five Python files: `__init__.py`, `__main__.py`,
 package. A category holds at most five modules (`memory/__init__.py` is the
 memory module; elsewhere `__init__.py` is only the package marker). Do not add
 a sixth module to a category or a sixth file at the package root. `run/` is
-at that cap: `plan_runner.py` is the fifth counted module. The plan state
+at that cap: `plan_runner.py` is the fifth counted module. `mcp/` is at the
+cap too (config, client, session, tooldefs, admin); a new MCP feature extends
+one of those. The plan state
 machine stays in that file so `until_runner.py` does not absorb a second
 contract.
 
@@ -150,6 +152,14 @@ contract.
 | Workflow terminal hooks (usage finish, KG run row) | `flow/workflow_finish.py` |
 | Derived check plans (no model calls) | `verify/checks.py` |
 | Git snapshots before autonomous maker steps | `verify/snapshot.py` |
+| PreToolUse / PostToolUse hooks (user state dir only) | `verify/hooks.py` |
+| MCP scopes, `${VAR}` expansion, approvals, call policy | `mcp/config.py` |
+| MCP JSON-RPC transports (stdio, streamable HTTP) | `mcp/client.py` |
+| MCP sessions, tools/list cache, system-prompt catalog | `mcp/session.py` |
+| `mcp_find_tools` / `mcp_call` / eager rows, gate, spill | `mcp/tooldefs.py` |
+| `lmloop mcp` / `/mcp` verbs | `mcp/admin.py` |
+| `task` subagent runner (nested `act()`) | `agent.py` (`_make_subagent`); the row is in `capabilities/tools.py` |
+| Project rules (`AGENTS.md` / `CLAUDE.md` / `.lmloop/rules.md`) | `prompts/steer/` |
 | Model slots + concurrency | `model/server.py` |
 | Shell backend seam (host default, opt-in Docker) | `capabilities/exec.py` |
 | Knowledge canvas projection and keys | `memory/canvas_tui.py` |
@@ -178,6 +188,7 @@ contract.
 | prompt_toolkit session, completers, key bindings, input lexer | `entry/prompt.py` |
 | ANSI chrome, status bar, clipboard, `drain_tty_input` | `ui/console.py` (`from lmloop.ui import …` via package `__getattr__`) |
 | rich Console / markdown / pager | `ui/markdown_view.py` |
+| Rewind stack, `!cmd` context, denial log, `/diff` and `/permissions` text | `ui/session_views.py` |
 
 `agent.py` calls `RoundDisplay` in `model/display.py`, and `model.chat._chat`
 for completions. Tests patch `lmloop.model.display` / `lmloop.model.stream` /
@@ -215,6 +226,11 @@ Import and patch **where names are defined** (`lmloop.core.config.CONFIG_PATH`,
 - `verify/snapshot.py` is a leaf: git via subprocess. It must not import `agent`, `loop`, or `graph`.
 - `memory/knowledge_graph.py` may import `memory` (JSONL helpers, `project_dir`, learnings/decisions/sessions). `memory/__init__.py` must not import `knowledge_graph` at module load — only a lazy import inside `_kg()` / `context_block()`.
 - `prompts/steer/` is a leaf: pathlib, datetime, `STATE_ROOT`. It must not import `agent`, `tools`, `loop`, or `graph`.
+- `mcp/` may import `core` (config, usage, commands), `capabilities.web.fence_untrusted`, and `capabilities.tools` (`ToolDef`, `ToolResult`, `GATE_MCP`) inside `tooldefs.py`. `mcp/config.py`, `client.py`, and `session.py` must not import `tools`, `agent`, `loop`, or `graph`.
+- `capabilities/tools.py` imports `mcp.tooldefs` and `verify.hooks` inside `build_tools` only (both import `tools` at module load).
+- `verify/hooks.py` may import `tools` (`ShellCommand`, `ToolDef`, `ToolResult`) and `mcp.tooldefs` names lazily. It must not import `agent`, `loop`, or `graph`.
+- `prompts/skills/` may import `mcp.tooldefs.mcp_catalog_block` inside `system_prompt`.
+- `ui/session_views.py` may import `tools`, `mcp.config`, and `verify.hooks` (lazily); like the rest of `ui/` it must not import `agent`.
 - `memory/context.py` is a leaf: `extract`, `files_index`, `memory`, `tools` parsers. It must not import `agent`, `loop`, `graph`, or `repl`.
 - `capabilities/extract.py` is a leaf: stdlib + optional CLIs (`pdftotext`, `whisper`). It must not import `agent`, `tools`, `loop`, or `graph`. `tools.py`, `agent.py`, `repl.py`, `memory`, `markdown_view.py`, and `web.py` may import it.
 - `agent.py`, `capabilities/tools.py`, and `prompts/skills/` may import `steer`.
@@ -535,7 +551,7 @@ Docs are part of the diff, not a follow-up.
 |---|---|---|
 | Users | `README.md` | Flags, slash commands, tools, setup, troubleshooting |
 | Internals | `docs/ARCHITECTURE.md` | Component map, loop, memory layout, design choices |
-| Next-step proposals | `docs/DESIGN_*.md`, `docs/IMPLEMENTATION_PLAN.md` | Shipped standalone specs move to `docs/archived/`. Partial docs keep `Status: partial` until done. Leftover ideas stay in Non-goals / Open questions. |
+| Next-step proposals | `docs/DESIGN_*.md`, `docs/ROADMAP.md` | Shipped specs move to `docs/archived/` (and their row in `archived/README.md`). Partial docs keep `Status: partial` until done. Deferred ideas get a row in `ROADMAP.md` with the evidence that would revive them. |
 | Contributors | `DEVELOPMENT.md` | Module ownership, contracts, conventions |
 | Skills | `lmloop/prompts/skills/*.md` | Opt-in playbooks the model follows when that job is named |
 | Steering | `lmloop/prompts/steer/*.md` | Always-on iron laws injected into the system prompt |
