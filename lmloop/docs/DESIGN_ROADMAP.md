@@ -8,6 +8,7 @@
 [DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) (shipped) ·
 [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) (shipped; optimizer is a non-goal) ·
 [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) (research) ·
+[FINDINGS_HERMES_AGENT.md](FINDINGS_HERMES_AGENT.md) (research) ·
 [FINDINGS_CODE_INDEXING.md](FINDINGS_CODE_INDEXING.md) (research; code index not built) ·
 [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (shipped) ·
 [DESIGN_LONG_HORIZON_PLANNING.md](archived/DESIGN_LONG_HORIZON_PLANNING.md) (shipped) ·
@@ -45,6 +46,13 @@ Sandbox Part 7 maps Docker’s four control surfaces; usage evals V5 adds Act/Ab
 local fixture pairs. Host-path work can start at tasks E1–E2 without waiting for Phase S.
 Industry harness patterns and prompt-evolution ROI are cataloged in
 [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md).
+
+**Event-driven learning (2026-11-06):** [FINDINGS_HERMES_AGENT.md](FINDINGS_HERMES_AGENT.md)
+compares lmloop's mining, spirit, and campaign reflection with the Hermes Agent learning loop and
+its issue history. It proposes replacing turn counters and calendar ticks with salience-triggered
+reviews at run and session boundaries, from a durable queue, measured by a repeat-mistake rate.
+It also records one drift against the config table below: mining still runs on the main model
+rather than `eval_model` (its L0 fix). It is research input, not a scheduled step.
 
 ---
 
