@@ -1,9 +1,10 @@
 # Design: Claude Code–class terminal agent (MCP and harness parity)
 
-**Status:** proposed — feature parity target for interactive coding agents; no code in this doc.  
+**Status:** shipped (2026-11-08) — M0, M1, M2 without OAuth, M3 without `mcp login`, and M4.2–M4.3. Current behavior: README “MCP servers, hooks, subagents, and project rules”, [GUIDE_MCP.md](../GUIDE_MCP.md), and ARCHITECTURE “MCP client” / “Hooks”.  
+**Cut at ship time (revisit trigger in brackets):** OAuth and `mcp login|logout` [a server users need offers OAuth only; `${VAR}` headers cover token servers]; legacy SSE (M4.1) [a needed server lacks streamable HTTP]; `shell_respond` (M4.4) [users ask the model to act on `!` output without retyping]; background MCP calls and `/tasks` (M4.5) [a server's calls routinely exceed the 120 s timeout]; M5 enterprise adjacency [a team asks for a gateway or SIEM export]; repository-level hooks [never: a clone must not run commands]; Cursor rules import [`.cursor/rules` users ask for it]. Shipped differently: plan mode is `/readonly` because `/plan` runs implementation plans; MCP audit fields go to `usage.jsonl` (`mcp.call`), not the session log; the Python MCP SDK was not needed (stdlib JSON-RPC).  
 **Date:** 2026-10-11  
-**Depends on:** [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md), [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md)  
-**Related:** [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) (remote multi-agent), [DESIGN_COMMAND_CONSOLIDATION.md](archived/DESIGN_COMMAND_CONSOLIDATION.md) (slash vocabulary)
+**Depends on:** [ARCHITECTURE.md](../ARCHITECTURE.md), [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md), [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md), [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md)  
+**Related:** [DESIGN_MULTI_AGENT_COMPANY.md](DESIGN_MULTI_AGENT_COMPANY.md) (remote multi-agent), [DESIGN_COMMAND_CONSOLIDATION.md](DESIGN_COMMAND_CONSOLIDATION.md) (slash vocabulary)
 
 ---
 
@@ -138,7 +139,7 @@ flowchart TB
   mcpcli --> mgr
 ```
 
-**Invariants (from [DEVELOPMENT.md](../DEVELOPMENT.md)):**
+**Invariants (from [DEVELOPMENT.md](../../DEVELOPMENT.md)):**
 
 - MCP tools are **`ToolDef` rows** produced inside `build_tools()` (or a dedicated `mcp_tools.py` that returns rows merged once). No parallel OpenAI schema list.
 - `commands.py` owns **`mcp`** subcommand names; `cli.py` dispatches.
@@ -269,7 +270,7 @@ Store per `(server_name, endpoint_fingerprint)`:
 }
 ```
 
-Evaluated in `GatePolicy` before confirm prompt. Emits `usage.record` events (`mcp.call`, `mcp.denied`) for [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](archived/DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) SIEM-shaped export.
+Evaluated in `GatePolicy` before confirm prompt. Emits `usage.record` events (`mcp.call`, `mcp.denied`) for [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) SIEM-shaped export.
 
 **Sandbox:** MCP stdio servers run on **host** by default (they are user-installed binaries). Document that `--docker` does **not** auto-spawn MCP children inside the container unless `mcp.inherit_sandbox: true` in server entry (advanced, off by default).
 
@@ -341,7 +342,7 @@ task(description: str, prompt: str, model?: str, tools?: "read"|"all"|list)
 - Counts against `max_rounds` and optional `run_token_budget`.
 - Width 1 on local `model_concurrency: 1`; company mode unchanged.
 
-Maps to Claude Code **Task** / subagent isolation per [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) §4.3.
+Maps to Claude Code **Task** / subagent isolation per [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](../FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) §4.3.
 
 ---
 

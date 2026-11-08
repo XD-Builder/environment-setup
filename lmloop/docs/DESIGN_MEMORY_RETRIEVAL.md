@@ -3,9 +3,9 @@
 **Status:** partial — Layers A–D shipped, including the A1 skipped-by-default perf harness (`LMLOOP_MEMORY_PERF=1`). Layer E stays deferred until FTS5 misses real paraphrases.
 **Date:** 2026-09-26 · **Revised:** 2026-09-26 (round 5: single process; config budget; embeddings deferred)
 **Depends on:** `memory.py`, `knowledge_graph.py`, `skills.system_prompt`, `loop.isolated_act`
-**Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) ·
-[DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
-[DESIGN_ROADMAP.md](DESIGN_ROADMAP.md)
+**Companions:** [DESIGN_SANDBOX_AND_VERIFICATION.md](archived/DESIGN_SANDBOX_AND_VERIFICATION.md) ·
+[DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](archived/DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) ·
+[DESIGN_ROADMAP.md](archived/DESIGN_ROADMAP.md)
 
 The question: what can the persistence layer do so that recall is fast and good enough
 to feel like a frontier tool's memory — without giving up what makes lmloop's memory
@@ -33,7 +33,7 @@ none of them changes the source of truth.
 | Canvas layout helper (cross-doc) | `knowledge_graph.canvas_view`, text via `format_canvas_text` |
 
 **Not shipped yet:** Layer E (E1–E3 embeddings rerank). A1 is `tests/test_memory_perf.py` (skipped unless `LMLOOP_MEMORY_PERF=1`).
-**Also shipped (cross-doc):** `canvas_tui.py` full-screen canvas ([DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)).
+**Also shipped (cross-doc):** `canvas_tui.py` full-screen canvas ([DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](archived/DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md)).
 
 ---
 
@@ -445,7 +445,7 @@ a blank page. Its keys are not part of the config budget until then.
 
 ## Part 8 — Config and commands
 
-Two user-facing keys, per the [roadmap's config budget](DESIGN_ROADMAP.md#3-config-budget):
+Two user-facing keys, per the [roadmap's config budget](archived/DESIGN_ROADMAP.md#3-config-budget):
 
 | Key | Default | Meaning |
 |---|---|---|

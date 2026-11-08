@@ -5,7 +5,7 @@
 **Status:** research input — not a build track. Section 9 proposes phases L0–L5 for a future design doc.  
 **Scope:** How lmloop should learn after every run and every long run **without a fixed reflection schedule**, and where that process hooks into the REPL, `until`, `plan`, graph, and campaign paths. Out of scope: weight training (Hermes trajectories and Atropos), external memory providers (Honcho and others), and the skills hub.  
 **Audience:** Memory and spirit owners, until/graph/plan runner owners, harness editors (`retro`, `improve`)  
-**Companions:** [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) · [FINDINGS_HARNESS_LEARNING.md](FINDINGS_HARNESS_LEARNING.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [archived/DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) · [archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) · [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) (config budget, latency-neutral bar)
+**Companions:** [FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md](FINDINGS_OPEN_SOURCE_AGENT_HARNESSES.md) · [FINDINGS_HARNESS_LEARNING.md](archived/FINDINGS_HARNESS_LEARNING.md) · [DESIGN_MEMORY_RETRIEVAL.md](DESIGN_MEMORY_RETRIEVAL.md) · [archived/DESIGN_EVOLVING_SPIRIT.md](archived/DESIGN_EVOLVING_SPIRIT.md) · [archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md](archived/DESIGN_USAGE_EVALS_AND_SELF_IMPROVEMENT.md) · [DESIGN_ROADMAP.md](archived/DESIGN_ROADMAP.md) (config budget, latency-neutral bar)
 
 ---
 
@@ -535,7 +535,7 @@ skills that are never loaded when needed (#66180).
   - Notes may be written only from local evidence (tool results), never from web content.
 - **Graduation.** A note that held across several runs becomes an `/improve` candidate for folding
   into the packaged skill. That connects per-project learning to harness learning (H1–H3 in
-  [FINDINGS_HARNESS_LEARNING.md](FINDINGS_HARNESS_LEARNING.md)).
+  [FINDINGS_HARNESS_LEARNING.md](archived/FINDINGS_HARNESS_LEARNING.md)).
 
 ---
 

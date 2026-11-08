@@ -3,7 +3,7 @@
 **Status:** shipped — BL-1–BL-6 (run log, DSL, finish hook, runners, facades)  
 **Date:** 2026-10-11  
 **Depends on:** `run_log.py`, `until_runner.py`, `graph_dsl.py`, `graph_runner.py`, `workflow_finish.py`, `checks.py`, `knowledge_graph.py`, [DEVELOPMENT.md](../../DEVELOPMENT.md) import graph  
-**Companions:** [ARCHITECTURE.md](../ARCHITECTURE.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](../DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md)
+**Companions:** [ARCHITECTURE.md](../ARCHITECTURE.md) · [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) · [DESIGN_GRAPH_ENGINEERING.md](DESIGN_GRAPH_ENGINEERING.md)
 
 ---
 
@@ -150,11 +150,11 @@ flowchart TB
 | `workflow_finish.py` (optional thin module) | `record_workflow_run` invocation, usage outcome labels, shared “terminal row” policy | KG node semantics (stay in `knowledge_graph`) |
 
 **Compatibility:** Keep `loop.py` and `graph.py` as facades that re-export moved symbols for
-one release if needed; prefer updating call sites in the same diff per [DEVELOPMENT.md](../DEVELOPMENT.md).
+one release if needed; prefer updating call sites in the same diff per [DEVELOPMENT.md](../../DEVELOPMENT.md).
 
 ### Import rules (extensions)
 
-Existing rules stay ([DEVELOPMENT.md](../DEVELOPMENT.md)): `loop` ↛ `graph`, agent stack ↛
+Existing rules stay ([DEVELOPMENT.md](../../DEVELOPMENT.md)): `loop` ↛ `graph`, agent stack ↛
 `loop`/`graph`, `checks` ↛ `loop`/`graph`.
 
 Add:

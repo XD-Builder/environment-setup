@@ -5,9 +5,9 @@ Docker execution** on the host (see [Status](#docker-sandbox-status) below).
 
 Design references:
 
-- [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) — `--docker`, checks, snapshots
+- [DESIGN_SANDBOX_AND_VERIFICATION.md](archived/DESIGN_SANDBOX_AND_VERIFICATION.md) — `--docker`, checks, snapshots
 - [DESIGN_MULTI_AGENT_COMPANY.md](archived/DESIGN_MULTI_AGENT_COMPANY.md) — multi-worker company on Docker + OpenRouter
-- [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) — `model_concurrency`, remote spend
+- [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](archived/DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) — `model_concurrency`, remote spend
 
 ---
 
@@ -71,7 +71,7 @@ secrets, and keep `confirm_destructive` on for shell gates.
 
 ### 5. Planned remote tuning keys
 
-These appear in the [roadmap config budget](DESIGN_ROADMAP.md#3-config-budget) and are **not**
+These appear in the [roadmap config budget](archived/DESIGN_ROADMAP.md#3-config-budget) and are **not**
 in lmloop yet; they document intent for OpenRouter-heavy workflows:
 
 | Key (planned) | Purpose |

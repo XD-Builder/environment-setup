@@ -1,8 +1,9 @@
 # Archived design docs
 
-Fully **shipped** design specifications live here. They remain the historical record of
-decisions and non-goals; **current behavior** is described in [ARCHITECTURE.md](../ARCHITECTURE.md)
-and [README.md](../../README.md).
+Shipped design specifications and the research they consumed. They are the
+record of decisions and non-goals; **current behavior** is in
+[ARCHITECTURE.md](../ARCHITECTURE.md) and [README.md](../../README.md), and the
+live list of deferred work is [ROADMAP.md](../ROADMAP.md).
 
 | File | Topic |
 |------|--------|
@@ -21,6 +22,12 @@ and [README.md](../../README.md).
 | [DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md](DESIGN_CONTINUAL_HARNESS_AND_SANDBOX_EVOLUTION.md) | Abstention pairs, sandbox governance; unattended optimizer is a non-goal |
 | [DESIGN_CONCURRENCY.md](DESIGN_CONCURRENCY.md) | Per-category tool pools inside one concurrent wave |
 | [DESIGN_TRUNCATION_AND_CUTOFF.md](DESIGN_TRUNCATION_AND_CUTOFF.md) | Display limits; `/transcript` tool rows full by default |
-
-Active (partial or proposed) specs stay in [../](../). Build order:
-[../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) and [../DESIGN_ROADMAP.md](../DESIGN_ROADMAP.md).
+| [DESIGN_SANDBOX_AND_VERIFICATION.md](DESIGN_SANDBOX_AND_VERIFICATION.md) | Snapshots, derived checks, baseline, opt-in `--docker`; per-cycle probe deferred |
+| [DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md](DESIGN_DAG_AND_KNOWLEDGE_CANVAS.md) | Concurrency lock, DAG fan-out, `lmloop flow`, knowledge canvas; parallel agents deferred |
+| [DESIGN_HARNESS_LEARNING.md](DESIGN_HARNESS_LEARNING.md) | Harness fingerprint, execution report, adoption gate |
+| [DESIGN_SUPERPOWERS.md](DESIGN_SUPERPOWERS.md) | Skill index, plan ledger, one review, finish menu (and what was cut) |
+| [DESIGN_STRUCTURAL_DECOMPOSITION.md](DESIGN_STRUCTURAL_DECOMPOSITION.md) | Category packages, five-module cap |
+| [DESIGN_CLAUDE_CODE_PARITY.md](DESIGN_CLAUDE_CODE_PARITY.md) | MCP client, hooks, `task` subagent, project rules, session controls (OAuth and SSE cut) |
+| [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md) | Round-5 cuts, config budget, steps 0–9 |
+| [FINDINGS_HARNESS_LEARNING.md](FINDINGS_HARNESS_LEARNING.md) | Research behind the harness-learning design |
+| [FINDINGS_META_AGENTIC_META_REASONING.md](FINDINGS_META_AGENTIC_META_REASONING.md) | Research behind the meta-control design |
