@@ -1529,7 +1529,9 @@ def build_tools(cfg: Config, confirm_gate=None,
             enum_fields={"tools": TASK_TOOL_SETS},
         ))
     from ..mcp.tooldefs import mcp_tool_defs, spill_dir
-    mcp_defs = mcp_tool_defs(cfg, confirm_gate=gate, workspace_root=root, readonly=readonly)
+    mcp_defs = [] if only is not None else mcp_tool_defs(
+        cfg, confirm_gate=gate, workspace_root=root, readonly=readonly,
+    )
     if mcp_defs:
         defs.extend(mcp_defs)
         extra.append(spill_dir())
