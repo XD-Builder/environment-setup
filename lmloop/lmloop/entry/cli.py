@@ -348,6 +348,17 @@ def cmd_models(cfg: Config, words: list, console: Console) -> int:
     return 0
 
 
+def cmd_mcp(cfg: Config, words: list, console: Console) -> int:
+    from ..mcp.admin import run_mcp_words
+
+    report = run_mcp_words(words, Path.cwd())
+    if report.out:
+        console.info("\n".join(report.out))
+    for line in report.err:
+        console.error(line)
+    return report.code
+
+
 def cmd_until_analyze(cfg: Config, words: list, console: Console) -> int:
     from ..run.run_artifacts import analyze_until_run, format_until_analyze
 
@@ -841,6 +852,7 @@ def cli_handlers() -> dict:
         "worker": cmd_worker,
         "campaign": cmd_campaign,
         "spirit": cmd_spirit,
+        "mcp": cmd_mcp,
     }
     names = cli_subcommand_names()
     if set(handlers) != set(names):

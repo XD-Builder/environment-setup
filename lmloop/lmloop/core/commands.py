@@ -40,6 +40,13 @@ MEMORY_ARG_COMPLETION = (
     "canvas", "audit",
 )
 
+# Verbs for ``lmloop mcp`` and ``/mcp`` (``mcp.admin.run_mcp_words`` parses them).
+MCP_VERBS = (
+    "list", "get", "add", "add-json", "remove", "approve", "enable", "disable",
+    "tools", "reconnect", "policy",
+)
+MCP_ARG_HINT = "[list | add | approve | tools | …]"
+
 # Skill names that get ``/name`` but not default ``/`` completion.
 ADVANCED_SKILL_SLASH = frozenset({"learn", "retro"})
 
@@ -423,6 +430,17 @@ COMMANDS: tuple = (
                 accepts_arg=True, arg_hint="[focus]", reserve_skill=False,
                 help_tier="advanced"),
     CommandMeta("new", "reset conversation (memory context re-injected)"),
+    CommandMeta("rewind", "bring back a thread replaced by /new, a restore, or compact",
+                accepts_arg=True, arg_hint="[n]"),
+    CommandMeta("readonly", "plan mode: the model reads and proposes but cannot edit",
+                accepts_arg=True, arg_hint="[on|off]", arg_choices=("on", "off")),
+    CommandMeta("diff", "show what changed in the workspace (git status and diff --stat)"),
+    CommandMeta("permissions", "show confirm settings, gates, MCP policy, hooks, and denials",
+                help_tier="advanced"),
+    CommandMeta("add-dir", "let tools read another directory this session",
+                accepts_arg=True, arg_hint="<path>", help_tier="advanced"),
+    CommandMeta("mcp", "MCP servers: list, add, approve, tools, policy",
+                accepts_arg=True, arg_hint=MCP_ARG_HINT, arg_choices=MCP_VERBS, cli=True),
     CommandMeta("model", "switch model, or list models with no argument",
                 accepts_arg=True, arg_hint="<name>"),
     CommandMeta("models", "list models on the server", slash=False, cli=True),
